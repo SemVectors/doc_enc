@@ -1,0 +1,4 @@
+/download/
+__pycache__/
+/.direnv/
+/doc_enc.egg-info/
