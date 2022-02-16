@@ -12,8 +12,9 @@ from typing import List
 
 import torch
 
+from doc_enc.training.types import TaskType
 from doc_enc.training.types import Example, SentsBatch
-from doc_enc.tokenizer import TokenizerType, create_tokenizer
+from doc_enc.tokenizer import TokenizerConf, create_tokenizer
 
 
 def _src_filepath(input_dir, split):
@@ -34,14 +35,12 @@ def _line_cnt(fp):
 
 def _split_between_nproc(n, start_offs, line_cnt):
     per_rank = math.ceil(line_cnt / n)
-    return range(start_offs, line_cnt, per_rank)
+    return range(start_offs, start_offs + line_cnt, per_rank)
 
 
 @dataclass
 class SentsBatchGeneratorConf:
     input_dir: str
-    vocab_path: str
-    tokenizer_type: TokenizerType = TokenizerType.SENTENCEPIECE
     batch_size: int = 128
     batch_per_bucket: int = 100
     max_tokens: int = 0
@@ -52,36 +51,40 @@ class SentsBatchGeneratorConf:
 
 
 class SentsBatchGenerator:
-    def __init__(self, opts: SentsBatchGeneratorConf, split, line_num=0, line_cnt=-1):
+    def __init__(
+        self, opts: SentsBatchGeneratorConf, tok_conf: TokenizerConf, split, line_num=0, line_cnt=-1
+    ):
         self._opts = opts
 
         self._line_num = line_num
         self._line_cnt = line_cnt
 
-        self._tokenizer = create_tokenizer(opts.tokenizer_type)
+        self._tokenizer = create_tokenizer(tok_conf)
+        self._src_file = None
+        self._tgt_file = None
+        self._hn_file = None
+        self._dup_file = None
 
         src_fp = _src_filepath(opts.input_dir, split)
         tgt_fp = _tgt_filepath(opts.input_dir, split)
         self._src_file = open(src_fp)
         self._tgt_file = open(tgt_fp)
 
-        dups_fp = f"{opts.input_dir}/{split}.dups"
-        if opts.dont_use_dups:
-            self._dup_file = None
-        else:
+        if not opts.dont_use_dups:
+            dups_fp = f"{opts.input_dir}/{split}.dups"
             self._dup_file = open(dups_fp)
 
-        hn_fp = f"{opts.input_dir}/{split}.hn"
-        if opts.dont_use_hns:
-            self._hn_file = None
-        else:
+        if not opts.dont_use_hns:
+            hn_fp = f"{opts.input_dir}/{split}.hn"
             self._hn_file = open(hn_fp)
 
         self._init_files()
 
     def __del__(self):
-        self._src_file.close()
-        self._tgt_file.close()
+        if self._src_file is not None:
+            self._src_file.close()
+        if self._tgt_file is not None:
+            self._tgt_file.close()
         if self._dup_file is not None and not isinstance(self._dup_file, itertools.repeat):
             self._dup_file.close()
         if self._hn_file is not None:
@@ -94,19 +97,20 @@ class SentsBatchGenerator:
             while i < self._line_num:
                 l = fp.readline()
                 i += 1
-            if not l:
+            if self._line_num and not l:
                 raise RuntimeError("Unexpected end of file!")
 
-        if self._line_num == 0:
-            return
-
-        _skip_to_line(self._src_file)
-        _skip_to_line(self._tgt_file)
+        if self._src_file is not None:
+            _skip_to_line(self._src_file)
+        if self._tgt_file is not None:
+            _skip_to_line(self._tgt_file)
         if self._dup_file is not None:
             _skip_to_line(self._dup_file)
         else:
             self._dup_file = itertools.repeat(None)
 
+        if self._src_file is None:
+            return
         # get current line id
         last_pos = self._src_file.tell()
         line = self._src_file.readline()
@@ -330,8 +334,8 @@ class SentsBatchGenerator:
         logging.info('batches cnt %d, avg tgt cnt %d', n, sum(len(b.tgt_id) for b in batches) / n)
 
     def batches(self):
-        if self._dup_file is None:
-            raise RuntimeError("Dup file is not initialized")
+        if self._src_file is None or self._tgt_file is None or self._dup_file is None:
+            raise RuntimeError("Files are not initialized")
         bucket_size = self._opts.batch_per_bucket * self._opts.batch_size
 
         bucket = []
@@ -371,10 +375,17 @@ class SentsBatchGenerator:
                 logging.info("Failed to find a batch for %d examples", len(to_next_bucket))
 
 
-def _generator_proc_wrapper(queue: multiprocessing.Queue, opts, split, line_num, line_cnt):
-    generator = SentsBatchGenerator(opts, split, line_num, line_cnt)
-    for b in generator.batches():
-        queue.put(b)
+def _generator_proc_wrapper(
+    queue: multiprocessing.Queue, opts, tok_conf, split, line_num, line_cnt
+):
+    try:
+        generator = SentsBatchGenerator(opts, tok_conf, split, line_num, line_cnt)
+        for b in generator.batches():
+            queue.put(b)
+    except Exception as e:
+        logging.error(
+            "Failed to process batches split=%s, ln=%d, lc=%d : %s", split, line_num, line_cnt, e
+        )
 
     queue.put(None)
 
@@ -391,12 +402,14 @@ class SentsBatchIterator:
     def __init__(
         self,
         opts: SentsBatchIteratorConf,
+        tok_conf: TokenizerConf,
         split,
         rank=0,
         world_size=-1,
         pad_idx=0,
     ):
         self._opts = opts
+        self._tok_conf = tok_conf
 
         self._split = split
         self._rank = rank
@@ -440,12 +453,14 @@ class SentsBatchIterator:
                 args=(
                     self._queue,
                     self._opts.batch_generator_conf,
+                    self._tok_conf,
                     self._split,
                     offs,
                     per_proc_lines,
                 ),
             )
             p.start()
+
             self._processes.append(p)
 
     def _create_padded_tensor(self, tokens, max_len):
@@ -475,7 +490,12 @@ class SentsBatchIterator:
         b = batch._replace(src=src, src_len=src_len, tgt=tgt, tgt_len=tgt_len, hn_idxs=[])
         return b, labels
 
-    def batches(self):
+    def supported_tasks(self):
+        return [TaskType.SENT_RETR]
+
+    def batches(self, task=TaskType.SENT_RETR):
+        if task != TaskType.SENT_RETR:
+            raise RuntimeError(f"Unsupported task {task}")
 
         # TODO fix possible bug with multigpu case
         # when len(self._iter_over_buckets) is not equal over all processes
@@ -491,7 +511,7 @@ class SentsBatchIterator:
                 finished_processes += 1
                 continue
             batch, labels = self._make_batch_for_retr_task(batch)
-            yield batch, labels
+            yield TaskType.SENT_RETR, batch, labels
 
         for p in self._processes:
             p.join()

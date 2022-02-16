@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /model/sent/encoder: transformer
+  - _self_
+
+model:
+  sent:
+    encoder:
+      num_layers: 5

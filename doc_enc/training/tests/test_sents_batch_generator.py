@@ -14,7 +14,7 @@ from doc_enc.training.sents_batch_generator import (
     SentsBatchIteratorConf,
 )
 
-from doc_enc.tokenizer import TokenizerType
+from doc_enc.tokenizer import TokenizerType, TokenizerConf
 
 
 @pytest.fixture
@@ -75,16 +75,15 @@ def FakeTrainingData():
 def _create_gen_opts(input_dir):
     conf = SentsBatchGeneratorConf(
         input_dir=input_dir,
-        vocab_path='',
         adjust_batch_size=False,
-        tokenizer_type=TokenizerType.PRETOKENIZED,
     )
-    return conf
+    tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
+    return conf, tok_conf
 
 
 def test_gen_basic(FakeTrainingData):
-    conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, split='train', line_num=0)
+    conf, tok_conf = _create_gen_opts(FakeTrainingData)
+    gen = SentsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_num=0)
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
@@ -97,8 +96,8 @@ def test_gen_basic(FakeTrainingData):
 
 
 def test_gen_basic_line_offset(FakeTrainingData):
-    conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, split='train', line_num=3)
+    conf, tok_conf = _create_gen_opts(FakeTrainingData)
+    gen = SentsBatchGenerator(conf, tok_conf, split='train', line_num=3)
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
@@ -111,8 +110,8 @@ def test_gen_basic_line_offset(FakeTrainingData):
 
 
 def test_gen_basic_line_cnt(FakeTrainingData):
-    conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, split='train', line_cnt=3)
+    conf, tok_conf = _create_gen_opts(FakeTrainingData)
+    gen = SentsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_cnt=3)
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
@@ -125,8 +124,8 @@ def test_gen_basic_line_cnt(FakeTrainingData):
 
 
 def test_gen_basic_line_cnt_and_offset(FakeTrainingData):
-    conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, split='train', line_num=2, line_cnt=3)
+    conf, tok_conf = _create_gen_opts(FakeTrainingData)
+    gen = SentsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_num=2, line_cnt=3)
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
@@ -139,14 +138,14 @@ def test_gen_basic_line_cnt_and_offset(FakeTrainingData):
 
 
 def test_iterator_single_generator(FakeTrainingData):
-    gen_conf = _create_gen_opts(FakeTrainingData)
+    gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
     iter_conf = SentsBatchIteratorConf(gen_conf, async_generators=1)
-    biter = SentsBatchIterator(iter_conf, 'train')
+    biter = SentsBatchIterator(iter_conf, tok_conf, 'train')
 
     biter.init_epoch(1)
     res = list(biter.batches())
     assert len(res) == 1
-    batch, labels = res[0]
+    _, batch, labels = res[0]
     assert batch.bs == 4
     assert batch.src_id == [5, 1, 2, 4]
     assert batch.tgt_id == [5, 1, 2, 4, 40, 41, 42, 10, 11, 20, 21, 22]
@@ -156,15 +155,32 @@ def test_iterator_single_generator(FakeTrainingData):
     assert labels.shape == (4,)
 
 
+def test_iterator_1st_rank(FakeTrainingData):
+    gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
+    iter_conf = SentsBatchIteratorConf(gen_conf, async_generators=1)
+    biter = SentsBatchIterator(iter_conf, tok_conf, 'train', rank=1, world_size=2)
+
+    biter.init_epoch(1)
+    res = list(biter.batches())
+    assert len(res) == 1
+    _, batch, _ = res[0]
+    assert batch.bs == 2
+    assert batch.src_id == [5, 6]
+    assert batch.tgt_id == [5, 6, 40, 41, 42, 50]
+
+    assert batch.src.shape == (2, 4)
+    assert batch.tgt.shape == (6, 4)
+
+
 def test_iterator_two_generators(FakeTrainingData):
-    gen_conf = _create_gen_opts(FakeTrainingData)
+    gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
     iter_conf = SentsBatchIteratorConf(gen_conf, async_generators=2)
-    biter = SentsBatchIterator(iter_conf, 'train')
+    biter = SentsBatchIterator(iter_conf, tok_conf, 'train')
 
     biter.init_epoch(1)
     res = list(biter.batches())
     assert len(res) == 2
-    batch1, _ = res[0]
+    _, batch1, _ = res[0]
     assert batch1.bs == 4
     assert batch1.src_id == [1, 2, 4, 3]
     assert batch1.tgt_id == [1, 2, 4, 3, 10, 11, 20, 21, 22]
@@ -172,7 +188,7 @@ def test_iterator_two_generators(FakeTrainingData):
     assert batch1.src.shape == (4, 4)
     assert batch1.tgt.shape == (9, 6)
 
-    batch2, _ = res[1]
+    _, batch2, _ = res[1]
     assert batch2.bs == 2
     assert batch2.src_id == [5, 6]
     assert batch2.tgt_id == [5, 6, 40, 41, 42, 50]

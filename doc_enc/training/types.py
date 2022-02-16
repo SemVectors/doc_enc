@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 
 from typing import NamedTuple, List, Tuple
+from enum import Enum
 
-# = collections.namedtuple('Example', ['src_id', 'src', 'tgt', 'dups', 'hns'])
+
+class TaskType(Enum):
+    UNDEFINED = 0
+    SENT_RETR = 1
+    DOC_RETR = 2
+
+
+class SentRetrLossType(Enum):
+    CE = 1
+    BICE = 2
 
 
 class Example(NamedTuple):

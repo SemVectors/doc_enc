@@ -1,0 +1,11 @@
+defaults:
+  - base_config
+  - sent_batches: batch128
+  - trainer: basic
+  - tokenizer: sentencepiece
+  - model: default
+  - model/sent: dual_enc
+  - model/sent/encoder: lstm
+  - _self_
+
+verbose: false

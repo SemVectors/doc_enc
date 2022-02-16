@@ -1,0 +1,9 @@
+defaults:
+  - base_sent_encoder_config
+encoder_kind: LSTM
+embedding_size: 320
+hidden_size: 512
+num_layers: 3
+dropout: 0.1
+bidirectional: true
+pooling_strategy: MAX
