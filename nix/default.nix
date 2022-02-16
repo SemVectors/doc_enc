@@ -4,7 +4,10 @@
   scikitlearn,
   numpy,
   sentencepiece,
-  pytorch
+  pytorch-bin,
+  hydra,
+  pytest,
+
 }:
 
 buildPythonPackage {
@@ -14,6 +17,8 @@ buildPythonPackage {
 
 
   buildInputs = [];
-  propagatedBuildInputs=[scikitlearn numpy pytorch sentencepiece];
+  propagatedBuildInputs=[scikitlearn numpy pytorch-bin sentencepiece hydra];
+  checkInputs = [pytest];
 
+  checkPhase = "pytest";
 }

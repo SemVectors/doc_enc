@@ -1,36 +1,38 @@
 {
   description = "Encoding texts as dense vectors";
 
-  inputs.textapp-pkgs.url = "git+ssh://git@tsa04.isa.ru/textapp/textapp-pkgs?ref=flakes";
+  # inputs.textapp-pkgs.url = "git+ssh://git@tsa04.isa.ru/textapp/textapp-pkgs?ref=flakes";
+  inputs.nixpkgs.url = "nixpkgs";
 
-  outputs = { self, textapp-pkgs }:
-    let pkgs = import textapp-pkgs.inputs.nixpkgs {
+  outputs = { self, nixpkgs }:
+    let pkgs = import nixpkgs {
           system = "x86_64-linux";
-          overlays = [ textapp-pkgs.overlay self.overlay ];
+          # overlays = [ self.overlay ];
           config = {allowUnfree = true;};
         };
-        python-overlay = pyfinal: pyprev: {doc_enc = pyfinal.callPackage ./nix {src=self;};};
+        # python-overlay = pyfinal: pyprev: {doc_enc = pyfinal.callPackage ./nix {src=self;};};
     in {
-      overlay = final: prev: {python = textapp-pkgs.lib.overridePython python-overlay final prev;};
+      # overlay = final: prev: {python = textapp-pkgs.lib.overridePython python-overlay final prev;};
 
-      packages.x86_64-linux = {
-        inherit (pkgs)
-          python;
-      };
+      # packages.x86_64-linux = {
+      #   inherit (pkgs)
+      #     python;
+      # };
 
-      defaultPackage.x86_64-linux = pkgs.python.pkgs.doc_enc;
+      # defaultPackage.x86_64-linux = pkgs.python.pkgs.doc_enc;
       devShell.x86_64-linux =
-        let pypkgs = pkgs.python.pkgs;
-            tpkgs = textapp-pkgs.packages.x86_64-linux;
+        let pypkgs = pkgs.python39.pkgs;
+            # tpkgs = textapp-pkgs.packages.x86_64-linux;
         in
           pkgs.mkShell {
-            inputsFrom = [ pypkgs.doc_enc ];
+            inputsFrom = [ (pypkgs.callPackage ./nix {src=self;}) ];
             buildInputs = [
-              tpkgs.pyright
-              tpkgs.bash-language-server
-              tpkgs.shellcheck
+              pkgs.nodePackages.pyright
+              pkgs.nodePackages.bash-language-server
+              pkgs.shellcheck
               pypkgs.pylint
               pypkgs.black
+              pypkgs.debugpy
             ];
 
           };
