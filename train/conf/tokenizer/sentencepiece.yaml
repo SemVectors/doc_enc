@@ -1,4 +1,4 @@
 defaults:
   - base_tokenizer_config
 tokenizer_type: SENTENCEPIECE
-vocab_path: /home/dvzubarev/data/paral_data/undata0/sentencepiece.bpe.model
+vocab_path: /train/sentencepiece.bpe.model

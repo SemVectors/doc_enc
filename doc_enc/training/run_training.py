@@ -6,7 +6,6 @@ import os
 
 import hydra
 from hydra.core.config_store import ConfigStore
-from omegaconf import OmegaConf
 
 import torch
 import torch.distributed as dist

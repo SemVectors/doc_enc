@@ -3,7 +3,7 @@ defaults:
 
 async_generators: 2
 batch_generator_conf:
-  input_dir: /home/dvzubarev/data/paral_data/undata0/mini
+  input_dir: /train/data
   batch_size: 128
   dont_use_hns: true
   dont_use_dups: true

@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - /base_config
+  - _self_
+
+
+tokenizer:
+  vocab_path: /home/dvzubarev/data/paral_data/undata0/sentencepiece.bpe.model
+
+sent_batches:
+  batch_generator_conf:
+    input_dir: /home/dvzubarev/data/paral_data/undata0/mini
