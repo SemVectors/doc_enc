@@ -60,6 +60,7 @@
               pkgs.nodePackages.pyright
               pkgs.nodePackages.bash-language-server
               pkgs.shellcheck
+              pkgs.yamllint
               pypkgs.pylint
               pypkgs.black
               pypkgs.debugpy
