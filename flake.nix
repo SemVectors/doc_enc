@@ -26,10 +26,9 @@
       };
 
       defaultPackage.x86_64-linux = pkgs.python.pkgs.doc_enc;
-      dockerImage = pkgs.dockerTools.buildLayeredImage {
-        name = "doc_enc";
+      trainDockerImage = pkgs.dockerTools.streamLayeredImage {
+        name = "tsa04.isa.ru:5050/semvectors/doc_enc/train";
         tag = pkgs.python.pkgs.doc_enc.version;
-
 
         contents = [pkgs.bashInteractive pkgs.coreutils pkgs.glibc pkgs.glibc.bin ];
         # contents = [pkgs.bashInteractive pkgs.coreutils ];

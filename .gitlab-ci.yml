@@ -8,23 +8,32 @@ stages:
 build:
   stage: build
   script:
-    - nix run "$BUILD_FLAKE" -- -i . -a "$CI_PROJECT_NAME"
+    - nix run "$BUILD_FLAKE" -- -S -i . -a "$CI_PROJECT_NAME"
+  artifacts:
+    reports:
+      #build.env is created by BUILD_FLAKE when -S switch is presented
+      dotenv: build.env
+
   tags:
     - nix
 
 build-docker-image:
-  stage: build
+  stage: build-docker-image
   rules:
     - if: $CI_COMMIT_MESSAGE =~ /\[build-docker\]/
 
-  script:
-    - nix --verbose --print-build-logs  build  .#dockerImage
-    - cp -fL result $(basename $(readlink -f result))
+  script: |
+    nix --verbose --print-build-logs  build  .#trainDockerImage
+    skopeo login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    ./result | gzip --fast | \
+    skopeo --insecure-policy --tmpdir=/data/tmp copy \
+    docker-archive:/dev/stdin docker://$CI_REGISTRY_IMAGE/train:$APP_VERSION
+    rm result
 
-  artifacts:
-    paths:
-      - "*doc_enc.tar.gz"
-    expire_in: 42 seconds
+  # artifacts:
+  #   paths:
+  #     - "*doc_enc.tar.gz"
+  #   expire_in: 42 seconds
 
   tags:
     - nix
