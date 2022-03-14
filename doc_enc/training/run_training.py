@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 
-import logging
+from typing import Dict, Any
 from dataclasses import dataclass
 import os
 
 import hydra
+from hydra.core.utils import configure_log
 from hydra.core.config_store import ConfigStore
 
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
+from torch.multiprocessing.spawn import spawn as mp_spawn
 
 from doc_enc.tokenizer import create_tokenizer, TokenizerConf
 from doc_enc.training.sents_batch_generator import SentsBatchIterator, SentsBatchIteratorConf
@@ -25,7 +26,8 @@ class Config:
     trainer: TrainerConf
     model: ModelConf
 
-    verbose: bool = False
+    job_logging: Dict[str, Any]
+    verbose: Any = False
 
 
 cs = ConfigStore.instance()
@@ -38,12 +40,9 @@ cs.store(name="base_sent_model_config", group="model/sent", node=SentModelConf)
 cs.store(name="base_sent_encoder_config", group="model/sent/encoder", node=SentEncoderConf)
 
 
-def _init_proc(rank, world_size, opts, port='29500'):
+def _init_proc(rank, world_size, conf: Config, port='29500'):
     if rank == 0:
-        logging.basicConfig(
-            level=logging.DEBUG if opts.verbose else logging.INFO,
-            format="%(asctime)s %(levelname)s: %(name)s: %(message)s",
-        )
+        configure_log(conf.job_logging, conf.verbose)
     os.environ['MASTER_ADDR'] = '127.0.0.1'
     os.environ['MASTER_PORT'] = port
     dist.init_process_group('nccl', rank=rank, world_size=world_size)
@@ -88,7 +87,7 @@ def train_cli(opts: Config) -> None:
     gpu_cnt = torch.cuda.device_count()
     if gpu_cnt <= 0:
         raise RuntimeError("No gpu was found")
-    mp.spawn(_run_train, args=(gpu_cnt, opts), nprocs=gpu_cnt, join=True)
+    mp_spawn(_run_train, args=(gpu_cnt, opts), nprocs=gpu_cnt, join=True)
 
 
 if __name__ == "__main__":

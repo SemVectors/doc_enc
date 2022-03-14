@@ -1,5 +1,8 @@
+---
+
 defaults:
   - base_config
+  - job_logging: default
   - sent_batches: batch128
   - trainer: basic
   - tokenizer: sentencepiece
