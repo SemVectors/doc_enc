@@ -5,13 +5,14 @@ import logging
 import collections
 import itertools
 import random
-import math
-import multiprocessing
 from dataclasses import dataclass
 from typing import List
 
+
+from omegaconf import MISSING
 import torch
 
+from doc_enc.training.base_batch_generator import BaseBatchIterator, BaseBatchIteratorConf
 from doc_enc.training.types import TaskType
 from doc_enc.training.types import Example, SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
@@ -23,19 +24,6 @@ def _src_filepath(input_dir, split):
 
 def _tgt_filepath(input_dir, split):
     return f"{input_dir}/{split}.id.tgt"
-
-
-def _line_cnt(fp):
-    with open(fp) as f:
-        i = -1
-        for i, _ in enumerate(f):
-            pass
-    return i + 1
-
-
-def _split_between_nproc(n, start_offs, line_cnt):
-    per_rank = math.ceil(line_cnt / n)
-    return range(start_offs, start_offs + line_cnt, per_rank)
 
 
 @dataclass
@@ -52,11 +40,16 @@ class SentsBatchGeneratorConf:
 
 class SentsBatchGenerator:
     def __init__(
-        self, opts: SentsBatchGeneratorConf, tok_conf: TokenizerConf, split, line_num=0, line_cnt=-1
+        self,
+        opts: SentsBatchGeneratorConf,
+        tok_conf: TokenizerConf,
+        split,
+        line_offset=0,
+        line_cnt=-1,
     ):
         self._opts = opts
 
-        self._line_num = line_num
+        self._line_num = line_offset
         self._line_cnt = line_cnt
 
         self._tokenizer = create_tokenizer(tok_conf)
@@ -375,30 +368,13 @@ class SentsBatchGenerator:
                 logging.info("Failed to find a batch for %d examples", len(to_next_bucket))
 
 
-def _generator_proc_wrapper(
-    queue: multiprocessing.Queue, opts, tok_conf, split, line_num, line_cnt
-):
-    try:
-        generator = SentsBatchGenerator(opts, tok_conf, split, line_num, line_cnt)
-        for b in generator.batches():
-            queue.put(b)
-    except Exception as e:
-        logging.error(
-            "Failed to process batches split=%s, ln=%d, lc=%d : %s", split, line_num, line_cnt, e
-        )
-
-    queue.put(None)
-
-
 @dataclass
-class SentsBatchIteratorConf:
-    batch_generator_conf: SentsBatchGeneratorConf
-    async_generators: int = 1
-
+class SentsBatchIteratorConf(BaseBatchIteratorConf):
+    batch_generator_conf: SentsBatchGeneratorConf = MISSING
     pad_to_multiple_of: int = 0
 
 
-class SentsBatchIterator:
+class SentsBatchIterator(BaseBatchIterator):
     def __init__(
         self,
         opts: SentsBatchIteratorConf,
@@ -408,12 +384,17 @@ class SentsBatchIterator:
         world_size=-1,
         pad_idx=0,
     ):
+        super().__init__(
+            opts,
+            SentsBatchGenerator,
+            (opts.batch_generator_conf, tok_conf, split),
+            rank=rank,
+            world_size=world_size,
+        )
+
         self._opts = opts
-        self._tok_conf = tok_conf
 
         self._split = split
-        self._rank = rank
-        self._world_size = world_size
 
         if torch.cuda.is_available():
             self._device = torch.device(f'cuda:{rank}')
@@ -424,44 +405,10 @@ class SentsBatchIterator:
 
         self._epoch = 0
 
-        self._processes = []
-        self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
-
     def init_epoch(self, epoch):
         self._epoch = epoch - 1
-        self._start_workers()
-
-    def _get_line_offs_for_rank(self):
         src_fp = _src_filepath(self._opts.batch_generator_conf.input_dir, self._split)
-        line_cnt = _line_cnt(src_fp)
-
-        if self._world_size == -1:
-            return 0, line_cnt
-
-        r = _split_between_nproc(self._world_size, start_offs=0, line_cnt=line_cnt)
-        return r[self._rank], r.step
-
-    def _start_workers(self):
-        rank_offs, per_rank_lines = self._get_line_offs_for_rank()
-        r = _split_between_nproc(
-            self._opts.async_generators, start_offs=rank_offs, line_cnt=per_rank_lines
-        )
-        per_proc_lines = r.step
-        for offs in r:
-            p = multiprocessing.Process(
-                target=_generator_proc_wrapper,
-                args=(
-                    self._queue,
-                    self._opts.batch_generator_conf,
-                    self._tok_conf,
-                    self._split,
-                    offs,
-                    per_proc_lines,
-                ),
-            )
-            p.start()
-
-            self._processes.append(p)
+        self._start_workers(src_fp)
 
     def _create_padded_tensor(self, tokens, max_len):
         # logging.debug('make batch with max len %s for %s', str(max_len), str(tokens))
@@ -501,18 +448,8 @@ class SentsBatchIterator:
         # when len(self._iter_over_buckets) is not equal over all processes
         # there was documentation in pytorch about that case
 
-        if not self._processes:
-            raise RuntimeError("Sent batch Iterator is not initialized!")
+        yield from super().batches()
 
-        finished_processes = 0
-        while finished_processes < self._opts.async_generators:
-            batch = self._queue.get()
-            if batch is None:
-                finished_processes += 1
-                continue
-            batch, labels = self._make_batch_for_retr_task(batch)
-            yield TaskType.SENT_RETR, batch, labels
-
-        for p in self._processes:
-            p.join()
-        self._processes = []
+    def _prepare_batch(self, batch):
+        batch, labels = self._make_batch_for_retr_task(batch)
+        return TaskType.SENT_RETR, batch, labels
