@@ -88,7 +88,7 @@ def test_gen_basic(FakeTrainingData):
     assert (FakeTrainingData / "combined_train.csv").exists()
 
     with open(FakeTrainingData / "combined_train.csv", 'r', encoding='utf8') as f:
-        id1_3_list = [_parse_combined_output(l) for l in itertools.islice(f, 1, 5)]
+        id1_3_list = [_parse_combined_output(l) for l in itertools.islice(f, 0, 4)]
         assert len(id1_3_list) == 4
         print(id1_3_list)
         for t in id1_3_list:

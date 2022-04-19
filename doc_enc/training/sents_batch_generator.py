@@ -1,21 +1,33 @@
 #!/usr/bin/env python3
 #!/usr/bin/env python3
 
+from typing import NamedTuple, Tuple, List
 import logging
 import collections
 import itertools
 import random
 from dataclasses import dataclass
-from typing import List
 
 
 from omegaconf import MISSING
 import torch
 
-from doc_enc.training.base_batch_generator import BaseBatchIterator, BaseBatchIteratorConf
+from doc_enc.training.base_batch_generator import (
+    BaseBatchIterator,
+    BaseBatchIteratorConf,
+    skip_to_line,
+)
 from doc_enc.training.types import TaskType
-from doc_enc.training.types import Example, SentsBatch
+from doc_enc.training.types import SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
+
+
+class Example(NamedTuple):
+    src_id: int
+    src: List[int]
+    tgt: List[int]
+    dups: List[int]
+    hns: Tuple[List[List[int]], List[int]]
 
 
 def _src_filepath(input_dir, split):
@@ -84,21 +96,12 @@ class SentsBatchGenerator:
             self._hn_file.close()
 
     def _init_files(self):
-        def _skip_to_line(fp):
-            i = 0
-            l = ''
-            while i < self._line_num:
-                l = fp.readline()
-                i += 1
-            if self._line_num and not l:
-                raise RuntimeError("Unexpected end of file!")
-
         if self._src_file is not None:
-            _skip_to_line(self._src_file)
+            skip_to_line(self._src_file, self._line_num)
         if self._tgt_file is not None:
-            _skip_to_line(self._tgt_file)
+            skip_to_line(self._tgt_file, self._line_num)
         if self._dup_file is not None:
-            _skip_to_line(self._dup_file)
+            skip_to_line(self._dup_file, self._line_num)
         else:
             self._dup_file = itertools.repeat(None)
 

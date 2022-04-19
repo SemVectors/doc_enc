@@ -40,7 +40,7 @@ def combine_docs_datasets(
 
     with open(input_path / f"{out_filename_prefix}_{split}.csv", 'w', encoding="utf-8") as outf:
         csv_writer = csv.writer(outf)
-        csv_writer.writerow(("ds", "src", "tgt", "label", "slen", "tlen", "shash", "thash"))
+        # csv_writer.writerow(("ds", "src", "tgt", "label", "slen", "tlen", "shash", "thash"))
         if not datasets:
             return
 

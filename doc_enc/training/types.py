@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import NamedTuple, List, Tuple
+from typing import NamedTuple, List, Tuple, Dict
 from enum import Enum
 
 
@@ -15,14 +15,6 @@ class SentRetrLossType(Enum):
     BICE = 2
 
 
-class Example(NamedTuple):
-    src_id: int
-    src: List[int]
-    tgt: List[int]
-    dups: List[int]
-    hns: Tuple[List[List[int]], List[int]]
-
-
 class SentsBatch(NamedTuple):
     bs: int
     src_id: List[int]
@@ -35,4 +27,17 @@ class SentsBatch(NamedTuple):
 
 
 class DocsBatch(NamedTuple):
-    pass
+    src_sents: List[List[int]]
+    src_sent_len: List[int]
+    src_fragment_len: List[int]
+    src_doc_len_in_sents: List[int]
+    src_doc_len_in_frags: List[int]
+
+    tgt_sents: List[List[int]]
+    tgt_sent_len: List[int]
+    tgt_fragment_len: List[int]
+    tgt_doc_len_in_sents: List[int]
+    tgt_doc_len_in_frags: List[int]
+
+    positive_idxs: List[List[int]]
+    info: Dict[str, int]

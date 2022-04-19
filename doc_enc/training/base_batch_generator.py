@@ -32,6 +32,16 @@ def _generator_proc_wrapper(queue: multiprocessing.Queue, GenCls, *args, **kwarg
     queue.put(None)
 
 
+def skip_to_line(fp, line_offset):
+    i = 0
+    l = ''
+    while i < line_offset:
+        l = fp.readline()
+        i += 1
+    if line_offset and not l:
+        raise RuntimeError("Unexpected end of file!")
+
+
 @dataclass
 class BaseBatchIteratorConf:
     async_generators: int = 1
