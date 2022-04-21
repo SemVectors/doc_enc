@@ -24,9 +24,6 @@ class DocsBatchGeneratorConf:
     input_dir: str
     meta_prefix: str = "combined"
 
-    include_datasets: Optional[List[str]] = None
-    exclude_datasets: Optional[List[str]] = None
-
     batch_sent_size: int = 512
     batch_size: int = 128
 
@@ -34,6 +31,8 @@ class DocsBatchGeneratorConf:
     negatives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [2, 4])
 
     fragment_size: int = 24
+
+    allow_docs_without_positives: bool = False
 
 
 EXMPL_DATASET = 0
@@ -92,26 +91,16 @@ class DocsBatchGenerator:
     def _split_on_fragments(self, sents: List, fragment_len_list: List):
         l = len(sents)
 
-        # start_fragment_id = 0
-        # if fragment_id_list:
-        #     start_fragment_id = fragment_id_list[-1] + 1
         fragments_cnt = 0
         for offs in range(0, l, self._opts.fragment_size):
             cnt = min(l - offs, self._opts.fragment_size)
             fragment_len_list.append(cnt)
             fragments_cnt += 1
-            # i = offs // self._opts.fragment_size
-            # i += start_fragment_id
-            # fragment_id_list.extend(itertools.repeat(i, cnt))
         return fragments_cnt
 
     def _populate_doc_len(
         self, sents: List, fragments_cnt, doc_len_in_sents_list, doc_len_in_frags_list: List
     ):
-        # doc_no = 0
-        # if doc_len_list:
-        #     doc_no = doc_len_list[-1] + 1
-        # doc_len_list.extend(itertools.repeat(doc_no, len(sents)))
         doc_no = len(doc_len_in_sents_list)
         doc_len_in_sents_list.append(len(sents))
         doc_len_in_frags_list.append(fragments_cnt)
@@ -120,8 +109,12 @@ class DocsBatchGenerator:
     def _process_src_doc(
         self, src_path, positive_targets, negative_targets, batch: DocsBatch, tgt_hashes: dict
     ):
-        if not positive_targets and not negative_targets:
-            return 0
+        if not positive_targets:
+            if not self._opts.allow_docs_without_positives:
+                return
+            if not negative_targets:
+                return
+
         positive_targets = self._select_targets(positive_targets, self._opts.positives_per_doc)
         negative_targets = self._select_targets(negative_targets, self._opts.negatives_per_doc)
 
@@ -211,13 +204,18 @@ class DocsBatchGenerator:
 
         self._process_src_doc(src_path, positive_targets, negative_targets, batch, tgt_hashes)
         self._finalize_batch(batch)
-        yield batch
+        if batch.src_sents:
+            yield batch
+        else:
+            return
 
 
 @dataclasses.dataclass
 class DocsBatchIteratorConf(BaseBatchIteratorConf):
     batch_generator_conf: DocsBatchGeneratorConf = MISSING
-    pad_to_multiple_of: int = 0
+
+    include_datasets: Optional[List[str]] = None
+    exclude_datasets: Optional[List[str]] = None
 
 
 class DocsBatchIterator(BaseBatchIterator):
