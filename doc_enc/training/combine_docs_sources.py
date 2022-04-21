@@ -49,7 +49,7 @@ def combine_docs_datasets(
             info_dict = _calc_sentence_size_and_hash(dsp)
             all_examples.extend(_generate_examples_from_dataset(dsp, split, i, info_dict))
 
-        all_examples.sort(key=lambda t: (t.src_len, t.src_hash, -t.label, t.tgt_len))
+        all_examples.sort(key=lambda t: (-t.src_len, t.src_hash, -t.label, t.tgt_len))
         for e in all_examples:
             csv_writer.writerow(
                 (
