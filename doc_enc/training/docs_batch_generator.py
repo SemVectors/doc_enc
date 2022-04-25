@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 import itertools
+import logging
 
-# import math
 import random
 from typing import List, Optional
 import dataclasses
@@ -32,6 +32,7 @@ class DocsBatchGeneratorConf:
 
     fragment_size: int = 24
 
+    max_sent_size: int = 128
     allow_docs_without_positives: bool = False
 
 
@@ -79,13 +80,28 @@ class DocsBatchGenerator:
             return targets
         return random.sample(targets, n)
 
+    def _process_positive_targets(self, all_positive_targets, batch: DocsBatch, batch_dups: dict):
+        positive_targets = self._select_targets(all_positive_targets, self._opts.positives_per_doc)
+        src_no = len(batch.src_ids)
+        selected_hashes = [t[2] for t in positive_targets]
+        for _, _, h in all_positive_targets:
+            if h not in selected_hashes:
+                batch_dups[h] = src_no
+
+        prev = batch.info['max_positives_per_doc']
+        batch.info['max_positives_per_doc'] = max(len(positive_targets), prev)
+        return positive_targets
+
     def _tokenize_doc(self, path):
         with open(path, 'r', encoding='utf8') as f:
             sents = []
             for l in f:
                 tokens = self._tokenizer(l.rstrip())
                 if tokens:
+                    tokens = tokens[: self._opts.max_sent_size]
                     sents.append(tokens)
+                else:
+                    logging.warning("empty sentence, It may cause errors in doc-dual-enc")
             # TODO truncate large sents
             return sents
 
@@ -111,21 +127,21 @@ class DocsBatchGenerator:
         self,
         src_path,
         src_id,
-        positive_targets,
-        negative_targets,
+        all_positive_targets,
+        all_negative_targets,
         batch: DocsBatch,
         tgt_hashes: dict,
+        batch_dups: dict,
     ):
-        if not positive_targets:
+        if not all_positive_targets:
             if not self._opts.allow_docs_without_positives:
                 return
-            if not negative_targets:
+            if not all_negative_targets:
                 return
 
-        positive_targets = self._select_targets(positive_targets, self._opts.positives_per_doc)
-        prev = batch.info['max_positives_per_doc']
-        batch.info['max_positives_per_doc'] = max(len(positive_targets), prev)
-        negative_targets = self._select_targets(negative_targets, self._opts.negatives_per_doc)
+        positive_targets = self._process_positive_targets(all_positive_targets, batch, batch_dups)
+
+        negative_targets = self._select_targets(all_negative_targets, self._opts.negatives_per_doc)
 
         batch.src_ids.append(src_id)
         src_sents = self._tokenize_doc(src_path)
@@ -141,11 +157,12 @@ class DocsBatchGenerator:
             (t + (0,) for t in negative_targets),
         ):
 
-            batch.tgt_ids.append(tgt_id)
             if tgt_hash in tgt_hashes:
                 if lbl == 1:
                     batch.positive_idxs[-1].append(tgt_hashes[tgt_hash])
                 continue
+
+            batch.tgt_ids.append(tgt_id)
 
             tgt_sents = self._tokenize_doc(tgt_path)
             batch.tgt_sents.extend(tgt_sents)
@@ -156,6 +173,11 @@ class DocsBatchGenerator:
             tgt_hashes[tgt_hash] = tgt_no
             if lbl == 1:
                 batch.positive_idxs[-1].append(tgt_no)
+
+            if tgt_hash in batch_dups:
+                # this tgt is a positive example for some document that is already in the batch
+                # we need to adjust positive_idxs of this document accordingly
+                batch.positive_idxs[batch_dups[tgt_hash]].append(tgt_no)
 
     def _empty_batch(self):
         iterable = [[] for _ in range(13)]
@@ -168,7 +190,7 @@ class DocsBatchGenerator:
                 'max_positives_per_doc': 0,
             }
         )
-        return DocsBatch._make(iterable), {}
+        return DocsBatch._make(iterable), {}, {}
 
     def _finalize_batch(self, batch: DocsBatch):
         for l in batch.positive_idxs:
@@ -190,7 +212,7 @@ class DocsBatchGenerator:
         src_path = ''
         src_id = 0
 
-        batch, tgt_hashes = self._empty_batch()
+        batch, tgt_hashes, batch_dups = self._empty_batch()
 
         for i, l in enumerate(self._meta_file):
             if i == self._line_cnt:
@@ -199,12 +221,18 @@ class DocsBatchGenerator:
 
             if cur_hash != metas[EXMPL_SRC_HASH]:
                 self._process_src_doc(
-                    src_path, src_id, positive_targets, negative_targets, batch, tgt_hashes
+                    src_path,
+                    src_id,
+                    positive_targets,
+                    negative_targets,
+                    batch,
+                    tgt_hashes,
+                    batch_dups,
                 )
                 if len(batch.src_sents) > self._opts.batch_sent_size:
                     self._finalize_batch(batch)
                     yield batch
-                    batch, tgt_hashes = self._empty_batch()
+                    batch, tgt_hashes, batch_dups = self._empty_batch()
 
                 positive_targets = []
                 negative_targets = []
@@ -228,7 +256,7 @@ class DocsBatchGenerator:
                 negative_targets.append(tgt_info)
 
         self._process_src_doc(
-            src_path, src_id, positive_targets, negative_targets, batch, tgt_hashes
+            src_path, src_id, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
         )
         self._finalize_batch(batch)
         if batch.src_sents:

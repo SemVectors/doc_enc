@@ -256,8 +256,9 @@ class Trainer:
             logging.debug('tgt shape: %s\ntgt_len: %s', batch.tgt.size(), batch.tgt_len)
         elif task == TaskType.DOC_RETR:
             logging.debug(
-                'src sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
+                'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
                 'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
+                batch.src_ids,
                 len(batch.src_sents),
                 batch.src_sent_len,
                 batch.src_fragment_len,
@@ -265,8 +266,9 @@ class Trainer:
                 batch.src_doc_len_in_frags,
             )
             logging.debug(
-                'tgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
+                'tgt ids: %s\ntgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
                 'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
+                batch.tgt_ids,
                 len(batch.tgt_sents),
                 batch.tgt_sent_len,
                 batch.tgt_fragment_len,
