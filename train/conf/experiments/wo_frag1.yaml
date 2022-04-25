@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /model/fragment: null
+  - _self_
+
+model:
+  doc:
+    num_layers: 2

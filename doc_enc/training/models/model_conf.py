@@ -41,8 +41,8 @@ class DocModelConf:
     kind: ModelKind
 
     sent: SentModelConf
-    fragment: Optional[FragmentEncoderConf]
     doc: DocEncoderConf
+    fragment: Optional[FragmentEncoderConf] = None
 
     split_sents: bool = True
     split_size: int = 128
