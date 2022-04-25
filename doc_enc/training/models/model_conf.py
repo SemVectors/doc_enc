@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 
+from typing import Optional
 import dataclasses
 from enum import Enum
 
 from omegaconf import MISSING
 
-from doc_enc.encoders.enc_config import BaseEncoderConf, SentEncoderConf
+from doc_enc.encoders.enc_config import (
+    BaseEncoderConf,
+    SentEncoderConf,
+    FragmentEncoderConf,
+    DocEncoderConf,
+)
 
 
 class ModelKind(Enum):
@@ -31,5 +37,17 @@ class SentModelConf(BaseModelConf):
 
 
 @dataclasses.dataclass
-class ModelConf:
+class DocModelConf:
+    kind: ModelKind
+
     sent: SentModelConf
+    fragment: Optional[FragmentEncoderConf]
+    doc: DocEncoderConf
+
+    split_sents: bool = True
+    split_size: int = 128
+
+    # dual enc model opts
+    normalize: bool = True
+    scale: float = 0.0
+    margin: float = 0.1

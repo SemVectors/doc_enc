@@ -17,7 +17,6 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIteratorConf,
     skip_to_line,
 )
-from doc_enc.training.types import TaskType
 from doc_enc.training.types import SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
 
@@ -197,7 +196,8 @@ class SentsBatchGenerator:
 
         assert len(hn_indices) == len(src_tokens) == len(src_ids)
 
-        b = SentsBatch(len(src_ids), src_ids, src_tokens, [], tgt_ids, tgt_tokens, [], hn_indices)
+        info = {'bs': len(src_ids)}
+        b = SentsBatch(src_ids, src_tokens, [], tgt_ids, tgt_tokens, [], hn_indices, info=info)
         return b
 
     def _maybe_prepend_not_fitted(self, not_fitted, bucket, to_next_bucket):
@@ -436,23 +436,14 @@ class SentsBatchIterator(BaseBatchIterator):
         tgt_max_len = len(max(batch.tgt, key=len))
         tgt, tgt_len = self._create_padded_tensor(batch.tgt, tgt_max_len)
 
-        labels = torch.arange(0, batch.bs, device=self._device)
+        labels = torch.arange(0, batch.info['bs'], device=self._device)
         b = batch._replace(src=src, src_len=src_len, tgt=tgt, tgt_len=tgt_len, hn_idxs=[])
         return b, labels
 
-    def supported_tasks(self):
-        return [TaskType.SENT_RETR]
-
-    def batches(self, task=TaskType.SENT_RETR):
-        if task != TaskType.SENT_RETR:
-            raise RuntimeError(f"Unsupported task {task}")
+    def _prepare_batch(self, batch):
 
         # TODO fix possible bug with multigpu case
         # when len(self._iter_over_buckets) is not equal over all processes
         # there was documentation in pytorch about that case
-
-        yield from super().batches()
-
-    def _prepare_batch(self, batch):
         batch, labels = self._make_batch_for_retr_task(batch)
-        return TaskType.SENT_RETR, batch, labels
+        return batch, labels

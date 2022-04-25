@@ -7,6 +7,13 @@ defaults:
 tokenizer:
   vocab_path: /home/dvzubarev/data/paral_data/undata0/sentencepiece.bpe.model
 
-sent_batches:
-  batch_generator_conf:
-    input_dir: /home/dvzubarev/data/paral_data/undata0/mini
+batches:
+  sents_batch_iterator_conf:
+    batch_generator_conf:
+      input_dir: /home/dvzubarev/data/paral_data/undata0/mini
+
+  docs_batch_iterator_conf:
+    include_datasets:
+      - mini
+    batch_generator_conf:
+      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc_enc_datasets

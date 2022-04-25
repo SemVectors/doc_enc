@@ -64,11 +64,12 @@
               pypkgs.pylint
               pypkgs.black
               pypkgs.debugpy
+              pypkgs.jupyter_server
             ];
 
             shellHook=''
                         #https://github.com/NixOS/nixpkgs/issues/11390
-                        LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
+                        export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
             '';
           };
     };

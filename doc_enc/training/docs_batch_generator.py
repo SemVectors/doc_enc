@@ -84,7 +84,8 @@ class DocsBatchGenerator:
             sents = []
             for l in f:
                 tokens = self._tokenizer(l.rstrip())
-                sents.append(tokens)
+                if tokens:
+                    sents.append(tokens)
             # TODO truncate large sents
             return sents
 
@@ -107,7 +108,13 @@ class DocsBatchGenerator:
         return doc_no
 
     def _process_src_doc(
-        self, src_path, positive_targets, negative_targets, batch: DocsBatch, tgt_hashes: dict
+        self,
+        src_path,
+        src_id,
+        positive_targets,
+        negative_targets,
+        batch: DocsBatch,
+        tgt_hashes: dict,
     ):
         if not positive_targets:
             if not self._opts.allow_docs_without_positives:
@@ -116,8 +123,11 @@ class DocsBatchGenerator:
                 return
 
         positive_targets = self._select_targets(positive_targets, self._opts.positives_per_doc)
+        prev = batch.info['max_positives_per_doc']
+        batch.info['max_positives_per_doc'] = max(len(positive_targets), prev)
         negative_targets = self._select_targets(negative_targets, self._opts.negatives_per_doc)
 
+        batch.src_ids.append(src_id)
         src_sents = self._tokenize_doc(src_path)
         batch.src_sents.extend(src_sents)
         fragments_cnt = self._split_on_fragments(src_sents, batch.src_fragment_len)
@@ -126,10 +136,12 @@ class DocsBatchGenerator:
         )
 
         batch.positive_idxs.append([])
-        for tgt_path, tgt_hash, lbl in itertools.chain(
-            ((p, h, 1) for p, h in positive_targets), ((p, h, 0) for p, h in negative_targets)
+        for tgt_path, tgt_id, tgt_hash, lbl in itertools.chain(
+            (t + (1,) for t in positive_targets),
+            (t + (0,) for t in negative_targets),
         ):
 
+            batch.tgt_ids.append(tgt_id)
             if tgt_hash in tgt_hashes:
                 if lbl == 1:
                     batch.positive_idxs[-1].append(tgt_hashes[tgt_hash])
@@ -146,14 +158,24 @@ class DocsBatchGenerator:
                 batch.positive_idxs[-1].append(tgt_no)
 
     def _empty_batch(self):
-        iterable = [[] for _ in range(11)]
+        iterable = [[] for _ in range(13)]
         iterable.append(
-            {'src_docs_cnt': 0, 'tgt_docs_cnt': 0, 'src_frags_cnt': 0, 'tgt_frags_cnt': 0}
+            {
+                'src_docs_cnt': 0,
+                'tgt_docs_cnt': 0,
+                'src_frags_cnt': 0,
+                'tgt_frags_cnt': 0,
+                'max_positives_per_doc': 0,
+            }
         )
         return DocsBatch._make(iterable), {}
 
     def _finalize_batch(self, batch: DocsBatch):
-        batch.info['src_docs_cnt'] = len(batch.src_doc_len_in_sents)
+        for l in batch.positive_idxs:
+            l.sort()
+        src_sz = len(batch.src_doc_len_in_sents)
+        batch.info['bs'] = src_sz
+        batch.info['src_docs_cnt'] = src_sz
         batch.info['tgt_docs_cnt'] = len(batch.tgt_doc_len_in_sents)
         batch.info['src_frags_cnt'] = len(batch.src_fragment_len)
         batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
@@ -166,6 +188,7 @@ class DocsBatchGenerator:
         negative_targets = []
         cur_hash = ''
         src_path = ''
+        src_id = 0
 
         batch, tgt_hashes = self._empty_batch()
 
@@ -176,7 +199,7 @@ class DocsBatchGenerator:
 
             if cur_hash != metas[EXMPL_SRC_HASH]:
                 self._process_src_doc(
-                    src_path, positive_targets, negative_targets, batch, tgt_hashes
+                    src_path, src_id, positive_targets, negative_targets, batch, tgt_hashes
                 )
                 if len(batch.src_sents) > self._opts.batch_sent_size:
                     self._finalize_batch(batch)
@@ -187,14 +210,16 @@ class DocsBatchGenerator:
                 negative_targets = []
                 cur_hash = metas[EXMPL_SRC_HASH]
 
+                src_id = int(metas[EXMPL_SRC_ID])
                 src_path = (
                     f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/texts/{metas[EXMPL_SRC_ID]}.txt"
                 )
 
+            tgt_id = int(metas[EXMPL_TGT_ID])
             tgt_path = (
                 f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/texts/{metas[EXMPL_TGT_ID]}.txt"
             )
-            tgt_info = (tgt_path, metas[EXMPL_TGT_HASH])
+            tgt_info = (tgt_path, tgt_id, metas[EXMPL_TGT_HASH])
 
             label = int(metas[EXMPL_LABEL])
             if label == 1:
@@ -202,12 +227,13 @@ class DocsBatchGenerator:
             else:
                 negative_targets.append(tgt_info)
 
-        self._process_src_doc(src_path, positive_targets, negative_targets, batch, tgt_hashes)
+        self._process_src_doc(
+            src_path, src_id, positive_targets, negative_targets, batch, tgt_hashes
+        )
         self._finalize_batch(batch)
         if batch.src_sents:
             yield batch
-        else:
-            return
+        return
 
 
 @dataclasses.dataclass
@@ -254,39 +280,26 @@ class DocsBatchIterator(BaseBatchIterator):
         fp = f"{opts.input_dir}/{opts.meta_prefix}_{self._split}.csv"
         self._start_workers(fp)
 
-    def _create_padded_tensor(self, tokens, max_len):
-        # logging.debug('make batch with max len %s for %s', str(max_len), str(tokens))
-        bs = len(tokens)
-
-        if self._opts.pad_to_multiple_of and max_len % self._opts.pad_to_multiple_of != 0:
-            max_len = (
-                (max_len // self._opts.pad_to_multiple_of) + 1
-            ) * self._opts.pad_to_multiple_of
-
-        batch = torch.full((bs, max_len), self._pad_idx, dtype=torch.int32)
-        for i in range(bs):
-            batch[i, 0 : len(tokens[i])] = torch.as_tensor(tokens[i])
-
-        batch = batch.to(device=self._device)
-        lengths = torch.as_tensor([len(t) for t in tokens], dtype=torch.int64, device=self._device)
-        return batch, lengths
-
     def _make_batch_for_retr_task(self, batch: DocsBatch):
 
-        src_max_len = len(max(batch.src_sents, key=len))
-        src, src_len = self._create_padded_tensor(batch.src_sents, src_max_len)
+        src_lengths = torch.as_tensor(
+            [len(t) for t in batch.src_sents], dtype=torch.int64, device=self._device
+        )
 
-        tgt_max_len = len(max(batch.tgt_sents, key=len))
-        tgt, tgt_len = self._create_padded_tensor(batch.tgt_sents, tgt_max_len)
+        tgt_lengths = torch.as_tensor(
+            [len(t) for t in batch.tgt_sents], dtype=torch.int64, device=self._device
+        )
 
         src_cnt = batch.info['src_docs_cnt']
-        labels = torch.full((src_cnt, batch.info['tgt_docs_cnt']), 0, dtype=torch.int16)
+        labels = torch.full(
+            (src_cnt, batch.info['tgt_docs_cnt']), 0.0, dtype=torch.float32, device=self._device
+        )
         for i in range(src_cnt):
             positive_tgts = batch.positive_idxs[i]
             if positive_tgts:
-                labels[i][positive_tgts] = 1
+                labels[i][positive_tgts] = 1.0
 
-        b = batch._replace(src_sents=src, src_sent_len=src_len, tgt_sents=tgt, tgt_sent_len=tgt_len)
+        b = batch._replace(src_sent_len=src_lengths, tgt_sent_len=tgt_lengths)
         return b, labels
 
     def _prepare_batch(self, batch):

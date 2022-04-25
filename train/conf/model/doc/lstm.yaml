@@ -1,9 +1,9 @@
 defaults:
-  - base_sent_encoder_config
+  - base_doc_encoder_config
 encoder_kind: LSTM
-input_size: 320
+input_size: 1024
 hidden_size: 512
-num_layers: 3
+num_layers: 1
 dropout: 0.1
 bidirectional: true
 pooling_strategy: MAX

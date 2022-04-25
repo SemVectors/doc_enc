@@ -3,12 +3,14 @@
 defaults:
   - base_config
   - job_logging: default
-  - sent_batches: batch128
+  - batches: mini
   - trainer: basic
   - tokenizer: sentencepiece
   - model: default
   - model/sent: dual_enc
   - model/sent/encoder: lstm
+  - model/fragment: lstm
+  - model/doc: lstm
   - _self_
 
 verbose: false

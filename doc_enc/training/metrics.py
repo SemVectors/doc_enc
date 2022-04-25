@@ -7,52 +7,67 @@ import torch
 from doc_enc.training.types import TaskType
 
 
-class Metrics:
-    def __init__(self, task: TaskType = TaskType.UNDEFINED):
-        self._task = task
+class BaseMetrics:
+    def __init__(self):
         self._ncorrect = 0
-        self._batch_size = 0
+        self._total = 0
 
-    def _check_task(self, task):
-        if self._task == TaskType.UNDEFINED:
-            self._task = task
-        if self._task != task:
-            raise RuntimeError("Different tasks in add operation!!")
-
-    def update_metrics(self, task, output, labels, batch_size):
-        self._check_task(task)
-
-        if self._task == TaskType.SENT_RETR:
-            _, ypredicted = torch.max(output, 1)
-            self._ncorrect += (ypredicted == labels).sum().item()
-            self._batch_size += batch_size
-            return
-
-        raise RuntimeError("Logic error 5643")
+    def update_metrics(self, output, labels, batch):
+        raise NotImplementedError("implement in subclass")
 
     def __iadd__(self, other):
-        self._check_task(other._task)
-
         self._ncorrect += other._ncorrect
-        self._batch_size += other._batch_size
+        self._total += other._total
         return self
 
     def metrics(self):
-        if self._task == TaskType.SENT_RETR:
-            acc = self._ncorrect / self._batch_size
-            return {'acc': acc}
-
-        raise RuntimeError("Logic error 5644")
+        rec = self._ncorrect / self._total
+        return {'rec': rec}
 
     def best_metric_for_task(self):
-        if self._task == TaskType.SENT_RETR:
-            m = self.metrics()
-            return 'acc', m['acc']
-
-        raise RuntimeError("Logic error 5645")
+        m = self.metrics()
+        return 'rec', m['rec']
 
     def __str__(self):
-
         m = self.metrics()
         fmt = '; %s: %.3f' * len(m)
         return fmt % tuple(itertools.chain.from_iterable(m.items()))
+
+
+class SentRetrMetrics(BaseMetrics):
+    def update_metrics(self, output, labels, batch):
+        _, ypredicted = torch.max(output, 1)
+        self._ncorrect += (ypredicted == labels).sum().item()
+        self._total += output.size(0)
+
+
+class DocRetrMetrics(BaseMetrics):
+    def update_metrics(self, output, labels, batch):
+        k = batch.info['max_positives_per_doc']
+
+        pidxs = batch.positive_idxs
+        if k == 1:
+            _, ypredicted = torch.max(output, 1)
+            ll = torch.tensor(pidxs, device=ypredicted.device).squeeze()
+            self._ncorrect += (ypredicted == ll).sum().item()
+        else:
+            for i, gold_idxs in enumerate(pidxs):
+                k = len(gold_idxs)
+                if k == 0:
+                    raise RuntimeError("Imposibru!")
+                if k == 1:
+                    idx = torch.max(output[i], 0)[1].item()
+                    self._ncorrect += idx == gold_idxs[0]
+                else:
+                    _, idxs = torch.topk(output[i], k, 0)
+                    self._ncorrect += sum(1 for j in idxs if j in gold_idxs)
+
+        self._total += labels.sum().item()
+
+
+def create_metrics(task: TaskType) -> BaseMetrics:
+    if task == TaskType.SENT_RETR:
+        return SentRetrMetrics()
+    if task == TaskType.DOC_RETR:
+        return DocRetrMetrics()
+    raise RuntimeError(f"Unknown task type: {task} in metrics factory")

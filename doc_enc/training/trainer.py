@@ -11,21 +11,25 @@ import logging
 from omegaconf import MISSING
 
 import torch
+from torch.nn.utils.clip_grad import clip_grad_norm_
 
-# import torch.cuda.amp
+from torch.cuda.amp.grad_scaler import GradScaler
+from torch.cuda.amp.autocast_mode import autocast
+
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from doc_enc.tokenizer import AbcTokenizer
-from doc_enc.training.types import TaskType, SentRetrLossType
+from doc_enc.training.types import DocRetrLossType, TaskType, SentRetrLossType
 from doc_enc.training.models.model_factory import create_model
-from doc_enc.training.models.model_conf import ModelConf
-from doc_enc.training.metrics import Metrics
+from doc_enc.training.models.model_conf import DocModelConf
+from doc_enc.training.metrics import create_metrics
 
 
 @dataclasses.dataclass
 class TrainerConf:
     save_path: str = ''
     sent_retr_loss_type: SentRetrLossType = SentRetrLossType.BICE
+    doc_retr_loss_type: DocRetrLossType = DocRetrLossType.CE
     max_updates: int = MISSING
     lr: float = MISSING
     warmup_updates: int = 0
@@ -45,7 +49,7 @@ class InverseSquareRootSchedule:
     def __init__(self, opts: TrainerConf, optimizer):
         self._opts = opts
         self._optimizer = optimizer
-        self._decay_factor = opts.lr * opts.warmup_updates ** 0.5
+        self._decay_factor = opts.lr * opts.warmup_updates**0.5
 
         # initial learning rate
         if opts.warmup_init_lr >= 0:
@@ -75,7 +79,7 @@ class InverseSquareRootSchedule:
                 self._set_lr()
             return self._lr
 
-        self._lr = self._decay_factor * num_updates ** -0.5
+        self._lr = self._decay_factor * num_updates**-0.5
         self._set_lr()
         return self._lr
 
@@ -112,11 +116,12 @@ class Trainer:
     def __init__(
         self,
         opts: TrainerConf,
-        model_conf: ModelConf,
+        model_conf: DocModelConf,
         vocab: AbcTokenizer,
         world_size,
         rank,
         amp=True,
+        verbose=False,
     ):
         self._opts = opts
         if not self._opts.save_path:
@@ -126,6 +131,7 @@ class Trainer:
         self._rank = rank
         self._device = torch.device(f'cuda:{rank}')
         self._amp_enabled = amp
+        self._verbose = verbose
 
         self._local_model = self._create_model(vocab, model_conf)
         if world_size > 1:
@@ -142,13 +148,14 @@ class Trainer:
             self._model = self._local_model
 
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
+        self._doc_retr_criterion = torch.nn.CrossEntropyLoss()
 
         self._optimizer = torch.optim.Adam(self._model.parameters())
         if opts.final_lr != -1.0:
             self._scheduler = LinearLRSchedule(opts, self._optimizer)
         else:
             self._scheduler = InverseSquareRootSchedule(opts, self._optimizer)
-        self._scaler = torch.cuda.amp.GradScaler(enabled=amp)
+        self._scaler = GradScaler(enabled=amp)
         self._num_updates = 1
         self._best_metric = 0.0
 
@@ -156,7 +163,7 @@ class Trainer:
         if self._opts.resume_snapshot:
             self._init_epoch = self._load_from_checkpoint()
 
-    def _create_model(self, vocab: AbcTokenizer, model_conf: ModelConf):
+    def _create_model(self, vocab: AbcTokenizer, model_conf: DocModelConf):
         model = create_model(model_conf, vocab.vocab_size(), vocab.pad_idx())
         model = model.to(self._device)
         logging.info("created model %s", model)
@@ -174,14 +181,23 @@ class Trainer:
             raise RuntimeError("Logic error 987")
         return loss
 
-    def _calc_loss_and_metrics(self, task, output, labels, batch_size):
+    def _calc_doc_retr_loss(self, output, labels, batch_size):
+        if self._opts.doc_retr_loss_type == DocRetrLossType.CE:
+            loss = self._doc_retr_criterion(output, labels)
+        else:
+            raise RuntimeError("Logic error 988")
+        return loss
+
+    def _calc_loss_and_metrics(self, task, output, labels, batch):
         if task == TaskType.SENT_RETR:
-            loss = self._calc_sent_retr_loss(output, labels, batch_size)
+            loss = self._calc_sent_retr_loss(output, labels, batch.info['bs'])
+        elif task == TaskType.DOC_RETR:
+            loss = self._calc_doc_retr_loss(output, labels, batch.info['bs'])
         else:
             raise RuntimeError(f"Unknown task in calc loss: {task}")
 
-        m = Metrics(task)
-        m.update_metrics(task, output, labels, batch_size)
+        m = create_metrics(task)
+        m.update_metrics(output, labels, batch)
         return loss, m
 
     def _save_debug_info(self, batch, output, labels, meta):
@@ -233,9 +249,31 @@ class Trainer:
             f.write('\n')
 
     def _debug_batch(self, task, batch, labels):
+        if not self._verbose:
+            return
         if task == TaskType.SENT_RETR:
             logging.debug('src shape: %s\nsrc_len: %s', batch.src.size(), batch.src_len)
             logging.debug('tgt shape: %s\ntgt_len: %s', batch.tgt.size(), batch.tgt_len)
+        elif task == TaskType.DOC_RETR:
+            logging.debug(
+                'src sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
+                'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
+                len(batch.src_sents),
+                batch.src_sent_len,
+                batch.src_fragment_len,
+                batch.src_doc_len_in_sents,
+                batch.src_doc_len_in_frags,
+            )
+            logging.debug(
+                'tgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
+                'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
+                len(batch.tgt_sents),
+                batch.tgt_sent_len,
+                batch.tgt_fragment_len,
+                batch.tgt_doc_len_in_sents,
+                batch.tgt_doc_len_in_frags,
+            )
+            logging.debug("labels: %s", labels)
 
     # def _accumulation_steps(self):
     #     # TODO
@@ -246,14 +284,12 @@ class Trainer:
             self._scaler.unscale_(self._optimizer)
 
             if self._opts.emb_grad_scale:
-                wgrad = self._local_model.encoder.embed_tokens.weight.grad
+                wgrad = self._local_model.sent_model.encoder.embed_tokens.weight.grad
                 if wgrad is not None:
                     wgrad *= self._opts.emb_grad_scale
 
             if self._opts.max_grad_norm:
-                torch.nn.utils.clip_grad_norm_(
-                    self._local_model.parameters(), self._opts.max_grad_norm
-                )
+                clip_grad_norm_(self._local_model.parameters(), self._opts.max_grad_norm)
 
         self._scaler.step(self._optimizer)
         self._scaler.update()
@@ -266,17 +302,17 @@ class Trainer:
         epoch_updates = 1
         running_loss = 0.0
         task_num_updates = 0
-        running_metrics = Metrics()
+        running_metrics = create_metrics(train_iter.initial_task())
         prev_task = None
         self._model.train()
 
-        def _reset():
+        def _reset(new_task):
             nonlocal running_loss
             nonlocal task_num_updates
             nonlocal running_metrics
             running_loss = 0.0
             task_num_updates = 0
-            running_metrics = Metrics()
+            running_metrics = create_metrics(new_task)
 
         for task, batch, labels in train_iter.batches():
             self._debug_batch(task, batch, labels)
@@ -284,14 +320,13 @@ class Trainer:
             if prev_task != task:
                 logging.info("switching to %s task", task)
                 prev_task = task
-                _reset()
+                _reset(task)
 
             # forward pass
-            with torch.cuda.amp.autocast(enabled=self._amp_enabled):
-                output = self._model(batch)
+            with autocast(enabled=self._amp_enabled):
+                output = self._model(task, batch, labels)
                 # output size is bsz x tgt_size for retrieval task
-                # N x num_labels for classification
-                loss, m = self._calc_loss_and_metrics(task, output, labels, batch.bs)
+                loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
 
                 running_loss += loss.item()
                 running_metrics += m
@@ -312,7 +347,7 @@ class Trainer:
                     running_loss / task_num_updates,
                     running_metrics,
                 )
-                _reset()
+                _reset(task)
 
             if self._rank == 0 and self._num_updates % self._opts.eval_every == 0:
                 self._save_and_eval(epoch, dev_iter)
@@ -359,10 +394,10 @@ class Trainer:
             for task in tasks:
                 batches = 0
                 cum_loss = 0.0
-                cum_metrics = Metrics()
+                cum_metrics = create_metrics(task)
                 for _, batch, labels in dev_iter.batches(task):
-                    output = self._model(batch)
-                    loss, m = self._calc_loss_and_metrics(task, output, labels, batch.bs)
+                    output = self._model(task, batch, labels)
+                    loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
                     cum_loss += loss.item()
                     cum_metrics += m
                     batches += 1
@@ -400,7 +435,14 @@ class Trainer:
         # opts_dict = vars(self._opts)
         # if 'func' in opts_dict:
         #     del opts_dict['func']
-        state_dict = {'args': self._opts, 'model': self._local_model.encoder.state_dict()}
+        state_dict = {
+            'args': self._opts,
+            'sent_enc': self._local_model.sent_model.encoder.state_dict(),
+            'doc_enc': self._local_model.doc_encoder.state_dict(),
+        }
+        if self._local_model.frag_encoder is not None:
+            state_dict['frag_enc'] = self._local_model.frag_encoder.state_dict()
+
         torch.save(state_dict, out_path)
 
     def __call__(self, train_iter, dev_iter):
@@ -409,6 +451,7 @@ class Trainer:
             train_iter.init_epoch(epoch)
             logging.info("start epoch %d", epoch)
             self._train_epoch(epoch, train_iter, dev_iter)
+            logging.info("end epoch %d", epoch)
             epoch += 1
             if self._num_updates >= self._opts.max_updates:
                 break

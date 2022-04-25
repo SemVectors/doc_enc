@@ -5,7 +5,7 @@ from enum import Enum
 import dataclasses
 
 
-class SentEncoderKind(Enum):
+class EncoderKind(Enum):
     UNDEFINED = 0
     LSTM = 1
     TRANSFORMER = 2
@@ -21,13 +21,13 @@ class PoolingStrategy(Enum):
 
 @dataclasses.dataclass
 class BaseEncoderConf:
-    encoder_kind: SentEncoderKind
+    encoder_kind: EncoderKind
     hidden_size: int
     num_layers: int
     dropout: float
     pooling_strategy: PoolingStrategy
     # lstm opts
-    embedding_size: Optional[int] = None
+    input_size: Optional[int] = None
     bidirectional: Optional[bool] = None
     # transformer opts
     num_heads: Optional[int] = None
@@ -36,4 +36,14 @@ class BaseEncoderConf:
 
 @dataclasses.dataclass
 class SentEncoderConf(BaseEncoderConf):
+    pass
+
+
+@dataclasses.dataclass
+class FragmentEncoderConf(BaseEncoderConf):
+    pass
+
+
+@dataclasses.dataclass
+class DocEncoderConf(BaseEncoderConf):
     pass

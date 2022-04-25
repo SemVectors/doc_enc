@@ -15,8 +15,11 @@ class SentRetrLossType(Enum):
     BICE = 2
 
 
+class DocRetrLossType(Enum):
+    CE = 1
+
+
 class SentsBatch(NamedTuple):
-    bs: int
     src_id: List[int]
     src: List[List[int]]
     src_len: List[int]
@@ -24,6 +27,7 @@ class SentsBatch(NamedTuple):
     tgt: List[List[int]]
     tgt_len: List[int]
     hn_idxs: List[List[int]]
+    info: Dict[str, int]
 
 
 class DocsBatch(NamedTuple):
@@ -32,12 +36,14 @@ class DocsBatch(NamedTuple):
     src_fragment_len: List[int]
     src_doc_len_in_sents: List[int]
     src_doc_len_in_frags: List[int]
+    src_ids: List[int]
 
     tgt_sents: List[List[int]]
     tgt_sent_len: List[int]
     tgt_fragment_len: List[int]
     tgt_doc_len_in_sents: List[int]
     tgt_doc_len_in_frags: List[int]
+    tgt_ids: List[int]
 
     positive_idxs: List[List[int]]
     info: Dict[str, int]

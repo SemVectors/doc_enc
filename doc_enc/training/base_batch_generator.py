@@ -66,6 +66,10 @@ class BaseBatchIterator:
         self._processes = []
         self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
 
+    def destroy(self):
+        assert not self._processes
+        self._queue.close()
+
     def _get_line_offs_for_rank(self, filepath):
         line_cnt = _calc_line_cnt(filepath)
 
