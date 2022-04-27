@@ -89,8 +89,6 @@ class DocsBatchGenerator:
             if h not in selected_hashes:
                 batch_dups[h] = src_no
 
-        prev = batch.info['max_positives_per_doc']
-        batch.info['max_positives_per_doc'] = max(len(positive_targets), prev)
         return positive_targets
 
     def _tokenize_doc(self, path):
@@ -207,6 +205,8 @@ class DocsBatchGenerator:
         batch.info['tgt_docs_cnt'] = len(batch.tgt_doc_len_in_sents)
         batch.info['src_frags_cnt'] = len(batch.src_fragment_len)
         batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
+
+        batch.info['max_positives_per_doc'] = len(max(batch.positive_idxs, key=len))
 
     def batches(self):
         if self._meta_file is None:

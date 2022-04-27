@@ -228,6 +228,7 @@ def test_gen_with_dups(FakeTrainingDataWithDups):
 
     assert batch.info['src_docs_cnt'] == 2
     assert batch.info['tgt_docs_cnt'] == 3
+    assert batch.info['max_positives_per_doc'] == 3
 
 
 def test_gen_with_dups2(FakeTrainingDataWithDups):
@@ -261,3 +262,4 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
 
     assert batch.info['src_docs_cnt'] == 2
     assert batch.info['tgt_docs_cnt'] == 3
+    assert batch.info['max_positives_per_doc'] == 3
