@@ -140,7 +140,7 @@ def test_gen_basic_line_cnt_and_offset(FakeTrainingData):
 def test_iterator_single_generator(FakeTrainingData):
     gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
     iter_conf = SentsBatchIteratorConf(batch_generator_conf=gen_conf, async_generators=1)
-    biter = SentsBatchIterator(iter_conf, tok_conf, 'train')
+    biter = SentsBatchIterator(iter_conf, tok_conf, {}, 'train')
 
     biter.init_epoch(1)
     res = list(biter.batches())
@@ -158,7 +158,7 @@ def test_iterator_single_generator(FakeTrainingData):
 def test_iterator_1st_rank(FakeTrainingData):
     gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
     iter_conf = SentsBatchIteratorConf(batch_generator_conf=gen_conf, async_generators=1)
-    biter = SentsBatchIterator(iter_conf, tok_conf, 'train', rank=1, world_size=2)
+    biter = SentsBatchIterator(iter_conf, tok_conf, {}, 'train', rank=1, world_size=2)
 
     biter.init_epoch(1)
     res = list(biter.batches())
@@ -175,7 +175,7 @@ def test_iterator_1st_rank(FakeTrainingData):
 def test_iterator_two_generators(FakeTrainingData):
     gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
     iter_conf = SentsBatchIteratorConf(batch_generator_conf=gen_conf, async_generators=2)
-    biter = SentsBatchIterator(iter_conf, tok_conf, 'train')
+    biter = SentsBatchIterator(iter_conf, tok_conf, {}, 'train')
 
     biter.init_epoch(1)
     res = list(biter.batches())

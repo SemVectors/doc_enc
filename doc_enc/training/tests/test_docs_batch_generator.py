@@ -180,7 +180,7 @@ def test_two_batches(FakeTrainingData):
 def test_iterator_two_generators(FakeTrainingData):
     gen_conf, tok_conf = _create_gen_opts(FakeTrainingData, allow_docs_without_positives=True)
     iter_conf = DocsBatchIteratorConf(batch_generator_conf=gen_conf, async_generators=2)
-    biter = DocsBatchIterator(iter_conf, tok_conf, 'train')
+    biter = DocsBatchIterator(iter_conf, tok_conf, logging_conf={}, split='train')
 
     biter.init_epoch(1)
     res = list(biter.batches())

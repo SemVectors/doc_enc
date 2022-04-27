@@ -2,6 +2,7 @@
 
 import itertools
 import logging
+import os.path
 
 import random
 from typing import List, Optional
@@ -133,11 +134,16 @@ class DocsBatchGenerator:
         tgt_hashes: dict,
         batch_dups: dict,
     ):
+
         if not all_positive_targets:
             if not self._opts.allow_docs_without_positives:
                 return
             if not all_negative_targets:
                 return
+
+        if not os.path.exists(src_path):
+            logging.warning("src text is missing: %s", src_path)
+            return
 
         positive_targets = self._process_positive_targets(all_positive_targets, batch, batch_dups)
 
@@ -247,6 +253,10 @@ class DocsBatchGenerator:
             tgt_path = (
                 f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/texts/{metas[EXMPL_TGT_ID]}.txt"
             )
+            if not os.path.exists(tgt_path):
+                logging.warning("tgt text is missing: %s", tgt_path)
+                continue
+
             tgt_info = (tgt_path, tgt_id, metas[EXMPL_TGT_HASH])
 
             label = int(metas[EXMPL_LABEL])
@@ -277,6 +287,7 @@ class DocsBatchIterator(BaseBatchIterator):
         self,
         opts: DocsBatchIteratorConf,
         tok_conf: TokenizerConf,
+        logging_conf,
         split,
         rank=0,
         world_size=-1,
@@ -285,6 +296,7 @@ class DocsBatchIterator(BaseBatchIterator):
 
         super().__init__(
             opts,
+            logging_conf,
             DocsBatchGenerator,
             (opts.batch_generator_conf, tok_conf, split),
             rank=rank,

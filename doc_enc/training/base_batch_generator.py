@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
+
 from dataclasses import dataclass
 import multiprocessing
 import math
 import logging
+
+from hydra.core.utils import configure_log
 
 
 def _calc_line_cnt(fp):
@@ -19,7 +22,13 @@ def _split_between_nproc(n, start_offs, line_cnt):
     return range(start_offs, start_offs + line_cnt, per_rank)
 
 
-def _generator_proc_wrapper(queue: multiprocessing.Queue, GenCls, *args, **kwargs):
+def _generator_proc_wrapper(
+    queue: multiprocessing.Queue, logging_conf, rank, GenCls, *args, **kwargs
+):
+    if logging_conf:
+        configure_log(logging_conf, False)
+        if rank != 0:
+            logging.getLogger().setLevel(logging.WARNING)
     try:
         generator = GenCls(*args, **kwargs)
         for b in generator.batches():
@@ -51,12 +60,14 @@ class BaseBatchIterator:
     def __init__(
         self,
         opts: BaseBatchIteratorConf,
+        logging_conf,
         generator_cls=None,
         generator_args=(),
         rank=0,
         world_size=-1,
     ):
         self._opts = opts
+        self._logging_conf = logging_conf
         self._generator_cls = generator_cls
         self._generator_args = generator_args
 
@@ -90,6 +101,8 @@ class BaseBatchIterator:
                 target=_generator_proc_wrapper,
                 args=(
                     self._queue,
+                    self._logging_conf,
+                    self._rank,
                     self._generator_cls,
                 )
                 + self._generator_args,

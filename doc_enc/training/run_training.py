@@ -50,8 +50,10 @@ cs.store(name="base_doc_encoder_config", group="model/doc", node=DocEncoderConf)
 
 
 def _init_proc(rank, world_size, conf: Config, port='29500'):
-    if rank == 0:
-        configure_log(conf.job_logging, conf.verbose)
+    configure_log(conf.job_logging, conf.verbose)
+    if rank != 0:
+        logging.getLogger().setLevel(logging.WARNING)
+
     os.environ['MASTER_ADDR'] = '127.0.0.1'
     os.environ['MASTER_PORT'] = port
     dist.init_process_group('nccl', rank=rank, world_size=world_size)
@@ -69,6 +71,7 @@ def _run_train(rank, world_size, conf: Config):
     train_iter = BatchIterator(
         conf.batches,
         conf.tokenizer,
+        conf.job_logging,
         split="train",
         rank=rank,
         world_size=world_size,
@@ -79,6 +82,7 @@ def _run_train(rank, world_size, conf: Config):
         dev_iter = BatchIterator(
             conf.batches,
             conf.tokenizer,
+            conf.job_logging,
             split="dev",
             rank=0,
             world_size=-1,

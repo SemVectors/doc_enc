@@ -22,6 +22,7 @@ class BatchIterator:
         self,
         opts: BatchIteratorConf,
         tok_conf: TokenizerConf,
+        logging_conf,
         split,
         rank=0,
         world_size=-1,
@@ -31,6 +32,7 @@ class BatchIterator:
         self._sents_batch_iterator = SentsBatchIterator(
             opts.sents_batch_iterator_conf,
             tok_conf,
+            logging_conf,
             split=split,
             rank=rank,
             world_size=world_size,
@@ -40,6 +42,7 @@ class BatchIterator:
         self._docs_batch_iterator = DocsBatchIterator(
             opts.docs_batch_iterator_conf,
             tok_conf,
+            logging_conf,
             split=split,
             rank=rank,
             world_size=world_size,

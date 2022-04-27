@@ -382,6 +382,7 @@ class SentsBatchIterator(BaseBatchIterator):
         self,
         opts: SentsBatchIteratorConf,
         tok_conf: TokenizerConf,
+        logging_conf,
         split,
         rank=0,
         world_size=-1,
@@ -389,6 +390,7 @@ class SentsBatchIterator(BaseBatchIterator):
     ):
         super().__init__(
             opts,
+            logging_conf,
             SentsBatchGenerator,
             (opts.batch_generator_conf, tok_conf, split),
             rank=rank,
