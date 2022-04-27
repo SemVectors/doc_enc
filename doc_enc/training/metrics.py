@@ -9,13 +9,28 @@ from doc_enc.training.types import TaskType
 
 class BaseMetrics:
     def __init__(self):
+        self._cnt = 0
         self._ncorrect = 0
         self._total = 0
+        self._loss = 0.0
 
-    def update_metrics(self, output, labels, batch):
+    def update_metrics(self, loss, output, labels, batch):
+        self._cnt += 1
+        self._loss += loss
+        self._update_metrics_impl(output, labels, batch)
+
+    def _update_metrics_impl(self, output, labels, batch):
         raise NotImplementedError("implement in subclass")
 
+    def updates_num(self):
+        return self._cnt
+
+    def loss(self):
+        return self._loss
+
     def __iadd__(self, other):
+        self._cnt += other._cnt
+        self._loss += other._loss
         self._ncorrect += other._ncorrect
         self._total += other._total
         return self
@@ -29,20 +44,23 @@ class BaseMetrics:
         return 'rec', m['rec']
 
     def __str__(self):
+        prefix = "; loss %.5f" % (self._loss / self._cnt)
+
         m = self.metrics()
         fmt = '; %s: %.3f' * len(m)
-        return fmt % tuple(itertools.chain.from_iterable(m.items()))
+        metrics_str = fmt % tuple(itertools.chain.from_iterable(m.items()))
+        return prefix + metrics_str
 
 
 class SentRetrMetrics(BaseMetrics):
-    def update_metrics(self, output, labels, batch):
+    def _update_metrics_impl(self, output, labels, batch):
         _, ypredicted = torch.max(output, 1)
         self._ncorrect += (ypredicted == labels).sum().item()
         self._total += output.size(0)
 
 
 class DocRetrMetrics(BaseMetrics):
-    def update_metrics(self, output, labels, batch):
+    def _update_metrics_impl(self, output, labels, batch):
         k = batch.info['max_positives_per_doc']
 
         pidxs = batch.positive_idxs

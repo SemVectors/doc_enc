@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+from typing import Optional, Generator, List
 import dataclasses
+import logging
 import copy
 
 from doc_enc.training.types import TaskType
@@ -13,8 +15,6 @@ from doc_enc.tokenizer import TokenizerConf
 class BatchIteratorConf:
     sents_batch_iterator_conf: SentsBatchIteratorConf
     docs_batch_iterator_conf: DocsBatchIteratorConf
-    initial_task: TaskType = TaskType.SENT_RETR
-    switch_every: int = 10
 
 
 class BatchIterator:
@@ -52,17 +52,44 @@ class BatchIterator:
         self._opts = opts
         self._epoch = 0
 
-    def init_epoch(self, epoch):
+        self._task_idx = 0
+        self._current_tasks = None
+        self._iterators: Optional[List[Optional[Generator]]] = None
+
+    def init_epoch(self, epoch, tasks=None):
         self._epoch = epoch - 1
-        self._sents_batch_iterator.init_epoch(epoch)
-        self._docs_batch_iterator.init_epoch(epoch)
+
+        if tasks is None:
+            self._current_tasks = copy.copy(self.supported_tasks())
+        else:
+            self._current_tasks = copy.copy(tasks)
+
+        self._task_idx = 0
+        self._iterators = self._make_iterators(self._current_tasks)
+
+        if TaskType.SENT_RETR in self._current_tasks:
+            self._sents_batch_iterator.init_epoch(epoch)
+        if TaskType.DOC_RETR in self._current_tasks:
+            self._docs_batch_iterator.init_epoch(epoch)
 
     def destroy(self):
         self._sents_batch_iterator.destroy()
         self._docs_batch_iterator.destroy()
 
     def initial_task(self):
-        return self._opts.initial_task
+        if self._current_tasks is None:
+            raise RuntimeError("Batch iterator is not Initialized!")
+        return self._current_tasks[0]
+
+    def current_task(self):
+        if self._current_tasks is None:
+            raise RuntimeError("Batch iterator is not Initialized!")
+        return self._current_tasks[self._task_idx]
+
+    def empty(self):
+        if self._iterators is None:
+            raise RuntimeError("Batch iterator is not Initialized!")
+        return all(it is None for it in self._iterators)
 
     def supported_tasks(self):
         return [TaskType.SENT_RETR, TaskType.DOC_RETR]
@@ -71,48 +98,28 @@ class BatchIterator:
         iterators = (self._sents_batch_iterator.batches(), self._docs_batch_iterator.batches())
         return [i for t, i in zip(self.supported_tasks(), iterators) if t in tasks]
 
-    def batches(self, task=None):
-
-        tasks = copy.copy(self.supported_tasks())
-        switch_every = self._opts.switch_every
-        if task is None:
-            task = self._opts.initial_task
-        else:
-            if task not in self.supported_tasks():
-                raise RuntimeError(f"Unsupported task {task}")
-            switch_every = 0
-            tasks = [task]
-        task_idx = tasks.index(task)
-
-        def _switch_task(inc=1):
-            nonlocal task_idx
-            if switch_every:
-                task_idx += inc
-                task_idx = task_idx % len(tasks)
-
-        # change task at the beggining of each epoch except the first one
-        # self._epoch == 0 in the beggining
-        _switch_task(self._epoch)
-
-        iterators = self._make_iterators(tasks)
+    def batches(self, batches_cnt: int):
+        if self._iterators is None or self._current_tasks is None:
+            raise RuntimeError("Batch iterator is not Initialized!")
 
         batch_num = 0
-
+        iterator = self._iterators[self._task_idx]
+        if iterator is None:
+            return
         while True:
-            task = tasks[task_idx]
-            iterator = iterators[task_idx]
-
             try:
                 b = next(iterator)
-                yield task, *b
+                yield b
             except StopIteration:
-                del tasks[task_idx]
-                del iterators[task_idx]
-                if not tasks:
-                    break
-                _switch_task()
-                batch_num = 0
+                self._iterators[self._task_idx] = None
+                break
             else:
                 batch_num += 1
-                if switch_every and batch_num % switch_every == 0:
-                    _switch_task()
+                if batches_cnt and batch_num >= batches_cnt:
+                    break
+
+    def switch_task(self):
+        if self._current_tasks is None:
+            raise RuntimeError("Batch iterator is not Initialized!")
+        self._task_idx += 1
+        self._task_idx = self._task_idx % len(self._current_tasks)

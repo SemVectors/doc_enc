@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import contextlib
 from typing import List
 import dataclasses
 import json
@@ -11,13 +12,18 @@ import logging
 from omegaconf import MISSING
 
 import torch
+import torch.distributed as dist
+
+from torch.distributed.optim.zero_redundancy_optimizer import ZeroRedundancyOptimizer as ZeRO
 from torch.nn.utils.clip_grad import clip_grad_norm_
 
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.cuda.amp.autocast_mode import autocast
 
+from torch.distributed.algorithms.join import Join
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+from doc_enc.training.batch_iterator import BatchIterator
 from doc_enc.tokenizer import AbcTokenizer
 from doc_enc.training.types import DocRetrLossType, TaskType, SentRetrLossType
 from doc_enc.training.models.model_factory import create_model
@@ -31,6 +37,8 @@ class TrainerConf:
     sent_retr_loss_type: SentRetrLossType = SentRetrLossType.BICE
     doc_retr_loss_type: DocRetrLossType = DocRetrLossType.CE
     max_updates: int = MISSING
+    switch_tasks_every: int = 10
+
     lr: float = MISSING
     warmup_updates: int = 0
     warmup_init_lr: float = -1.0
@@ -112,6 +120,12 @@ class LinearLRSchedule:
         return self._lr
 
 
+def _init_dist_default_group(rank, world_size, port='29500'):
+    os.environ['MASTER_ADDR'] = '127.0.0.1'
+    os.environ['MASTER_PORT'] = port
+    dist.init_process_group('nccl', rank=rank, world_size=world_size)
+
+
 class Trainer:
     def __init__(
         self,
@@ -136,21 +150,27 @@ class Trainer:
         self._local_model = self._create_model(vocab, model_conf)
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
+            _init_dist_default_group(rank, world_size)
+            self._cpu_group = dist.new_group(backend='gloo')
             self._model = DDP(
                 self._local_model,
                 device_ids=[rank],
                 output_device=rank,
                 bucket_cap_mb=200,
-                find_unused_parameters=False,
+                find_unused_parameters=True,
             )
+            self._uneven_input_handling = Join
         else:
             logging.info("Skip creating DistributedDataParallel since world size == 1")
+            self._cpu_group = None
             self._model = self._local_model
+            self._uneven_input_handling = contextlib.nullcontext
 
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
         self._doc_retr_criterion = torch.nn.CrossEntropyLoss()
 
-        self._optimizer = torch.optim.Adam(self._model.parameters())
+        # self._optimizer = torch.optim.Adam(self._model.parameters())
+        self._optimizer = ZeRO(self._model.parameters(), torch.optim.Adam)
         if opts.final_lr != -1.0:
             self._scheduler = LinearLRSchedule(opts, self._optimizer)
         else:
@@ -197,7 +217,7 @@ class Trainer:
             raise RuntimeError(f"Unknown task in calc loss: {task}")
 
         m = create_metrics(task)
-        m.update_metrics(output, labels, batch)
+        m.update_metrics(loss.item(), output, labels, batch)
         return loss, m
 
     def _save_debug_info(self, batch, output, labels, meta):
@@ -277,10 +297,6 @@ class Trainer:
             )
             logging.debug("labels: %s", labels)
 
-    # def _accumulation_steps(self):
-    #     # TODO
-    #     return 5
-
     def _make_update(self, task):
         if self._opts.max_grad_norm or self._opts.emb_grad_scale:
             self._scaler.unscale_(self._optimizer)
@@ -300,29 +316,10 @@ class Trainer:
         self._num_updates += 1
         self._scheduler.step_update(self._num_updates)
 
-    def _train_epoch(self, epoch, train_iter, dev_iter):
-        epoch_updates = 1
-        running_loss = 0.0
-        task_num_updates = 0
-        running_metrics = create_metrics(train_iter.initial_task())
-        prev_task = None
-        self._model.train()
-
-        def _reset(new_task):
-            nonlocal running_loss
-            nonlocal task_num_updates
-            nonlocal running_metrics
-            running_loss = 0.0
-            task_num_updates = 0
-            running_metrics = create_metrics(new_task)
-
-        for task, batch, labels in train_iter.batches():
+    def _process_task_batches(self, task, task_batches):
+        running_metrics = create_metrics(task)
+        for batch, labels in task_batches:
             self._debug_batch(task, batch, labels)
-
-            if prev_task != task:
-                logging.info("switching to %s task", task)
-                prev_task = task
-                _reset(task)
 
             # forward pass
             with autocast(enabled=self._amp_enabled):
@@ -330,30 +327,12 @@ class Trainer:
                 # output size is bsz x tgt_size for retrieval task
                 loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
 
-                running_loss += loss.item()
                 running_metrics += m
 
             # backpropagate and update optimizer learning rate
             self._scaler.scale(loss).backward()
 
             self._make_update(task)
-            epoch_updates += 1
-            task_num_updates += 1
-            if self._rank == 0 and self._num_updates % self._opts.log_every == 0:
-                logging.info(
-                    "#%d %d/%d, lr %.4e, loss %.5f%s",
-                    self._num_updates,
-                    epoch,
-                    epoch_updates,
-                    self._scheduler.get_lr(),
-                    running_loss / task_num_updates,
-                    running_metrics,
-                )
-                _reset(task)
-
-            if self._rank == 0 and self._num_updates % self._opts.eval_every == 0:
-                self._save_and_eval(epoch, dev_iter)
-                self._model.train()
 
             if self._rank == 0 and self._opts.debug_iters:
                 l = [self._num_updates % int(v) for v in self._opts.debug_iters]
@@ -361,6 +340,60 @@ class Trainer:
                     meta = {'task': task, 'loss': loss.item()}
                     meta.update(m.metrics())
                     self._save_debug_info(batch, output, labels, meta)
+        return running_metrics
+
+    def _sync_quiting(self, done):
+        # Quit from epoch with all processes at once
+        if self._cpu_group is None:
+            return True
+        t = torch.tensor([int(done)])
+        dist.all_reduce(t, group=self._cpu_group)
+        return t.item() == dist.get_world_size()
+
+    def _train_epoch(self, epoch, train_iter: BatchIterator, dev_iter: BatchIterator):
+        epoch_updates = 1
+        running_metrics = create_metrics(train_iter.current_task())
+        last_log_update = 0
+        last_eval_update = 0
+        self._model.train()
+
+        def _reset(new_task):
+            nonlocal running_metrics
+            running_metrics = create_metrics(new_task)
+
+        while True:
+            task = train_iter.current_task()
+            gen = train_iter.batches(self._opts.switch_tasks_every)
+            with self._uneven_input_handling([self._model, self._optimizer]):
+                metrics = self._process_task_batches(task, gen)
+
+            epoch_updates += metrics.updates_num()
+            running_metrics += metrics
+
+            if self._rank == 0 and epoch_updates - last_log_update > self._opts.log_every:
+                last_log_update = epoch_updates
+                logging.info(
+                    "#%d %d/%d, lr %.4e%s",
+                    self._num_updates,
+                    epoch,
+                    epoch_updates,
+                    self._scheduler.get_lr(),
+                    running_metrics,
+                )
+
+            if self._rank == 0 and epoch_updates - last_eval_update > self._opts.eval_every:
+                last_eval_update = epoch_updates
+                self._save_and_eval(epoch, dev_iter)
+                self._model.train()
+
+            if self._sync_quiting(train_iter.empty()):
+                break
+
+            train_iter.switch_task()
+            _reset(train_iter.current_task())
+
+        if self._cpu_group is not None:
+            dist.barrier(group=self._cpu_group)
 
     def _load_from_checkpoint(self):
         logging.info("loading state from %s", self._opts.resume_snapshot)
@@ -387,42 +420,42 @@ class Trainer:
             snapshot_path,
         )
 
-    def _eval_on_dev(self, dev_iter):
+    def _eval_on_dev(self, epoch, dev_iter: BatchIterator):
         with torch.no_grad():
-            self._model.eval()
-            tasks = dev_iter.supported_tasks()
+            self._local_model.eval()
+            all_tasks = dev_iter.supported_tasks()
 
             metrics_per_task = {}
-            for task in tasks:
+            for task in all_tasks:
                 batches = 0
-                cum_loss = 0.0
                 cum_metrics = create_metrics(task)
-                for _, batch, labels in dev_iter.batches(task):
-                    output = self._model(task, batch, labels)
-                    loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
-                    cum_loss += loss.item()
+                dev_iter.init_epoch(epoch, [task])
+                for batch, labels in dev_iter.batches(batches_cnt=0):
+                    output = self._local_model(task, batch, labels)
+                    _, m = self._calc_loss_and_metrics(task, output, labels, batch)
                     cum_metrics += m
                     batches += 1
-                metrics_per_task[task] = (cum_loss / batches, cum_metrics)
+                metrics_per_task[task] = cum_metrics
 
             return metrics_per_task
 
-    def _save_and_eval(self, epoch, dev_iter):
+    def _save_and_eval(self, epoch, dev_iter: BatchIterator):
+        logging.info("Saving new checkpoint")
         self._save_checkpoint(epoch)
-        dev_iter.init_epoch(epoch)
-        m_per_task = self._eval_on_dev(dev_iter)
-        for task, (loss, m) in m_per_task.items():
+        logging.info("Evaling on dev...")
+        m_per_task = self._eval_on_dev(epoch, dev_iter)
+        logging.info("Results on dev data")
+        for task, m in m_per_task.items():
             logging.info(
-                "Task %s; Epoch %s; #up %d; Loss on dev %.5f%s",
+                "Task %s; Epoch %s; #up %d%s",
                 task,
                 epoch,
                 self._num_updates,
-                loss,
                 m,
             )
 
         best_m = 0.0
-        for task, (loss, m) in m_per_task.items():
+        for task, m in m_per_task.items():
             _, v = m.best_metric_for_task()
             best_m += v
         best_m /= len(m_per_task)
@@ -447,8 +480,9 @@ class Trainer:
 
         torch.save(state_dict, out_path)
 
-    def __call__(self, train_iter, dev_iter):
+    def __call__(self, train_iter: BatchIterator, dev_iter: BatchIterator):
         epoch = self._init_epoch
+
         while True:
             train_iter.init_epoch(epoch)
             logging.info("start epoch %d", epoch)

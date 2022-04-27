@@ -327,7 +327,7 @@ class SentsBatchGenerator:
     def _log_bucket_info(self, batches):
         n = len(batches)
 
-        logging.info('batches cnt %d, avg tgt cnt %d', n, sum(len(b.tgt_id) for b in batches) / n)
+        logging.debug('batches cnt %d, avg tgt cnt %d', n, sum(len(b.tgt_id) for b in batches) / n)
 
     def batches(self):
         if self._src_file is None or self._tgt_file is None or self._dup_file is None:
@@ -357,7 +357,7 @@ class SentsBatchGenerator:
                 self._sort_within_bucket(bucket)
                 batches, to_next_bucket = self._create_batches_from_bucket(bucket)
                 self._log_bucket_info(batches)
-                logging.info("%d examples left for next bucket", len(to_next_bucket))
+                logging.debug("%d examples left for next bucket", len(to_next_bucket))
                 yield from batches
                 bucket = to_next_bucket
 
@@ -443,9 +443,5 @@ class SentsBatchIterator(BaseBatchIterator):
         return b, labels
 
     def _prepare_batch(self, batch):
-
-        # TODO fix possible bug with multigpu case
-        # when len(self._iter_over_buckets) is not equal over all processes
-        # there was documentation in pytorch about that case
         batch, labels = self._make_batch_for_retr_task(batch)
         return batch, labels

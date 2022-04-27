@@ -3,7 +3,6 @@
 import logging
 from typing import Dict, Any
 from dataclasses import dataclass
-import os
 
 import hydra
 from hydra.core.utils import configure_log
@@ -49,14 +48,11 @@ cs.store(name="base_frag_encoder_config", group="model/fragment", node=FragmentE
 cs.store(name="base_doc_encoder_config", group="model/doc", node=DocEncoderConf)
 
 
-def _init_proc(rank, world_size, conf: Config, port='29500'):
+def _init_proc(rank, world_size, conf: Config):
     configure_log(conf.job_logging, conf.verbose)
     if rank != 0:
         logging.getLogger().setLevel(logging.WARNING)
 
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = port
-    dist.init_process_group('nccl', rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
 
