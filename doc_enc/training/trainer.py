@@ -530,9 +530,9 @@ class Trainer:
 
         while True:
             train_iter.init_epoch(epoch)
-            logging.info("start epoch %d", epoch)
+            logging.info("Start epoch %d", epoch)
             self._train_epoch(epoch, train_iter, dev_iter)
-            logging.info("end epoch %d", epoch)
+            logging.info("End epoch %d", epoch)
             epoch += 1
             if self._num_updates >= self._opts.max_updates:
                 break

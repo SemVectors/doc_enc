@@ -11,6 +11,8 @@ sents_batch_iterator_conf:
 
 docs_batch_iterator_conf:
   async_generators: 2
+  exclude_datasets:
+    - gwiki
   batch_generator_conf:
     input_dir: /train/data/docs
     batch_sent_size: 256

@@ -30,8 +30,9 @@
         name = "tsa04.isa.ru:5050/semvectors/doc_enc/train";
         tag = pkgs.python.pkgs.doc_enc.version;
 
-        contents = [pkgs.bashInteractive pkgs.coreutils pkgs.glibc pkgs.glibc.bin ];
-        # contents = [pkgs.bashInteractive pkgs.coreutils ];
+        contents = [
+          pkgs.bashInteractive pkgs.coreutils
+        ];
         #paths should be relative in extraCommands
         # extraCommands = '' ln -s lib lib/x86_64-linux-gnu '';
         config = {
@@ -43,7 +44,7 @@
             "TRAIN_CONFIG_PATH=/train/conf"
             "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
             "LD_LIBRARY_PATH=/usr/lib64"
-                ];
+          ];
 
 
           WorkingDir = "/train";
