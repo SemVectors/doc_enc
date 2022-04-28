@@ -14,6 +14,19 @@ class BaseMetrics:
         self._total = 0
         self._loss = 0.0
 
+    def tolist(self):
+        return [self._cnt, self._ncorrect, self._total, self._loss]
+
+    @classmethod
+    def fromlist(cls, l):
+        m = cls()
+        assert len(l) == 4
+        for f, v in zip(('_cnt', '_ncorrect', '_total'), l[:3]):
+            m.__dict__[f] = int(v)
+
+        m._loss = l[3]
+        return m
+
     def update_metrics(self, loss, output, labels, batch):
         self._cnt += 1
         self._loss += loss
@@ -36,7 +49,7 @@ class BaseMetrics:
         return self
 
     def metrics(self):
-        rec = self._ncorrect / self._total
+        rec = self._ncorrect / self._total if self._total else 0.0
         return {'rec': rec}
 
     def best_metric_for_task(self):
@@ -44,7 +57,7 @@ class BaseMetrics:
         return 'rec', m['rec']
 
     def __str__(self):
-        prefix = "; loss %.5f" % (self._loss / self._cnt)
+        prefix = "; loss %.5f" % (self._loss / self._cnt if self._cnt else 0.0)
 
         m = self.metrics()
         fmt = '; %s: %.3f' * len(m)
@@ -83,9 +96,14 @@ class DocRetrMetrics(BaseMetrics):
         self._total += labels.sum().item()
 
 
-def create_metrics(task: TaskType) -> BaseMetrics:
+def create_metrics(task: TaskType, metrics_list=None) -> BaseMetrics:
     if task == TaskType.SENT_RETR:
-        return SentRetrMetrics()
-    if task == TaskType.DOC_RETR:
-        return DocRetrMetrics()
-    raise RuntimeError(f"Unknown task type: {task} in metrics factory")
+        cls = SentRetrMetrics
+    elif task == TaskType.DOC_RETR:
+        cls = DocRetrMetrics
+    else:
+        raise RuntimeError(f"Unknown task type: {task} in metrics factory")
+
+    if metrics_list is None:
+        return cls()
+    return cls.fromlist(metrics_list)

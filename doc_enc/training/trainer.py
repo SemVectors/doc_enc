@@ -143,6 +143,7 @@ class Trainer:
 
         self._model_conf = model_conf
         self._rank = rank
+        self._world_size = world_size
         self._device = torch.device(f'cuda:{rank}')
         self._amp_enabled = amp
         self._verbose = verbose
@@ -342,24 +343,46 @@ class Trainer:
                     self._save_debug_info(batch, output, labels, meta)
         return running_metrics
 
+    def _sync_epoch_updates(self, n):
+        # When data is unevenly split, processes may have done different number of updates
+        if self._cpu_group is None:
+            return n
+        t = torch.tensor([n])
+        dist.broadcast(t, 0, group=self._cpu_group, async_op=False)
+        return t.item()
+
     def _sync_quiting(self, done):
         # Quit from epoch with all processes at once
         if self._cpu_group is None:
             return True
         t = torch.tensor([int(done)])
-        dist.all_reduce(t, group=self._cpu_group)
-        return t.item() == dist.get_world_size()
+        dist.all_reduce(t, op=dist.ReduceOp.SUM, group=self._cpu_group)
+        return t.item() == self._world_size
+
+    def _collect_metrics(self, metrics_dict):
+        if self._cpu_group is None:
+            return metrics_dict
+        tasks = []
+        metrics_list = []
+        for t, m in metrics_dict.items():
+            tasks.append(t)
+            metrics_list.append(m.tolist())
+        t = torch.tensor(metrics_list, dtype=torch.float32)
+        dist.reduce(t, 0, op=dist.ReduceOp.SUM, group=self._cpu_group)
+        return {k: create_metrics(k, v) for k, v in zip(tasks, t.tolist())}
 
     def _train_epoch(self, epoch, train_iter: BatchIterator, dev_iter: BatchIterator):
         epoch_updates = 1
-        running_metrics = create_metrics(train_iter.current_task())
+        running_metrics = {}
         last_log_update = 0
         last_eval_update = 0
         self._model.train()
 
-        def _reset(new_task):
+        def _reset():
             nonlocal running_metrics
-            running_metrics = create_metrics(new_task)
+            running_metrics = {t: create_metrics(t) for t in train_iter.supported_tasks()}
+
+        _reset()
 
         while True:
             task = train_iter.current_task()
@@ -368,18 +391,28 @@ class Trainer:
                 metrics = self._process_task_batches(task, gen)
 
             epoch_updates += metrics.updates_num()
-            running_metrics += metrics
+            epoch_updates = self._sync_epoch_updates(epoch_updates)
 
-            if self._rank == 0 and epoch_updates - last_log_update > self._opts.log_every:
+            running_metrics[task] += metrics
+
+            if epoch_updates - last_log_update > self._opts.log_every:
                 last_log_update = epoch_updates
-                logging.info(
-                    "#%d %d/%d, lr %.4e%s",
-                    self._num_updates,
-                    epoch,
-                    epoch_updates,
-                    self._scheduler.get_lr(),
-                    running_metrics,
-                )
+                running_metrics = self._collect_metrics(running_metrics)
+                if self._rank == 0:
+                    sm = ''
+                    for t, m in running_metrics.items():
+                        tstr = "SR" if t == TaskType.SENT_RETR else "DR"
+                        sm += f" Task: {tstr} #up: {m.updates_num()/self._world_size}{m}"
+
+                    logging.info(
+                        "#%d %d/%d, lr %.4e%s",
+                        self._num_updates,
+                        epoch,
+                        epoch_updates,
+                        self._scheduler.get_lr(),
+                        sm,
+                    )
+                _reset()
 
             if self._rank == 0 and epoch_updates - last_eval_update > self._opts.eval_every:
                 last_eval_update = epoch_updates
@@ -390,7 +423,6 @@ class Trainer:
                 break
 
             train_iter.switch_task()
-            _reset(train_iter.current_task())
 
         if self._cpu_group is not None:
             dist.barrier(group=self._cpu_group)
