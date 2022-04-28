@@ -49,6 +49,7 @@ class TrainerConf:
 
     log_every: int = 100
     eval_every: int = 300_000
+    checkpoint_every: int = 200_000
     debug_iters: List[int] = dataclasses.field(default_factory=list)
 
 
@@ -376,6 +377,7 @@ class Trainer:
         running_metrics = {}
         last_log_update = 0
         last_eval_update = 0
+        last_checkpoint_update = 0
         self._model.train()
 
         def _reset():
@@ -414,9 +416,18 @@ class Trainer:
                     )
                 _reset()
 
-            if self._rank == 0 and epoch_updates - last_eval_update > self._opts.eval_every:
+            if (
+                self._rank == 0
+                and epoch_updates - last_checkpoint_update > self._opts.checkpoint_every
+            ):
+                last_checkpoint_update = epoch_updates
+                logging.info("Saving new checkpoint")
+                self._save_checkpoint(epoch)
+
+            if epoch_updates - last_eval_update > self._opts.eval_every:
                 last_eval_update = epoch_updates
-                self._save_and_eval(epoch, dev_iter)
+
+                self._eval_and_save(epoch, dev_iter)
                 self._model.train()
 
             if self._sync_quiting(train_iter.empty()):
@@ -471,32 +482,34 @@ class Trainer:
 
             return metrics_per_task
 
-    def _save_and_eval(self, epoch, dev_iter: BatchIterator):
-        logging.info("Saving new checkpoint")
-        self._save_checkpoint(epoch)
+    def _eval_and_save(self, epoch, dev_iter: BatchIterator):
         logging.info("Evaling on dev...")
         m_per_task = self._eval_on_dev(epoch, dev_iter)
-        logging.info("Results on dev data")
-        for task, m in m_per_task.items():
-            logging.info(
-                "Task %s; Epoch %s; #up %d%s",
-                task,
-                epoch,
-                self._num_updates,
-                m,
-            )
+        m_per_task = self._collect_metrics(m_per_task)
+        if self._rank == 0:
+            logging.info("Results on dev data")
+            for task, m in m_per_task.items():
+                logging.info(
+                    "Task %s; Epoch %s; #up %d%s",
+                    task,
+                    epoch,
+                    self._num_updates,
+                    m,
+                )
 
-        best_m = 0.0
-        for task, m in m_per_task.items():
-            _, v = m.best_metric_for_task()
-            best_m += v
-        best_m /= len(m_per_task)
+            best_m = 0.0
+            for task, m in m_per_task.items():
+                _, v = m.best_metric_for_task()
+                best_m += v
+            best_m /= len(m_per_task)
 
-        logging.info("best %s dev %s", self._best_metric, best_m)
-        if best_m > self._best_metric:
-            self._best_metric = best_m
-            self._save_model(Path(self._opts.save_path) / 'model.pt')
-            logging.info("new best model was saved in %s", Path(self._opts.save_path) / 'model.pt')
+            logging.info("best %s dev %s", self._best_metric, best_m)
+            if best_m > self._best_metric:
+                self._best_metric = best_m
+                self._save_model(Path(self._opts.save_path) / 'model.pt')
+                logging.info(
+                    "new best model was saved in %s", Path(self._opts.save_path) / 'model.pt'
+                )
 
     def _save_model(self, out_path):
         # opts_dict = vars(self._opts)

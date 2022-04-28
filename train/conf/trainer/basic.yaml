@@ -2,5 +2,6 @@ defaults:
   - base_trainer_config
 max_updates: 900
 eval_every: 400
+checkpoint_every: 600
 lr: 0.01
 warmup_updates: 0

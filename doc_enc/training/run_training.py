@@ -74,18 +74,15 @@ def _run_train(rank, world_size, conf: Config):
         pad_idx=vocab.pad_idx(),
     )
 
-    if rank == 0:
-        dev_iter = BatchIterator(
-            conf.batches,
-            conf.tokenizer,
-            conf.job_logging,
-            split="dev",
-            rank=0,
-            world_size=-1,
-            pad_idx=vocab.pad_idx(),
-        )
-    else:
-        dev_iter = None
+    dev_iter = BatchIterator(
+        conf.batches,
+        conf.tokenizer,
+        conf.job_logging,
+        split="dev",
+        rank=rank,
+        world_size=world_size,
+        pad_idx=vocab.pad_idx(),
+    )
     trainer = Trainer(conf.trainer, conf.model, vocab, world_size, rank, verbose=conf.verbose)
     trainer(train_iter, dev_iter)
 
