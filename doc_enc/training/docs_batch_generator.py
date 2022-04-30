@@ -3,6 +3,7 @@
 import itertools
 import logging
 import os.path
+from pathlib import Path
 
 import random
 from typing import List, Optional
@@ -65,6 +66,17 @@ class DocsBatchGenerator:
         fp = f"{self._opts.input_dir}/{self._opts.meta_prefix}_{split}.csv"
         self._meta_file = open(fp, 'r', encoding='utf8')
         skip_to_line(self._meta_file, self._line_offset)
+
+        self._text_dirs_dict = {}
+        for p in Path(self._opts.input_dir).iterdir():
+            if not p.is_dir():
+                continue
+            if (p / "texts").is_dir():
+                self._text_dirs_dict[p.name] = ("texts", "texts")
+            elif (p / "texts_1").is_dir() and (p / "texts_2").is_dir():
+                self._text_dirs_dict[p.name] = ("texts_1", "texts_2")
+            else:
+                raise RuntimeError(f"Texts dir is not found in {p}")
 
     def __del__(self):
         if self._meta_file is not None:
@@ -225,6 +237,7 @@ class DocsBatchGenerator:
                 break
             metas = l.split(',')
 
+            src_texts, tgt_texts = self._text_dirs_dict[metas[EXMPL_DATASET]]
             if cur_hash != metas[EXMPL_SRC_HASH]:
                 self._process_src_doc(
                     src_path,
@@ -245,14 +258,10 @@ class DocsBatchGenerator:
                 cur_hash = metas[EXMPL_SRC_HASH]
 
                 src_id = int(metas[EXMPL_SRC_ID])
-                src_path = (
-                    f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/texts/{metas[EXMPL_SRC_ID]}.txt"
-                )
+                src_path = f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{src_texts}/{metas[EXMPL_SRC_ID]}.txt"
 
             tgt_id = int(metas[EXMPL_TGT_ID])
-            tgt_path = (
-                f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/texts/{metas[EXMPL_TGT_ID]}.txt"
-            )
+            tgt_path = f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{tgt_texts}/{metas[EXMPL_TGT_ID]}.txt"
             if not os.path.exists(tgt_path):
                 logging.warning("tgt text is missing: %s", tgt_path)
                 continue
