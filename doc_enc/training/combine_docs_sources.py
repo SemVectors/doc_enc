@@ -6,6 +6,8 @@ from pathlib import Path
 import csv
 import hashlib
 
+from doc_enc.training.base_batch_generator import find_file, open_bin_file, open_file
+
 
 class Example(NamedTuple):
     dataset: int
@@ -72,13 +74,18 @@ def _calc_sentence_size_and_hash(dataset_path: Path):
 
     info_dict = {}
     for p in docs_path.iterdir():
-        if not p.is_file() or not p.name.endswith(".txt"):
+        if not p.is_file() or not p.suffix in ('.gz', '.txt'):
             continue
-        doc_id = int(p.name[:-4])
+
+        doc_id = p
+        while doc_id.suffix:
+            doc_id = doc_id.with_suffix('')
+
+        doc_id = int(doc_id.name)
         if doc_id in info_dict:
             continue
 
-        with open(p, 'rb') as f:
+        with open_bin_file(p) as f:
             i = 0
             md5hash = hashlib.md5()
             for i, l in enumerate(f, 1):
@@ -88,13 +95,13 @@ def _calc_sentence_size_and_hash(dataset_path: Path):
 
 
 def _generate_examples_from_dataset(p: Path, split: str, dataset_id: int, info_dict):
-    meta_path = p / f"{split}.csv"
+    meta_path = find_file(p / f"{split}.csv")
     docs_path = p / "texts"
     if not meta_path.exists():
         raise RuntimeError(f"Not found {split}.csv in {p}")
     if not docs_path.exists():
         raise RuntimeError(f"Not found texts folder in {p}")
-    with open(meta_path, 'r', encoding='utf8') as f:
+    with open_file(meta_path) as f:
         reader = csv.reader(f)
         try:
             next(reader)

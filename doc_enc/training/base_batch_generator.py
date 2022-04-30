@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 
 
-from typing import Union
+from typing import Union, Optional
 from dataclasses import dataclass
 import multiprocessing
 import math
 import logging
-import gzip
+from gzip import GzipFile
+from io import TextIOWrapper
 from pathlib import Path
 
 from hydra.core.utils import configure_log
 
 
-def open_file(fp: Union[Path, str], mode='r', encoding='utf8'):
+def _is_gzipped(fp):
     if isinstance(fp, Path):
         n = fp.name
     elif isinstance(fp, str):
@@ -20,15 +21,22 @@ def open_file(fp: Union[Path, str], mode='r', encoding='utf8'):
     else:
         raise RuntimeError("logic error 82093")
 
-    if n.endswith('.gz'):
-        opener = gzip.open
-    else:
-        opener = open
-
-    return opener(fp, mode=mode, encoding=encoding)
+    return n.endswith('.gz')
 
 
-def find_file(fp: Union[Path, str]):
+def open_bin_file(fp: Union[Path, str]):
+    if _is_gzipped(fp):
+        return GzipFile(fp, mode='rb')
+    return open(fp, mode='rb')
+
+
+def open_file(fp: Union[Path, str]):
+    if _is_gzipped(fp):
+        return TextIOWrapper(GzipFile(fp, 'rb'), encoding='utf8')
+    return open(fp, 'rt', encoding='utf8')
+
+
+def find_file(fp: Union[Path, str], throw_if_not_exist=True):
     if isinstance(fp, Path):
         sp = str(fp)
     elif isinstance(fp, str):
@@ -42,11 +50,14 @@ def find_file(fp: Union[Path, str]):
         return np
     if fp.exists():
         return fp
-    raise RuntimeError(f"Failed to find {fp}[.gz]")
+
+    if throw_if_not_exist:
+        raise RuntimeError(f"Failed to find {fp}[.gz]")
+    return fp
 
 
 def _calc_line_cnt(fp):
-    with open_file(fp, 'rb', encoding=None) as f:
+    with open_bin_file(fp) as f:
         i = -1
         for i, _ in enumerate(f):
             pass

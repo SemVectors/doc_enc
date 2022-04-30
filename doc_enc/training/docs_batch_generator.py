@@ -17,6 +17,8 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
+    find_file,
+    open_file,
 )
 from doc_enc.training.types import DocsBatch
 
@@ -104,7 +106,7 @@ class DocsBatchGenerator:
         return positive_targets
 
     def _tokenize_doc(self, path):
-        with open(path, 'r', encoding='utf8') as f:
+        with open_file(path) as f:
             sents = []
             for l in f:
                 tokens = self._tokenizer(l.rstrip())
@@ -113,7 +115,6 @@ class DocsBatchGenerator:
                     sents.append(tokens)
                 else:
                     logging.warning("empty sentence, It may cause errors in doc-dual-enc")
-            # TODO truncate large sents
             return sents
 
     def _split_on_fragments(self, sents: List, fragment_len_list: List):
@@ -258,10 +259,16 @@ class DocsBatchGenerator:
                 cur_hash = metas[EXMPL_SRC_HASH]
 
                 src_id = int(metas[EXMPL_SRC_ID])
-                src_path = f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{src_texts}/{metas[EXMPL_SRC_ID]}.txt"
+                src_path = find_file(
+                    f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{src_texts}/{metas[EXMPL_SRC_ID]}.txt",
+                    throw_if_not_exist=False,
+                )
 
             tgt_id = int(metas[EXMPL_TGT_ID])
-            tgt_path = f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{tgt_texts}/{metas[EXMPL_TGT_ID]}.txt"
+            tgt_path = find_file(
+                f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{tgt_texts}/{metas[EXMPL_TGT_ID]}.txt",
+                throw_if_not_exist=False,
+            )
             if not os.path.exists(tgt_path):
                 logging.warning("tgt text is missing: %s", tgt_path)
                 continue
