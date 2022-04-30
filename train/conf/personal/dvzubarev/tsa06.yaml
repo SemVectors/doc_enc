@@ -16,4 +16,4 @@ batches:
     include_datasets:
       - mini
     batch_generator_conf:
-      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc_enc_datasets
+      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/temp

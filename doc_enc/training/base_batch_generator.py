@@ -1,16 +1,52 @@
 #!/usr/bin/env python3
 
 
+from typing import Union
 from dataclasses import dataclass
 import multiprocessing
 import math
 import logging
+import gzip
+from pathlib import Path
 
 from hydra.core.utils import configure_log
 
 
+def open_file(fp: Union[Path, str], mode='r', encoding='utf8'):
+    if isinstance(fp, Path):
+        n = fp.name
+    elif isinstance(fp, str):
+        n = fp
+    else:
+        raise RuntimeError("logic error 82093")
+
+    if n.endswith('.gz'):
+        opener = gzip.open
+    else:
+        opener = open
+
+    return opener(fp, mode=mode, encoding=encoding)
+
+
+def find_file(fp: Union[Path, str]):
+    if isinstance(fp, Path):
+        sp = str(fp)
+    elif isinstance(fp, str):
+        sp = fp
+        fp = Path(fp)
+    else:
+        raise RuntimeError("logic error 82094")
+
+    np = Path(f"{sp}.gz")
+    if np.exists():
+        return np
+    if fp.exists():
+        return fp
+    raise RuntimeError(f"Failed to find {fp}[.gz]")
+
+
 def _calc_line_cnt(fp):
-    with open(fp, 'rb') as f:
+    with open_file(fp, 'rb', encoding=None) as f:
         i = -1
         for i, _ in enumerate(f):
             pass

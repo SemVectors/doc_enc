@@ -16,6 +16,8 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
+    open_file,
+    find_file,
 )
 from doc_enc.training.types import SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
@@ -30,11 +32,11 @@ class Example(NamedTuple):
 
 
 def _src_filepath(input_dir, split):
-    return f"{input_dir}/{split}.id.src"
+    return find_file(f"{input_dir}/{split}.src")
 
 
 def _tgt_filepath(input_dir, split):
-    return f"{input_dir}/{split}.id.tgt"
+    return find_file(f"{input_dir}/{split}.tgt")
 
 
 @dataclass
@@ -71,16 +73,16 @@ class SentsBatchGenerator:
 
         src_fp = _src_filepath(opts.input_dir, split)
         tgt_fp = _tgt_filepath(opts.input_dir, split)
-        self._src_file = open(src_fp)
-        self._tgt_file = open(tgt_fp)
+        self._src_file = open_file(src_fp)
+        self._tgt_file = open_file(tgt_fp)
 
         if not opts.dont_use_dups:
-            dups_fp = f"{opts.input_dir}/{split}.dups"
-            self._dup_file = open(dups_fp)
+            dups_fp = find_file(f"{opts.input_dir}/{split}.dups")
+            self._dup_file = open_file(dups_fp)
 
         if not opts.dont_use_hns:
-            hn_fp = f"{opts.input_dir}/{split}.hn"
-            self._hn_file = open(hn_fp)
+            hn_fp = find_file(f"{opts.input_dir}/{split}.hn")
+            self._hn_file = open_file(hn_fp)
 
         self._init_files()
 
@@ -412,7 +414,7 @@ class SentsBatchIterator(BaseBatchIterator):
 
     def init_epoch(self, epoch):
         self._epoch = epoch - 1
-        src_fp = _src_filepath(self._opts.batch_generator_conf.input_dir, self._split)
+        src_fp = _tgt_filepath(self._opts.batch_generator_conf.input_dir, self._split)
         self._start_workers(src_fp)
 
     def _create_padded_tensor(self, tokens, max_len):

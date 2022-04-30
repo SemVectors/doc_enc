@@ -20,7 +20,7 @@ from doc_enc.tokenizer import TokenizerType, TokenizerConf
 @pytest.fixture
 def FakeTrainingData():
     with tempfile.TemporaryDirectory() as tmpdirname:
-        with open(f'{tmpdirname}/train.id.src', 'w', encoding='utf8') as f:
+        with open(f'{tmpdirname}/train.src', 'w', encoding='utf8') as f:
             f.write(
                 """1\t1 2 3 4
 2\t5 6 7
@@ -31,7 +31,7 @@ def FakeTrainingData():
 7\t12 13 14"""
             )
 
-        with open(f'{tmpdirname}/train.id.tgt', 'w', encoding='utf8') as f:
+        with open(f'{tmpdirname}/train.tgt', 'w', encoding='utf8') as f:
             f.write(
                 """1\t1 2 3 4
 2\t5 6 7
