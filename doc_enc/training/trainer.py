@@ -171,7 +171,6 @@ class Trainer:
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
         self._doc_retr_criterion = torch.nn.CrossEntropyLoss()
 
-        # self._optimizer = torch.optim.Adam(self._model.parameters())
         self._optimizer = ZeRO(self._model.parameters(), torch.optim.Adam)
         if opts.final_lr != -1.0:
             self._scheduler = LinearLRSchedule(opts, self._optimizer)
@@ -463,12 +462,8 @@ class Trainer:
                     )
                 _reset()
 
-            if (
-                self._rank == 0
-                and epoch_updates - last_checkpoint_update > self._opts.checkpoint_every
-            ):
+            if epoch_updates - last_checkpoint_update > self._opts.checkpoint_every:
                 last_checkpoint_update = epoch_updates
-                logging.info("Saving new checkpoint")
                 self._save_checkpoint(epoch)
 
             if epoch_updates - last_eval_update > self._opts.eval_every:
@@ -489,26 +484,33 @@ class Trainer:
         logging.info("loading state from %s", self._opts.resume_snapshot)
         state = torch.load(self._opts.resume_snapshot, map_location=self._device)
         self._num_updates = state['num_updates']
-        self._optimizer = state['optimizer']
+        self._optimizer.load_state_dict(state['optimizer'])
         self._scheduler = state['scheduler']
         self._best_metric = state['best_metric']
-        # TODO support ddp resuming
-        self._model = self._local_model = state['model']
+        self._model.load_state_dict(state['model'])
+        if isinstance(self._model, DDP):
+            self._local_model = self._model.module
+        else:
+            self._local_model = self._model
+
         return state['epoch']
 
     def _save_checkpoint(self, epoch):
         snapshot_path = Path(self._opts.save_path) / f'checkpoint_{epoch}_{self._num_updates}.pt'
-        torch.save(
-            {
-                'num_updates': self._num_updates,
-                'epoch': epoch,
-                'model': self._model,
-                'optimizer': self._optimizer,
-                'scheduler': self._scheduler,
-                'best_metric': self._best_metric,
-            },
-            snapshot_path,
-        )
+        self._optimizer.consolidate_state_dict(to=0)
+        if self._rank == 0:
+            logging.info("Saving new checkpoint")
+            torch.save(
+                {
+                    'num_updates': self._num_updates,
+                    'epoch': epoch,
+                    'model': self._model.state_dict(),
+                    'optimizer': self._optimizer.state_dict(),
+                    'scheduler': self._scheduler,
+                    'best_metric': self._best_metric,
+                },
+                snapshot_path,
+            )
 
     def _eval_on_dev(self, epoch, dev_iter: BatchIterator):
         with torch.no_grad():
