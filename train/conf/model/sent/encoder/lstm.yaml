@@ -2,7 +2,7 @@ defaults:
   - base_sent_encoder_config
 encoder_kind: LSTM
 input_size: 320
-hidden_size: 512
+hidden_size: 384
 num_layers: 3
 dropout: 0.1
 bidirectional: true

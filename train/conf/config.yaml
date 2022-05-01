@@ -3,7 +3,7 @@
 defaults:
   - base_config
   - job_logging: default
-  - batches: mini
+  - batches: ckp1
   - trainer: basic
   - tokenizer: sentencepiece
   - model: default

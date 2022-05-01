@@ -1,10 +1,13 @@
 defaults:
   - base_trainer_config
-max_updates: 900
-eval_every: 400
-checkpoint_every: 600
+
+switch_tasks_every: 50
+max_updates: 1_000_000
+eval_every: 100_000
+checkpoint_every: 100_000
 debug_iters:
-  - 15
-  - 25
+  - 10_000
+  - 10_020
+
 lr: 0.01
-warmup_updates: 0
+final_lr: 0.0001

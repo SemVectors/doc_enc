@@ -40,7 +40,7 @@ class TrainerConf:
     switch_tasks_every: int = 10
 
     lr: float = MISSING
-    warmup_updates: int = 0
+    warmup_updates: int = 1
     warmup_init_lr: float = -1.0
     final_lr: float = -1.0
     resume_snapshot: str = ''
@@ -58,6 +58,9 @@ class InverseSquareRootSchedule:
     def __init__(self, opts: TrainerConf, optimizer):
         self._opts = opts
         self._optimizer = optimizer
+
+        if opts.warmup_updates <= 0:
+            raise RuntimeError("set warmup_updates > 0")
         self._decay_factor = opts.lr * opts.warmup_updates**0.5
 
         # initial learning rate

@@ -3,5 +3,5 @@ defaults:
 
 kind: DUAL_ENC
 normalize: true
-margin: 0.0
+margin: 0.2
 scale: 20.0
