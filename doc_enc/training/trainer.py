@@ -404,7 +404,7 @@ class Trainer:
                     sm = ''
                     for t, m in running_metrics.items():
                         tstr = "SR" if t == TaskType.SENT_RETR else "DR"
-                        sm += f" Task: {tstr} #up: {m.updates_num()/self._world_size}{m}"
+                        sm += f"\nTask: {tstr} #up: {m.updates_num()/self._world_size}{m}"
 
                     logging.info(
                         "#%d %d/%d, lr %.4e%s",

@@ -8,23 +8,49 @@ from doc_enc.training.types import TaskType
 
 
 class BaseMetrics:
+    """Quality metrics and other stats"""
+
     def __init__(self):
         self._cnt = 0
         self._ncorrect = 0
         self._total = 0
+
         self._loss = 0.0
 
+        self._src_item_len_sum = 0
+        self._src_item_cnt = 0
+        self._tgt_item_len_sum = 0
+        self._tgt_item_cnt = 0
+
     def tolist(self):
-        return [self._cnt, self._ncorrect, self._total, self._loss]
+        return [
+            self._cnt,
+            self._ncorrect,
+            self._total,
+            self._src_item_len_sum,
+            self._src_item_cnt,
+            self._tgt_item_len_sum,
+            self._tgt_item_cnt,
+            self._loss,
+        ]
 
     @classmethod
     def fromlist(cls, l):
         m = cls()
-        assert len(l) == 4
-        for f, v in zip(('_cnt', '_ncorrect', '_total'), l[:3]):
+        assert len(l) == 8
+        fields = (
+            '_cnt',
+            '_ncorrect',
+            '_total',
+            '_src_item_len_sum',
+            '_src_item_cnt',
+            '_tgt_item_len_sum',
+            '_tgt_item_cnt',
+        )
+        for f, v in zip(fields, l[:7]):
             m.__dict__[f] = int(v)
 
-        m._loss = l[3]
+        m._loss = l[7]
         return m
 
     def update_metrics(self, loss, output, labels, batch):
@@ -46,6 +72,10 @@ class BaseMetrics:
         self._loss += other._loss
         self._ncorrect += other._ncorrect
         self._total += other._total
+        self._src_item_len_sum += other._src_item_len_sum
+        self._src_item_cnt += other._src_item_cnt
+        self._tgt_item_len_sum += other._tgt_item_len_sum
+        self._tgt_item_cnt += other._tgt_item_cnt
         return self
 
     def metrics(self):
@@ -56,12 +86,23 @@ class BaseMetrics:
         m = self.metrics()
         return 'rec', m['rec']
 
+    def stats(self):
+        avg_src_item_len = (
+            self._src_item_len_sum / self._src_item_cnt if self._src_item_cnt else 0.0
+        )
+        avg_tgt_item_len = (
+            self._tgt_item_len_sum / self._tgt_item_cnt if self._tgt_item_cnt else 0.0
+        )
+        return {'asl': avg_src_item_len, 'atl': avg_tgt_item_len}
+
     def __str__(self):
         prefix = "; loss %.5f" % (self._loss / self._cnt if self._cnt else 0.0)
 
         m = self.metrics()
-        fmt = '; %s: %.3f' * len(m)
-        metrics_str = fmt % tuple(itertools.chain.from_iterable(m.items()))
+        s = self.stats()
+        fmt = '; %s: %.3f' * (len(m) + len(s))
+        m_and_s = itertools.chain(m.items(), s.items())
+        metrics_str = fmt % tuple(itertools.chain.from_iterable(m_and_s))
         return prefix + metrics_str
 
 
@@ -70,6 +111,12 @@ class SentRetrMetrics(BaseMetrics):
         _, ypredicted = torch.max(output, 1)
         self._ncorrect += (ypredicted == labels).sum().item()
         self._total += output.size(0)
+
+        self._src_item_len_sum += batch.src_len.sum().item()
+        self._src_item_cnt += len(batch.src_len)
+
+        self._tgt_item_len_sum += batch.tgt_len.sum().item()
+        self._tgt_item_cnt += len(batch.tgt_len)
 
 
 class DocRetrMetrics(BaseMetrics):
@@ -94,6 +141,12 @@ class DocRetrMetrics(BaseMetrics):
                     self._ncorrect += sum(1 for j in idxs if j in gold_idxs)
 
         self._total += labels.sum().item()
+
+        self._src_item_len_sum += sum(batch.src_doc_len_in_sents)
+        self._src_item_cnt += len(batch.src_doc_len_in_sents)
+
+        self._tgt_item_len_sum += sum(batch.tgt_doc_len_in_sents)
+        self._tgt_item_cnt += len(batch.tgt_doc_len_in_sents)
 
 
 def create_metrics(task: TaskType, metrics_list=None) -> BaseMetrics:
