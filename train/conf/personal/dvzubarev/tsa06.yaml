@@ -3,6 +3,10 @@ defaults:
   - /base_config
   - _self_
 
+trainer:
+  max_updates: 900
+  eval_every: 300
+  switch_tasks_every: 10
 
 tokenizer:
   vocab_path: /home/dvzubarev/data/paral_data/undata0/sentencepiece.bpe.model
@@ -14,6 +18,8 @@ batches:
 
   docs_batch_iterator_conf:
     include_datasets:
-      - mini
+      - pw
+      - sew
+      - srw
     batch_generator_conf:
-      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/temp
+      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc_enc_datasets

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-
+import logging
 from typing import NamedTuple
 from pathlib import Path
 import csv
@@ -48,8 +48,10 @@ def combine_docs_datasets(
 
         all_examples = []
         for i, dsp in enumerate(datasets):
-            info_dict = _calc_sentence_size_and_hash(dsp)
-            all_examples.extend(_generate_examples_from_dataset(dsp, split, i, info_dict))
+            src_info_dict, tgt_info_dict = _calc_sentence_size_and_hash(dsp)
+            all_examples.extend(
+                _generate_examples_from_dataset(dsp, split, i, src_info_dict, tgt_info_dict)
+            )
 
         all_examples.sort(key=lambda t: (-t.src_len, t.src_hash, -t.label, t.tgt_len))
         for e in all_examples:
@@ -69,10 +71,26 @@ def combine_docs_datasets(
 
 def _calc_sentence_size_and_hash(dataset_path: Path):
     docs_path = dataset_path / "texts"
-    if not docs_path.exists():
-        raise RuntimeError(f"Not found texts folder in {dataset_path}")
+    if docs_path.exists():
+        src_docs_path = docs_path
+        info_dict = {}
+        _calc_sentence_size_and_hash_in_dir(docs_path, info_dict)
+        return info_dict, info_dict
 
-    info_dict = {}
+    src_docs_path = dataset_path / "texts_1"
+    tgt_docs_path = dataset_path / "texts_2"
+    if src_docs_path.exists() and tgt_docs_path.exists():
+        src_info_dict = {}
+        _calc_sentence_size_and_hash_in_dir(src_docs_path, src_info_dict)
+        tgt_info_dict = {}
+        _calc_sentence_size_and_hash_in_dir(tgt_docs_path, tgt_info_dict)
+        return src_info_dict, tgt_info_dict
+
+    raise RuntimeError(f"Not found texts folder (or texts_1,texts_2 folders) in {dataset_path}")
+
+
+def _calc_sentence_size_and_hash_in_dir(docs_path: Path, out_info_dict):
+    # info_dict = {}
     for p in docs_path.iterdir():
         if not p.is_file() or not p.suffix in ('.gz', '.txt'):
             continue
@@ -82,7 +100,7 @@ def _calc_sentence_size_and_hash(dataset_path: Path):
             doc_id = doc_id.with_suffix('')
 
         doc_id = int(doc_id.name)
-        if doc_id in info_dict:
+        if doc_id in out_info_dict:
             continue
 
         with open_bin_file(p) as f:
@@ -90,17 +108,15 @@ def _calc_sentence_size_and_hash(dataset_path: Path):
             md5hash = hashlib.md5()
             for i, l in enumerate(f, 1):
                 md5hash.update(l)
-            info_dict[doc_id] = (i, md5hash.hexdigest())
-    return info_dict
+            out_info_dict[doc_id] = (i, md5hash.hexdigest())
 
 
-def _generate_examples_from_dataset(p: Path, split: str, dataset_id: int, info_dict):
+def _generate_examples_from_dataset(
+    p: Path, split: str, dataset_id: int, src_info_dict, tgt_info_dict
+):
     meta_path = find_file(p / f"{split}.csv")
-    docs_path = p / "texts"
     if not meta_path.exists():
         raise RuntimeError(f"Not found {split}.csv in {p}")
-    if not docs_path.exists():
-        raise RuntimeError(f"Not found texts folder in {p}")
     with open_file(meta_path) as f:
         reader = csv.reader(f)
         try:
@@ -113,13 +129,21 @@ def _generate_examples_from_dataset(p: Path, split: str, dataset_id: int, info_d
             src_id = int(src_id)
             tgt_id = int(tgt_id)
             label = int(label)
+            src_info = src_info_dict.get(src_id)
+            tgt_info = tgt_info_dict.get(tgt_id)
+            if src_info is None:
+                logging.warning("%s: src text is missing for id %s", p.name, src_id)
+                continue
+            if tgt_info is None:
+                logging.warning("%s: tgt file is missing for id %s", p.name, tgt_id)
+                continue
             yield Example(
                 dataset_id,
                 src_id,
                 tgt_id,
-                src_len=info_dict[src_id][0],
-                tgt_len=info_dict[tgt_id][0],
+                src_len=src_info[0],
+                tgt_len=tgt_info[0],
                 label=label,
-                src_hash=info_dict[src_id][1],
-                tgt_hash=info_dict[tgt_id][1],
+                src_hash=src_info[1],
+                tgt_hash=tgt_info[1],
             )

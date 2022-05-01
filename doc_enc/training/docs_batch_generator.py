@@ -77,8 +77,6 @@ class DocsBatchGenerator:
                 self._text_dirs_dict[p.name] = ("texts", "texts")
             elif (p / "texts_1").is_dir() and (p / "texts_2").is_dir():
                 self._text_dirs_dict[p.name] = ("texts_1", "texts_2")
-            else:
-                raise RuntimeError(f"Texts dir is not found in {p}")
 
     def __del__(self):
         if self._meta_file is not None:

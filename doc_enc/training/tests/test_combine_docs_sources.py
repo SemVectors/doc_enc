@@ -78,6 +78,42 @@ def FakeTrainingData():
         yield tmpdirname
 
 
+@pytest.fixture
+def TwoTextDirs():
+    with tempfile.TemporaryDirectory() as tmpdirname:
+
+        tmpdirname = Path(tmpdirname)
+        n = "ds1"
+        ds = tmpdirname / n
+        ds_docs_1 = ds / "texts_1"
+        ds_docs_1.mkdir(parents=True)
+        ds_docs_2 = ds / "texts_2"
+        ds_docs_2.mkdir(parents=True)
+
+        with open(ds_docs_1 / '3.txt', 'w', encoding='utf8') as f:
+            f.write("линия1\nлиния2\nлиния3")
+        with open(ds_docs_1 / '15.txt', 'w', encoding='utf8') as f:
+            f.write("line\n" * 15)
+
+        with open(ds_docs_2 / '3.txt', 'w', encoding='utf8') as f:
+            f.write("line\n" * 6)
+        with open(ds_docs_2 / '15.txt', 'w', encoding='utf8') as f:
+            f.write("line\n" * 30)
+        with open(ds_docs_2 / '16.txt', 'w', encoding='utf8') as f:
+            f.write("line\n" * 32)
+
+        with open(ds / 'train.csv', 'w', encoding='utf8') as f:
+            f.write("id1,t1,id2,t2,l\n")
+            f.write("3,_,15,_,1\n")
+            f.write("3,_,3,_,0\n")
+            f.write("3,_,16,_,0\n")
+            f.write("15,_,3,_,1\n")
+            f.write("15,_,15,_,0\n")
+            f.write("15,_,16,_,0\n")
+
+        yield tmpdirname
+
+
 def _parse_combined_output(l):
     ds, src, tgt, label, slen, tlen, shash, thash = l.rstrip().split(',')
     return (ds, int(src), int(tgt), int(label), int(slen), int(tlen), shash, thash)
@@ -116,3 +152,34 @@ def test_gen_basic(FakeTrainingData):
         assert id1_15_list[0][-2] != src_hash
         for t in id1_15_list[1:]:
             assert t[-2] == src_hash
+
+
+def test_gen_with_2dirs(TwoTextDirs):
+    combine_docs_datasets(TwoTextDirs, 'train')
+    assert (TwoTextDirs / "combined_train.csv").exists()
+    with open(TwoTextDirs / "combined_train.csv", 'r', encoding='utf8') as f:
+        id3_list = [_parse_combined_output(l) for l in itertools.islice(f, 3, 6)]
+        print(id3_list)
+        assert len(id3_list) == 3
+        for t in id3_list:
+            # src_id
+            assert t[1] == 3
+            # src_len
+            assert t[4] == 3
+        tgt_ids = [t[2] for t in id3_list]
+        assert tgt_ids == [15, 3, 16]
+        tgt_lens = [t[5] for t in id3_list]
+        assert tgt_lens == [30, 6, 32]
+
+        f.seek(0)
+        id15_list = [_parse_combined_output(l) for l in itertools.islice(f, 0, 3)]
+        assert len(id15_list) == 3
+        for t in id15_list:
+            # src_id
+            assert t[1] == 15
+            # src_len
+            assert t[4] == 15
+        tgt_ids = [t[2] for t in id15_list]
+        assert tgt_ids == [3, 15, 16]
+        tgt_lens = [t[5] for t in id15_list]
+        assert tgt_lens == [6, 30, 32]
