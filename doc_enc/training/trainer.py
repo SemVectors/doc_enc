@@ -224,16 +224,61 @@ class Trainer:
 
     def _save_debug_info(self, batch, output, labels, meta):
         if meta['task'] == TaskType.SENT_RETR:
+            meta['task'] = "sent_retr"
             self._save_retr_debug_info(batch, output, labels, meta)
+        elif meta['task'] == TaskType.DOC_RETR:
+            meta['task'] = "doc_retr"
+            self._save_doc_retr_debug_info(batch, output, labels, meta)
         else:
             raise RuntimeError("Logic error 342")
+
+    def _save_doc_retr_debug_info(self, batch, output, labels, meta):
+        maxk = min(5, output.size(1))
+        values, indices = torch.topk(output, maxk, 1)
+        meta['num_updates'] = self._num_updates
+        meta['avg_src_len'] = meta['asl']
+        del meta['asl']
+        meta['avg_tgt_len'] = meta['atl']
+        del meta['atl']
+
+        unscale_factor = 1 / self._model_conf.scale if self._model_conf.scale else 1.0
+        examples = []
+        for i in range(batch.info['bs']):
+            obj = {'src_batch_num': i, 'src_id': batch.src_ids[i], 'found': []}
+
+            for v, idx in zip(values[i], indices[i]):
+                obj['found'].append(
+                    {
+                        'tgt_batch_num': idx.item(),
+                        'tgt_id': batch.tgt_ids[idx],
+                        'sim': v.item(),
+                        'sim_unscaled': v.item() * unscale_factor,
+                    }
+                )
+            for pidx in batch.positive_idxs[i]:
+                usim = output[i][pidx].item() * unscale_factor
+                obj['etal'] = {
+                    'tgt_batch_num': pidx,
+                    'tgt_id': batch.tgt_ids[pidx],
+                    'sim': output[i][pidx].item(),
+                    'sim_unscaled': usim,
+                    'sim_unscaled_wo_margin': usim + self._model_conf.margin,
+                }
+            examples.append(obj)
+        meta['examples'] = examples
+        meta_path = Path(self._opts.save_path) / 'doc_retr_debug_batches.jsonl'
+        with open(meta_path, 'a', encoding='utf8') as f:
+            f.write(json.dumps(meta))
+            f.write('\n')
 
     def _save_retr_debug_info(self, batch, output, _, meta):
         values, indices = torch.topk(output, 3, 1)
 
         meta['num_updates'] = self._num_updates
-        meta['avg_src_len'] = batch.src_len.float().mean().item()
-        meta['avg_tgt_len'] = batch.tgt_len.float().mean().item()
+        meta['avg_src_len'] = meta['asl']
+        del meta['asl']
+        meta['avg_tgt_len'] = meta['atl']
+        del meta['atl']
 
         examples = []
         unscale_factor = 1 / self._model_conf.sent.scale if self._model_conf.sent.scale else 1.0
@@ -265,7 +310,8 @@ class Trainer:
             }
             examples.append(obj)
         meta['examples'] = examples
-        meta_path = Path(self._opts.save_path) / 'samples.jsonl'
+
+        meta_path = Path(self._opts.save_path) / 'sent_retr_debug_batches.jsonl'
         with open(meta_path, 'a', encoding='utf8') as f:
             f.write(json.dumps(meta))
             f.write('\n')
@@ -341,6 +387,7 @@ class Trainer:
                 if not all(l):
                     meta = {'task': task, 'loss': loss.item()}
                     meta.update(m.metrics())
+                    meta.update(m.stats())
                     self._save_debug_info(batch, output, labels, meta)
         return running_metrics
 

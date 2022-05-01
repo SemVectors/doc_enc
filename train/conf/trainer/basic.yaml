@@ -3,5 +3,8 @@ defaults:
 max_updates: 900
 eval_every: 400
 checkpoint_every: 600
+debug_iters:
+  - 15
+  - 25
 lr: 0.01
 warmup_updates: 0
