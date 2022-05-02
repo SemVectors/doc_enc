@@ -1,0 +1,23 @@
+# @package _global_
+defaults:
+  - /base_config
+  - _self_
+
+
+tokenizer:
+  vocab_path: /train/unigram_96k_from_100M.spm.model
+
+batches:
+  sents_batch_iterator_conf:
+    async_generators: 1
+    batch_generator_conf:
+      batch_size: 256
+
+  docs_batch_iterator_conf:
+    async_generators: 2
+    include_datasets:
+      - pw
+      - sew
+      - srw
+    batch_generator_conf:
+      batch_sent_size: 768

@@ -292,6 +292,7 @@ class DocsBatchGenerator:
 class DocsBatchIteratorConf(BaseBatchIteratorConf):
     batch_generator_conf: DocsBatchGeneratorConf = MISSING
 
+    use_existing_combined_meta: bool = False
     include_datasets: Optional[List[str]] = None
     exclude_datasets: Optional[List[str]] = None
 

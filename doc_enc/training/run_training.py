@@ -3,6 +3,7 @@
 import logging
 from typing import Dict, Any
 from dataclasses import dataclass
+from pathlib import Path
 
 import hydra
 from hydra.core.utils import configure_log
@@ -94,11 +95,19 @@ def _run_train(rank, world_size, conf: Config):
 
 
 def _preproc(conf: Config):
-    logging.info("combining docs datasets. It may take some time...")
     input_dir = conf.batches.docs_batch_iterator_conf.batch_generator_conf.input_dir
+    prefix = conf.batches.docs_batch_iterator_conf.batch_generator_conf.meta_prefix
+    try_find_existing_meta = conf.batches.docs_batch_iterator_conf.use_existing_combined_meta
+    if try_find_existing_meta:
+        tp = Path(f"{input_dir}/{prefix}_train.csv")
+        dp = Path(f"{input_dir}/{prefix}_dev.csv")
+        if tp.exists() and dp.exists():
+            logging.info("reusing existing %s and %s", tp, dp)
+            return
+
+    logging.info("combining docs datasets. It may take some time...")
     include = conf.batches.docs_batch_iterator_conf.include_datasets
     exclude = conf.batches.docs_batch_iterator_conf.exclude_datasets
-    prefix = conf.batches.docs_batch_iterator_conf.batch_generator_conf.meta_prefix
     combine_docs_datasets(
         input_dir,
         split="train",
