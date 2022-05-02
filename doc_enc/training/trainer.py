@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import datetime
 import contextlib
 from typing import List
 import dataclasses
@@ -127,7 +128,10 @@ class LinearLRSchedule:
 def _init_dist_default_group(rank, world_size, port='29500'):
     os.environ['MASTER_ADDR'] = '127.0.0.1'
     os.environ['MASTER_PORT'] = port
-    dist.init_process_group('nccl', rank=rank, world_size=world_size)
+    os.environ['NCCL_ASYNC_ERROR_HANDLING'] = '1'
+    dist.init_process_group(
+        'nccl', rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=5)
+    )
 
 
 class Trainer:
@@ -156,7 +160,7 @@ class Trainer:
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
             _init_dist_default_group(rank, world_size)
-            self._cpu_group = dist.new_group(backend='gloo')
+            self._cpu_group = dist.new_group(backend='gloo', timeout=datetime.timedelta(minutes=5))
             self._model = DDP(
                 self._local_model,
                 device_ids=[rank],

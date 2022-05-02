@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
+import sys
 from typing import Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,34 +65,42 @@ def _destroy_proc():
 def _run_train(rank, world_size, conf: Config):
     _init_proc(rank, world_size, conf)
 
-    vocab = create_tokenizer(conf.tokenizer)
-    train_iter = BatchIterator(
-        conf.batches,
-        conf.tokenizer,
-        conf.job_logging,
-        split="train",
-        rank=rank,
-        world_size=world_size,
-        pad_idx=vocab.pad_idx(),
-    )
+    train_iter = None
+    dev_iter = None
+    try:
+        vocab = create_tokenizer(conf.tokenizer)
+        train_iter = BatchIterator(
+            conf.batches,
+            conf.tokenizer,
+            conf.job_logging,
+            split="train",
+            rank=rank,
+            world_size=world_size,
+            pad_idx=vocab.pad_idx(),
+        )
 
-    dev_iter = BatchIterator(
-        conf.batches,
-        conf.tokenizer,
-        conf.job_logging,
-        split="dev",
-        rank=rank,
-        world_size=world_size,
-        pad_idx=vocab.pad_idx(),
-    )
-    trainer = Trainer(conf.trainer, conf.model, vocab, world_size, rank, verbose=conf.verbose)
-    trainer(train_iter, dev_iter)
+        dev_iter = BatchIterator(
+            conf.batches,
+            conf.tokenizer,
+            conf.job_logging,
+            split="dev",
+            rank=rank,
+            world_size=world_size,
+            pad_idx=vocab.pad_idx(),
+        )
 
-    train_iter.destroy()
-    if dev_iter is not None:
-        dev_iter.destroy()
+        trainer = Trainer(conf.trainer, conf.model, vocab, world_size, rank, verbose=conf.verbose)
+        trainer(train_iter, dev_iter)
 
-    _destroy_proc()
+    except Exception as e:
+        logging.error(e)
+        if train_iter is not None:
+            train_iter.destroy()
+        if dev_iter is not None:
+            dev_iter.destroy()
+        sys.exit(1)
+    finally:
+        _destroy_proc()
 
 
 def _preproc(conf: Config):

@@ -125,7 +125,9 @@ class BaseBatchIterator:
         self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
 
     def destroy(self):
-        assert not self._processes
+        for p in self._processes:
+            p.terminate()
+            p.join()
         self._queue.close()
 
     def _get_line_offs_for_rank(self, filepath):
