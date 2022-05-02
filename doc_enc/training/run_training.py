@@ -34,6 +34,7 @@ class Config:
 
     job_logging: Dict[str, Any]
     verbose: Any = False
+    enable_log_for_all_procs: bool = False
 
 
 cs = ConfigStore.instance()
@@ -52,7 +53,7 @@ cs.store(name="base_doc_encoder_config", group="model/doc", node=DocEncoderConf)
 
 def _init_proc(rank, world_size, conf: Config):
     configure_log(conf.job_logging, conf.verbose)
-    if rank != 0:
+    if not conf.enable_log_for_all_procs and rank != 0:
         logging.getLogger().setLevel(logging.WARNING)
 
     torch.cuda.set_device(rank)
