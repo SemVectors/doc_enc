@@ -378,15 +378,19 @@ class Trainer:
             # forward pass
             with autocast(enabled=self._amp_enabled):
                 output = self._model(task, batch, labels)
+                logging.debug("output of model: %s", output)
                 # output size is bsz x tgt_size for retrieval task
                 loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
+                logging.debug("loss: %s; metrics: %s", loss.item(), m)
 
                 running_metrics += m
 
             # backpropagate and update optimizer learning rate
             self._scaler.scale(loss).backward()
+            logging.debug("backward step done")
 
             self._make_update(task)
+            logging.debug("update done")
 
             if self._rank == 0 and self._opts.debug_iters:
                 l = [self._num_updates % int(v) for v in self._opts.debug_iters]
