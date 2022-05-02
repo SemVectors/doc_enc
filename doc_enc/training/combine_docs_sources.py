@@ -106,9 +106,12 @@ def _calc_sentence_size_and_hash_in_dir(docs_path: Path, out_info_dict):
         with open_bin_file(p) as f:
             i = 0
             md5hash = hashlib.md5()
-            for i, l in enumerate(f, 1):
-                md5hash.update(l)
-            out_info_dict[doc_id] = (i, md5hash.hexdigest())
+            for l in f:
+                if l.strip():
+                    i += 1
+                    md5hash.update(l)
+            if i:
+                out_info_dict[doc_id] = (i, md5hash.hexdigest())
 
 
 def _generate_examples_from_dataset(

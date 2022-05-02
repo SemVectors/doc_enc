@@ -107,6 +107,9 @@ class DocsBatchGenerator:
         with open_file(path) as f:
             sents = []
             for l in f:
+                if not l.strip():
+                    continue
+
                 tokens = self._tokenizer(l.rstrip())
                 if tokens:
                     tokens = tokens[: self._opts.max_sent_size]
