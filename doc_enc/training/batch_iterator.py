@@ -67,6 +67,7 @@ class BatchIterator:
         self._task_idx = 0
         self._iterators = self._make_iterators(self._current_tasks)
 
+        logging.info("Tasks for the %d epoch: %s", epoch, self._current_tasks)
         if TaskType.SENT_RETR in self._current_tasks:
             self._sents_batch_iterator.init_epoch(epoch)
         if TaskType.DOC_RETR in self._current_tasks:

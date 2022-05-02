@@ -178,7 +178,10 @@ class Trainer:
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
         self._doc_retr_criterion = torch.nn.CrossEntropyLoss()
 
-        self._optimizer = ZeRO(self._model.parameters(), torch.optim.Adam)
+        if world_size > 1:
+            self._optimizer = ZeRO(self._model.parameters(), torch.optim.Adam)
+        else:
+            self._optimizer = torch.optim.Adam(self._model.parameters())
         if opts.final_lr != -1.0:
             self._scheduler = LinearLRSchedule(opts, self._optimizer)
         else:
@@ -412,7 +415,7 @@ class Trainer:
     def _sync_quiting(self, done):
         # Quit from epoch with all processes at once
         if self._cpu_group is None:
-            return True
+            return done
         t = torch.tensor([int(done)])
         dist.all_reduce(t, op=dist.ReduceOp.SUM, group=self._cpu_group)
         return t.item() == self._world_size
