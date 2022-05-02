@@ -148,6 +148,12 @@ class DocRetrMetrics(BaseMetrics):
         self._tgt_item_len_sum += sum(batch.tgt_doc_len_in_sents)
         self._tgt_item_cnt += len(batch.tgt_doc_len_in_sents)
 
+    def stats(self):
+        s = super().stats()
+        s['asdb'] = self._src_item_cnt / self._cnt if self._cnt else 0.0
+        s['atdb'] = self._tgt_item_cnt / self._cnt if self._cnt else 0.0
+        return s
+
 
 def create_metrics(task: TaskType, metrics_list=None) -> BaseMetrics:
     if task == TaskType.SENT_RETR:
