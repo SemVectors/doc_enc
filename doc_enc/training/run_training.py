@@ -105,9 +105,11 @@ def _run_train(rank, world_size, conf: Config):
 
 
 def _preproc(conf: Config):
-    input_dir = conf.batches.docs_batch_iterator_conf.batch_generator_conf.input_dir
-    prefix = conf.batches.docs_batch_iterator_conf.batch_generator_conf.meta_prefix
-    try_find_existing_meta = conf.batches.docs_batch_iterator_conf.use_existing_combined_meta
+    iter_conf = conf.batches.docs_batch_iterator_conf
+    gen_conf = iter_conf.batch_generator_conf
+    input_dir = gen_conf.input_dir
+    prefix = gen_conf.meta_prefix
+    try_find_existing_meta = iter_conf.use_existing_combined_meta
     if try_find_existing_meta:
         tp = Path(f"{input_dir}/{prefix}_train.csv")
         dp = Path(f"{input_dir}/{prefix}_dev.csv")
@@ -116,22 +118,24 @@ def _preproc(conf: Config):
             return
 
     logging.info("combining docs datasets. It may take some time...")
-    include = conf.batches.docs_batch_iterator_conf.include_datasets
-    exclude = conf.batches.docs_batch_iterator_conf.exclude_datasets
     combine_docs_datasets(
         input_dir,
         split="train",
-        include_datasets=include,
-        exclude_datasets=exclude,
+        include_datasets=iter_conf.include_datasets,
+        exclude_datasets=iter_conf.exclude_datasets,
         out_filename_prefix=prefix,
+        min_doc_len=gen_conf.min_sents_per_doc,
+        max_doc_len=gen_conf.max_sents_per_doc,
     )
     logging.info("done with train")
     combine_docs_datasets(
         input_dir,
         split="dev",
-        include_datasets=include,
-        exclude_datasets=exclude,
+        include_datasets=iter_conf.include_datasets,
+        exclude_datasets=iter_conf.exclude_datasets,
         out_filename_prefix=prefix,
+        min_doc_len=gen_conf.min_sents_per_doc,
+        max_doc_len=gen_conf.max_sents_per_doc,
     )
 
 

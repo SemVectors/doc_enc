@@ -26,6 +26,8 @@ def combine_docs_datasets(
     include_datasets=None,
     exclude_datasets=None,
     out_filename_prefix="combined",
+    min_doc_len=0,
+    max_doc_len=float('inf'),
 ):
     input_path = Path(input_dir)
     datasets = []
@@ -50,7 +52,9 @@ def combine_docs_datasets(
         for i, dsp in enumerate(datasets):
             src_info_dict, tgt_info_dict = _calc_sentence_size_and_hash(dsp)
             all_examples.extend(
-                _generate_examples_from_dataset(dsp, split, i, src_info_dict, tgt_info_dict)
+                _generate_examples_from_dataset(
+                    dsp, split, i, src_info_dict, tgt_info_dict, min_doc_len, max_doc_len
+                )
             )
 
         all_examples.sort(key=lambda t: (-t.src_len, t.src_hash, -t.label, t.tgt_len))
@@ -115,7 +119,7 @@ def _calc_sentence_size_and_hash_in_dir(docs_path: Path, out_info_dict):
 
 
 def _generate_examples_from_dataset(
-    p: Path, split: str, dataset_id: int, src_info_dict, tgt_info_dict
+    p: Path, split: str, dataset_id: int, src_info_dict, tgt_info_dict, min_doc_len, max_doc_len
 ):
     meta_path = find_file(p / f"{split}.csv")
     if not meta_path.exists():
@@ -140,13 +144,17 @@ def _generate_examples_from_dataset(
             if tgt_info is None:
                 logging.warning("%s: tgt file is missing for id %s", p.name, tgt_id)
                 continue
-            yield Example(
-                dataset_id,
-                src_id,
-                tgt_id,
-                src_len=src_info[0],
-                tgt_len=tgt_info[0],
-                label=label,
-                src_hash=src_info[1],
-                tgt_hash=tgt_info[1],
-            )
+            src_len = src_info[0]
+            tgt_len = tgt_info[0]
+
+            if min_doc_len <= src_len < max_doc_len and min_doc_len <= tgt_len < max_doc_len:
+                yield Example(
+                    dataset_id,
+                    src_id,
+                    tgt_id,
+                    src_len=src_len,
+                    tgt_len=tgt_len,
+                    label=label,
+                    src_hash=src_info[1],
+                    tgt_hash=tgt_info[1],
+                )

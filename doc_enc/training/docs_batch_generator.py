@@ -38,6 +38,8 @@ class DocsBatchGeneratorConf:
 
     max_sent_size: int = 128
     min_sent_size: int = 4
+    max_sents_per_doc: int = 512
+    min_sents_per_doc: int = 5
     allow_docs_without_positives: bool = False
 
 
@@ -138,6 +140,47 @@ class DocsBatchGenerator:
         doc_len_in_frags_list.append(fragments_cnt)
         return doc_no
 
+    def _prepare_all_targets(
+        self, positive_targets, negative_targets, tgt_hashes, batch_dups, batch
+    ):
+        positive_idxs = []
+        for tgt_path, tgt_id, tgt_hash, lbl in itertools.chain(
+            (t + (1,) for t in positive_targets),
+            (t + (0,) for t in negative_targets),
+        ):
+
+            if tgt_hash in tgt_hashes:
+                if lbl == 1:
+                    positive_idxs.append(tgt_hashes[tgt_hash])
+                continue
+
+            if lbl == 0 and not self._opts.allow_docs_without_positives and not positive_idxs:
+                return positive_idxs
+
+            tgt_sents = self._tokenize_doc(tgt_path)
+            if (
+                not tgt_sents
+                or len(tgt_sents) < self._opts.min_sents_per_doc
+                or len(tgt_sents) >= self._opts.max_sents_per_doc
+            ):
+                continue
+
+            batch.tgt_ids.append(tgt_id)
+            batch.tgt_sents.extend(tgt_sents)
+            fragments_cnt = self._split_on_fragments(tgt_sents, batch.tgt_fragment_len)
+            tgt_no = self._populate_doc_len(
+                tgt_sents, fragments_cnt, batch.tgt_doc_len_in_sents, batch.tgt_doc_len_in_frags
+            )
+            tgt_hashes[tgt_hash] = tgt_no
+            if lbl == 1:
+                positive_idxs.append(tgt_no)
+
+            if tgt_hash in batch_dups:
+                # this tgt is a positive example for some document that is already in the batch
+                # we need to adjust positive_idxs of this document accordingly
+                batch.positive_idxs[batch_dups[tgt_hash]].append(tgt_no)
+        return positive_idxs
+
     def _process_src_doc(
         self,
         src_path,
@@ -160,48 +203,29 @@ class DocsBatchGenerator:
             return
 
         positive_targets = self._process_positive_targets(all_positive_targets, batch, batch_dups)
-
         negative_targets = self._select_targets(all_negative_targets, self._opts.negatives_per_doc)
 
-        batch.src_ids.append(src_id)
         src_sents = self._tokenize_doc(src_path)
-        if not src_sents:
+        if (
+            not src_sents
+            or len(src_sents) < self._opts.min_sents_per_doc
+            or len(src_sents) >= self._opts.max_sents_per_doc
+        ):
             return
+
+        positive_idxs = self._prepare_all_targets(
+            positive_targets, negative_targets, tgt_hashes, batch_dups, batch
+        )
+        if not positive_idxs and not self._opts.allow_docs_without_positives:
+            return
+
+        batch.positive_idxs.append(positive_idxs)
+        batch.src_ids.append(src_id)
         batch.src_sents.extend(src_sents)
         fragments_cnt = self._split_on_fragments(src_sents, batch.src_fragment_len)
         self._populate_doc_len(
             src_sents, fragments_cnt, batch.src_doc_len_in_sents, batch.src_doc_len_in_frags
         )
-
-        batch.positive_idxs.append([])
-        for tgt_path, tgt_id, tgt_hash, lbl in itertools.chain(
-            (t + (1,) for t in positive_targets),
-            (t + (0,) for t in negative_targets),
-        ):
-
-            if tgt_hash in tgt_hashes:
-                if lbl == 1:
-                    batch.positive_idxs[-1].append(tgt_hashes[tgt_hash])
-                continue
-
-            batch.tgt_ids.append(tgt_id)
-
-            tgt_sents = self._tokenize_doc(tgt_path)
-            if not tgt_sents:
-                continue
-            batch.tgt_sents.extend(tgt_sents)
-            fragments_cnt = self._split_on_fragments(tgt_sents, batch.tgt_fragment_len)
-            tgt_no = self._populate_doc_len(
-                tgt_sents, fragments_cnt, batch.tgt_doc_len_in_sents, batch.tgt_doc_len_in_frags
-            )
-            tgt_hashes[tgt_hash] = tgt_no
-            if lbl == 1:
-                batch.positive_idxs[-1].append(tgt_no)
-
-            if tgt_hash in batch_dups:
-                # this tgt is a positive example for some document that is already in the batch
-                # we need to adjust positive_idxs of this document accordingly
-                batch.positive_idxs[batch_dups[tgt_hash]].append(tgt_no)
 
     def _empty_batch(self):
         iterable = [[] for _ in range(13)]

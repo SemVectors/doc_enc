@@ -93,6 +93,41 @@ def FakeTrainingDataWithDups():
         yield tmpdirname
 
 
+@pytest.fixture
+def FakeTrainingFiltering():
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        tmpdirname = Path(tmpdirname)
+        for n in ("ds1",):
+            ds = tmpdirname / n
+            ds_docs = ds / "texts"
+            ds_docs.mkdir(parents=True)
+
+        ds1_docs_dir = tmpdirname / "ds1" / "texts"
+        with open(ds1_docs_dir / '3.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4\n3 4 5 6\n5 6 7 8")
+        with open(ds1_docs_dir / '4.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 \n3 4 5 6\n5 6 \n7 8 10")
+        with open(ds1_docs_dir / '15.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 5\n" * 15)
+        with open(ds1_docs_dir / '16.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 6\n" * 16)
+        with open(ds1_docs_dir / '30.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 6 7\n" * 30)
+
+        with open(tmpdirname / 'combined_train.csv', 'w', encoding='utf8') as f:
+            # f.write("ds,src,tgt,label,slen,tlen,shash,thash\n")
+            f.write("ds1,15,3,1,15,3,15hash,3hash\n")
+            f.write("ds1,15,16,0,15,16,15hash,16hash\n")
+            f.write("ds1,15,30,0,15,30,15hash,30hash\n")
+            f.write("ds1,4,15,1,4,15,3hash,15hash\n")
+            f.write("ds1,4,30,1,4,30,3hash,30hash\n")
+            f.write("ds1,4,16,0,4,16,3hash,16hash\n")
+            f.write("ds1,3,15,1,3,15,4hash,15hash\n")
+            f.write("ds1,3,30,1,3,30,4hash,30hash\n")
+            f.write("ds1,3,16,0,3,16,4hash,16hash\n")
+        yield tmpdirname
+
+
 def _create_gen_opts(input_dir, **kwargs):
     conf = DocsBatchGeneratorConf(
         input_dir=input_dir,
@@ -100,6 +135,7 @@ def _create_gen_opts(input_dir, **kwargs):
         negatives_per_doc=[2, 2],
         fragment_size=16,
         min_sent_size=1,
+        min_sents_per_doc=1,
         **kwargs,
     )
     tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
@@ -207,6 +243,7 @@ def test_gen_with_dups(FakeTrainingDataWithDups):
         positives_per_doc=[1, 1],
         negatives_per_doc=[2, 2],
         min_sent_size=1,
+        min_sents_per_doc=1,
     )
     tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
     gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
@@ -242,6 +279,7 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
         positives_per_doc=[1, 1],
         negatives_per_doc=[2, 2],
         min_sent_size=1,
+        min_sents_per_doc=1,
     )
     tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
     gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
@@ -266,3 +304,85 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
     assert batch.info['src_docs_cnt'] == 2
     assert batch.info['tgt_docs_cnt'] == 3
     assert batch.info['max_positives_per_doc'] == 3
+
+
+def test_gen_with_filters(FakeTrainingFiltering):
+    conf = DocsBatchGeneratorConf(
+        input_dir=FakeTrainingFiltering,
+        positives_per_doc=[2, 2],
+        negatives_per_doc=[2, 2],
+        fragment_size=16,
+        min_sent_size=1,
+        min_sents_per_doc=4,
+        max_sents_per_doc=20,
+    )
+    tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
+    gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
+    batches = list(gen.batches())
+    assert len(batches) == 1
+    batch: DocsBatch = batches[0]
+    print(batch.positive_idxs)
+    assert batch.src_ids == [4]
+    assert batch.tgt_ids == [15, 16]
+    assert len(batch.src_sents) == 4
+    assert len(batch.tgt_sents) == 31
+
+    assert batch.src_fragment_len == [4]
+
+    assert batch.src_doc_len_in_sents == [4]
+    assert batch.tgt_doc_len_in_sents == [15, 16]
+
+    assert batch.positive_idxs[0] == [0]
+
+    assert batch.info['src_docs_cnt'] == 1
+    assert batch.info['tgt_docs_cnt'] == 2
+    assert batch.info['max_positives_per_doc'] == 1
+
+
+def test_gen_with_all_filtered(FakeTrainingFiltering):
+    conf = DocsBatchGeneratorConf(
+        input_dir=FakeTrainingFiltering,
+        positives_per_doc=[2, 2],
+        negatives_per_doc=[2, 2],
+        fragment_size=16,
+        min_sent_size=1,
+        min_sents_per_doc=5,
+        max_sents_per_doc=10,
+    )
+    tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
+    gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
+    batches = list(gen.batches())
+    assert len(batches) == 0
+
+
+def test_gen_with_filtering_sents_by_len(FakeTrainingFiltering):
+    conf = DocsBatchGeneratorConf(
+        input_dir=FakeTrainingFiltering,
+        positives_per_doc=[2, 2],
+        negatives_per_doc=[2, 2],
+        fragment_size=16,
+        min_sent_size=4,
+        min_sents_per_doc=3,
+        max_sents_per_doc=16,
+    )
+    tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
+    gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
+    batches = list(gen.batches())
+    assert len(batches) == 1
+    batch: DocsBatch = batches[0]
+    print(batch.positive_idxs)
+    assert batch.src_ids == [15, 3]
+    assert batch.tgt_ids == [3, 15]
+    assert len(batch.src_sents) == 18
+    assert len(batch.tgt_sents) == 18
+
+    assert batch.src_fragment_len == [15, 3]
+
+    assert batch.src_doc_len_in_sents == [15, 3]
+    assert batch.tgt_doc_len_in_sents == [3, 15]
+
+    assert batch.positive_idxs == [[0], [1]]
+
+    assert batch.info['src_docs_cnt'] == 2
+    assert batch.info['tgt_docs_cnt'] == 2
+    assert batch.info['max_positives_per_doc'] == 1
