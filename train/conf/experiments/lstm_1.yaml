@@ -20,4 +20,4 @@ batches:
       - sew
       - srw
     batch_generator_conf:
-      batch_sent_size: 768
+      batch_src_sents_cnt: 768

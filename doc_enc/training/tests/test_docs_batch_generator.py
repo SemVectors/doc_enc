@@ -187,7 +187,7 @@ def test_gen_basic(FakeTrainingData):
 
 def test_two_batches(FakeTrainingData):
     conf, tok_conf = _create_gen_opts(
-        FakeTrainingData, batch_sent_size=15, allow_docs_without_positives=True
+        FakeTrainingData, batch_src_sents_cnt=15, allow_docs_without_positives=True
     )
     gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
     batches = list(gen.batches())
@@ -212,6 +212,70 @@ def test_two_batches(FakeTrainingData):
 
     assert batch2.info['src_docs_cnt'] == 1
     assert batch2.info['tgt_docs_cnt'] == 1
+
+
+def test_three_batches(FakeTrainingData):
+    conf, tok_conf = _create_gen_opts(
+        FakeTrainingData,
+        batch_src_sents_cnt=15,
+        max_sents_cnt_delta=2,
+        allow_docs_without_positives=True,
+    )
+    gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
+    batches = list(gen.batches())
+    print(batches)
+    assert len(batches) == 3
+    batch1: DocsBatch = batches[0]
+
+    assert len(batch1.src_sents) == 3
+    assert len(batch1.tgt_sents) == 86
+
+    assert batch1.src_fragment_len == [3]
+
+    assert batch1.info['src_docs_cnt'] == 1
+    assert batch1.info['tgt_docs_cnt'] == 3
+
+    batch2: DocsBatch = batches[1]
+
+    assert len(batch2.src_sents) == 15
+    assert len(batch2.tgt_sents) == 110
+
+    assert batch2.src_fragment_len == [15]
+    assert batch2.tgt_fragment_len == [16, 14, 16, 16, 16, 2, 16, 14]
+
+    assert batch2.info['src_docs_cnt'] == 1
+    assert batch2.info['tgt_docs_cnt'] == 3
+
+    batch3: DocsBatch = batches[2]
+    assert len(batch3.src_sents) == 16
+    assert len(batch3.tgt_sents) == 40
+
+    assert batch3.src_fragment_len == [16]
+    assert batch3.tgt_fragment_len == [16, 16, 8]
+
+    assert batch3.info['src_docs_cnt'] == 1
+    assert batch3.info['tgt_docs_cnt'] == 1
+
+
+def test_cant_fit_batch(FakeTrainingData):
+    conf, tok_conf = _create_gen_opts(
+        FakeTrainingData,
+        batch_src_sents_cnt=10,
+        max_sents_cnt_delta=2,
+        allow_docs_without_positives=True,
+    )
+    gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
+    batches = list(gen.batches())
+    assert len(batches) == 1
+    batch1: DocsBatch = batches[0]
+
+    assert len(batch1.src_sents) == 3
+    assert len(batch1.tgt_sents) == 86
+
+    assert batch1.src_fragment_len == [3]
+
+    assert batch1.info['src_docs_cnt'] == 1
+    assert batch1.info['tgt_docs_cnt'] == 3
 
 
 def test_iterator_two_generators(FakeTrainingData):

@@ -21,4 +21,4 @@ batches:
       - mini
     batch_generator_conf:
       input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/temp
-      batch_sent_size: 128
+      batch_src_sents_cnt: 128

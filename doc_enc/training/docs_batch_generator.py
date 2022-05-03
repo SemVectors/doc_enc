@@ -4,6 +4,7 @@ import itertools
 import logging
 import os.path
 from pathlib import Path
+from enum import Enum
 
 import random
 from typing import List, Optional
@@ -28,7 +29,9 @@ class DocsBatchGeneratorConf:
     input_dir: str
     meta_prefix: str = "combined"
 
-    batch_sent_size: int = 512
+    batch_src_sents_cnt: int = 512
+    batch_total_sents_cnt: int = 1296
+    max_sents_cnt_delta: int = 64
     batch_size: int = 96
 
     positives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [1, 2])
@@ -47,8 +50,16 @@ EXMPL_DATASET = 0
 EXMPL_SRC_ID = 1
 EXMPL_TGT_ID = 2
 EXMPL_LABEL = 3
+EXMPL_SRC_LEN = 4
+EXMPL_TGT_LEN = 5
 EXMPL_SRC_HASH = 6
 EXMPL_TGT_HASH = 7
+
+
+class _ProcSrcStatus(Enum):
+    ADDED = 1
+    CANT_FIT_IN_BATCH = 2
+    NON_VALID_SRC = 3
 
 
 class DocsBatchGenerator:
@@ -96,16 +107,6 @@ class DocsBatchGenerator:
             return targets
         return random.sample(targets, n)
 
-    def _process_positive_targets(self, all_positive_targets, batch: DocsBatch, batch_dups: dict):
-        positive_targets = self._select_targets(all_positive_targets, self._opts.positives_per_doc)
-        src_no = len(batch.src_ids)
-        selected_hashes = [t[2] for t in positive_targets]
-        for _, _, h in all_positive_targets:
-            if h not in selected_hashes:
-                batch_dups[h] = src_no
-
-        return positive_targets
-
     def _tokenize_doc(self, path):
         with open_file(path) as f:
             sents = []
@@ -144,7 +145,7 @@ class DocsBatchGenerator:
         self, positive_targets, negative_targets, tgt_hashes, batch_dups, batch
     ):
         positive_idxs = []
-        for tgt_path, tgt_id, tgt_hash, lbl in itertools.chain(
+        for tgt_path, tgt_id, _, tgt_hash, lbl in itertools.chain(
             (t + (1,) for t in positive_targets),
             (t + (0,) for t in negative_targets),
         ):
@@ -183,27 +184,32 @@ class DocsBatchGenerator:
 
     def _process_src_doc(
         self,
-        src_path,
-        src_id,
+        src_info,
         all_positive_targets,
         all_negative_targets,
         batch: DocsBatch,
         tgt_hashes: dict,
         batch_dups: dict,
-    ):
+    ) -> _ProcSrcStatus:
 
         if not all_positive_targets:
             if not self._opts.allow_docs_without_positives:
-                return
+                return _ProcSrcStatus.NON_VALID_SRC
             if not all_negative_targets:
-                return
+                return _ProcSrcStatus.NON_VALID_SRC
+
+        src_path, src_id, src_len = src_info
 
         if not os.path.exists(src_path):
             logging.warning("src text is missing: %s", src_path)
-            return
+            return _ProcSrcStatus.NON_VALID_SRC
 
-        positive_targets = self._process_positive_targets(all_positive_targets, batch, batch_dups)
+        positive_targets = self._select_targets(all_positive_targets, self._opts.positives_per_doc)
         negative_targets = self._select_targets(all_negative_targets, self._opts.negatives_per_doc)
+
+        tgt_extra_len = sum(t[2] for t in itertools.chain(positive_targets, negative_targets))
+        if self._is_batch_ready(batch, src_extra=src_len, tgt_extra=tgt_extra_len):
+            return _ProcSrcStatus.CANT_FIT_IN_BATCH
 
         src_sents = self._tokenize_doc(src_path)
         if (
@@ -211,13 +217,13 @@ class DocsBatchGenerator:
             or len(src_sents) < self._opts.min_sents_per_doc
             or len(src_sents) >= self._opts.max_sents_per_doc
         ):
-            return
+            return _ProcSrcStatus.NON_VALID_SRC
 
         positive_idxs = self._prepare_all_targets(
             positive_targets, negative_targets, tgt_hashes, batch_dups, batch
         )
         if not positive_idxs and not self._opts.allow_docs_without_positives:
-            return
+            return _ProcSrcStatus.NON_VALID_SRC
 
         batch.positive_idxs.append(positive_idxs)
         batch.src_ids.append(src_id)
@@ -226,6 +232,14 @@ class DocsBatchGenerator:
         self._populate_doc_len(
             src_sents, fragments_cnt, batch.src_doc_len_in_sents, batch.src_doc_len_in_frags
         )
+
+        src_no = len(batch.src_ids) - 1
+        selected_hashes = [t[-1] for t in positive_targets]
+        for _, _, _, h in all_positive_targets:
+            if h not in selected_hashes:
+                batch_dups[h] = src_no
+
+        return _ProcSrcStatus.ADDED
 
     def _empty_batch(self):
         iterable = [[] for _ in range(13)]
@@ -252,6 +266,16 @@ class DocsBatchGenerator:
 
         batch.info['max_positives_per_doc'] = len(max(batch.positive_idxs, key=len))
 
+    def _is_batch_ready(self, batch: DocsBatch, src_extra=0, tgt_extra=0):
+        src_sz = len(batch.src_sents)
+        d = self._opts.max_sents_cnt_delta if src_extra or tgt_extra else 0
+        return (
+            src_sz + src_extra > self._opts.batch_src_sents_cnt + d
+            or src_sz + src_extra + len(batch.tgt_sents) + tgt_extra
+            > self._opts.batch_total_sents_cnt + d
+            or len(batch.src_ids) > self._opts.batch_size
+        )
+
     def batches(self):
         if self._meta_file is None:
             raise RuntimeError("Files are not initialized")
@@ -259,8 +283,7 @@ class DocsBatchGenerator:
         positive_targets = []
         negative_targets = []
         cur_hash = ''
-        src_path = ''
-        src_id = 0
+        src_info = tuple()
 
         batch, tgt_hashes, batch_dups = self._empty_batch()
 
@@ -271,32 +294,43 @@ class DocsBatchGenerator:
 
             src_texts, tgt_texts = self._text_dirs_dict[metas[EXMPL_DATASET]]
             if cur_hash != metas[EXMPL_SRC_HASH]:
-                self._process_src_doc(
-                    src_path,
-                    src_id,
+                status = self._process_src_doc(
+                    src_info,
                     positive_targets,
                     negative_targets,
                     batch,
                     tgt_hashes,
                     batch_dups,
                 )
+
                 if (
-                    len(batch.src_sents) > self._opts.batch_sent_size
-                    or len(batch.src_ids) > self._opts.batch_size
-                ):
+                    status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents
+                ) or self._is_batch_ready(batch):
                     self._finalize_batch(batch)
                     yield batch
                     batch, tgt_hashes, batch_dups = self._empty_batch()
+
+                if status == _ProcSrcStatus.CANT_FIT_IN_BATCH:
+                    self._process_src_doc(
+                        src_info,
+                        positive_targets,
+                        negative_targets,
+                        batch,
+                        tgt_hashes,
+                        batch_dups,
+                    )
 
                 positive_targets = []
                 negative_targets = []
                 cur_hash = metas[EXMPL_SRC_HASH]
 
                 src_id = int(metas[EXMPL_SRC_ID])
+                src_len = int(metas[EXMPL_SRC_LEN])
                 src_path = find_file(
                     f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{src_texts}/{metas[EXMPL_SRC_ID]}.txt",
                     throw_if_not_exist=False,
                 )
+                src_info = (src_path, src_id, src_len)
 
             tgt_id = int(metas[EXMPL_TGT_ID])
             tgt_path = find_file(
@@ -307,7 +341,8 @@ class DocsBatchGenerator:
                 logging.warning("tgt text is missing: %s", tgt_path)
                 continue
 
-            tgt_info = (tgt_path, tgt_id, metas[EXMPL_TGT_HASH])
+            tgt_len = int(metas[EXMPL_TGT_LEN])
+            tgt_info = (tgt_path, tgt_id, tgt_len, metas[EXMPL_TGT_HASH])
 
             label = int(metas[EXMPL_LABEL])
             if label == 1:
@@ -315,9 +350,16 @@ class DocsBatchGenerator:
             else:
                 negative_targets.append(tgt_info)
 
-        self._process_src_doc(
-            src_path, src_id, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
+        status = self._process_src_doc(
+            src_info, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
         )
+        if status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents:
+            self._finalize_batch(batch)
+            yield batch
+            batch, tgt_hashes, batch_dups = self._empty_batch()
+            self._process_src_doc(
+                src_info, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
+            )
 
         if batch.src_sents:
             self._finalize_batch(batch)

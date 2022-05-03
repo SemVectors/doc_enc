@@ -15,4 +15,4 @@ docs_batch_iterator_conf:
     - gwiki
   batch_generator_conf:
     input_dir: /train/data/docs
-    batch_sent_size: 256
+    batch_src_sents_cnt: 256
