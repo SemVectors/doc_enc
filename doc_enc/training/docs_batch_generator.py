@@ -29,7 +29,7 @@ class DocsBatchGeneratorConf:
     meta_prefix: str = "combined"
 
     batch_sent_size: int = 512
-    batch_size: int = 128
+    batch_size: int = 96
 
     positives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [1, 2])
     negatives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [2, 4])
@@ -280,7 +280,10 @@ class DocsBatchGenerator:
                     tgt_hashes,
                     batch_dups,
                 )
-                if len(batch.src_sents) > self._opts.batch_sent_size:
+                if (
+                    len(batch.src_sents) > self._opts.batch_sent_size
+                    or len(batch.src_ids) > self._opts.batch_size
+                ):
                     self._finalize_batch(batch)
                     yield batch
                     batch, tgt_hashes, batch_dups = self._empty_batch()
