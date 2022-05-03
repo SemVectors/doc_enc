@@ -52,6 +52,7 @@ class TrainerConf:
     eval_every: int = 300_000
     checkpoint_every: int = 200_000
     debug_iters: List[int] = dataclasses.field(default_factory=list)
+    print_batches: bool = False
 
 
 # from fairseq
@@ -329,30 +330,63 @@ class Trainer:
         if not self._verbose:
             return
         if task == TaskType.SENT_RETR:
-            logging.debug('src shape: %s\nsrc_len: %s', batch.src.size(), batch.src_len)
-            logging.debug('tgt shape: %s\ntgt_len: %s', batch.tgt.size(), batch.tgt_len)
+            logging.debug('src sents shape: %s', batch.src.size())
+            logging.debug('tgt sents shape: %s', batch.tgt.size())
+            if self._opts.print_batches:
+                logging.debug('src_len: %s', batch.src_len)
+                logging.debug('tgt_len: %s', batch.tgt_len)
         elif task == TaskType.DOC_RETR:
             logging.debug(
-                'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
-                'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
-                batch.src_ids,
+                "src docs cnt: %s; frags cnt: %s; sents cnt: %s",
+                len(batch.src_ids),
+                len(batch.src_fragment_len),
                 len(batch.src_sents),
-                batch.src_sent_len,
-                batch.src_fragment_len,
-                batch.src_doc_len_in_sents,
-                batch.src_doc_len_in_frags,
             )
             logging.debug(
-                'tgt ids: %s\ntgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
-                'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
-                batch.tgt_ids,
+                "tgt docs cnt: %s; frags cnt: %s; sents cnt: %s",
+                len(batch.tgt_ids),
+                len(batch.tgt_fragment_len),
                 len(batch.tgt_sents),
-                batch.tgt_sent_len,
-                batch.tgt_fragment_len,
-                batch.tgt_doc_len_in_sents,
-                batch.tgt_doc_len_in_frags,
             )
-            logging.debug("labels: %s", labels)
+            src_sent_sum = batch.src_sent_len.sum().item()
+            logging.debug(
+                "src sents stat: max: %s; min: %s; avg: %s; sum: %s",
+                batch.src_sent_len.max().item(),
+                batch.src_sent_len.min().item(),
+                src_sent_sum / len(batch.src_sent_len),
+                src_sent_sum,
+            )
+            tgt_sent_sum = batch.tgt_sent_len.sum().item()
+            logging.debug(
+                "tgt sents stat: max: %s; min: %s; avg: %s; sum: %s",
+                batch.tgt_sent_len.max().item(),
+                batch.tgt_sent_len.min().item(),
+                tgt_sent_sum / len(batch.tgt_sent_len),
+                tgt_sent_sum,
+            )
+
+            if self._opts.print_batches:
+                logging.debug(
+                    'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
+                    'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
+                    batch.src_ids,
+                    len(batch.src_sents),
+                    batch.src_sent_len,
+                    batch.src_fragment_len,
+                    batch.src_doc_len_in_sents,
+                    batch.src_doc_len_in_frags,
+                )
+                logging.debug(
+                    'tgt ids: %s\ntgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
+                    'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
+                    batch.tgt_ids,
+                    len(batch.tgt_sents),
+                    batch.tgt_sent_len,
+                    batch.tgt_fragment_len,
+                    batch.tgt_doc_len_in_sents,
+                    batch.tgt_doc_len_in_frags,
+                )
+                logging.debug("labels: %s", labels)
 
     def _make_update(self, task):
         if self._opts.max_grad_norm or self._opts.emb_grad_scale:
@@ -381,7 +415,7 @@ class Trainer:
             # forward pass
             with autocast(enabled=self._amp_enabled):
                 output = self._model(task, batch, labels)
-                logging.debug("output of model: %s", output)
+                logging.debug("output of model shape: %s", output.size())
                 # output size is bsz x tgt_size for retrieval task
                 loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
                 logging.debug("loss: %s; metrics: %s", loss.item(), m)
@@ -448,6 +482,7 @@ class Trainer:
 
         while True:
             task = train_iter.current_task()
+            logging.debug("current task is %s", task)
             gen = train_iter.batches(self._opts.switch_tasks_every)
             with self._uneven_input_handling([self._model, self._optimizer]):
                 metrics = self._process_task_batches(task, gen)
