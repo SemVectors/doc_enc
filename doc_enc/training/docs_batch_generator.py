@@ -37,6 +37,7 @@ class DocsBatchGeneratorConf:
     fragment_size: int = 24
 
     max_sent_size: int = 128
+    min_sent_size: int = 4
     allow_docs_without_positives: bool = False
 
 
@@ -112,8 +113,9 @@ class DocsBatchGenerator:
 
                 tokens = self._tokenizer(l.rstrip())
                 if tokens:
-                    tokens = tokens[: self._opts.max_sent_size]
-                    sents.append(tokens)
+                    if len(tokens) >= self._opts.min_sent_size:
+                        tokens = tokens[: self._opts.max_sent_size]
+                        sents.append(tokens)
                 else:
                     logging.warning("empty sentence, It may cause errors in doc-dual-enc")
             return sents
@@ -163,6 +165,8 @@ class DocsBatchGenerator:
 
         batch.src_ids.append(src_id)
         src_sents = self._tokenize_doc(src_path)
+        if not src_sents:
+            return
         batch.src_sents.extend(src_sents)
         fragments_cnt = self._split_on_fragments(src_sents, batch.src_fragment_len)
         self._populate_doc_len(
@@ -183,6 +187,8 @@ class DocsBatchGenerator:
             batch.tgt_ids.append(tgt_id)
 
             tgt_sents = self._tokenize_doc(tgt_path)
+            if not tgt_sents:
+                continue
             batch.tgt_sents.extend(tgt_sents)
             fragments_cnt = self._split_on_fragments(tgt_sents, batch.tgt_fragment_len)
             tgt_no = self._populate_doc_len(
@@ -285,8 +291,9 @@ class DocsBatchGenerator:
         self._process_src_doc(
             src_path, src_id, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
         )
-        self._finalize_batch(batch)
+
         if batch.src_sents:
+            self._finalize_batch(batch)
             yield batch
         return
 

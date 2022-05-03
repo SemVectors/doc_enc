@@ -117,7 +117,7 @@ class DocDualEncoder(nn.Module):
             tgt_embs = tgt_sent_embs
             src_len_list = batch.src_doc_len_in_sents
             tgt_len_list = batch.tgt_doc_len_in_sents
-        src_doc_embs = self._embed_docs(src_embs, src_len_list, enforce_sorted=True)
+        src_doc_embs = self._embed_docs(src_embs, src_len_list, enforce_sorted=False)
 
         tgt_doc_embs = self._embed_docs(tgt_embs, tgt_len_list, enforce_sorted=False)
 

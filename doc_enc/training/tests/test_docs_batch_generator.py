@@ -99,6 +99,7 @@ def _create_gen_opts(input_dir, **kwargs):
         positives_per_doc=[2, 2],
         negatives_per_doc=[2, 2],
         fragment_size=16,
+        min_sent_size=1,
         **kwargs,
     )
     tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
@@ -205,6 +206,7 @@ def test_gen_with_dups(FakeTrainingDataWithDups):
         input_dir=FakeTrainingDataWithDups,
         positives_per_doc=[1, 1],
         negatives_per_doc=[2, 2],
+        min_sent_size=1,
     )
     tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
     gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
@@ -239,6 +241,7 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
         input_dir=FakeTrainingDataWithDups,
         positives_per_doc=[1, 1],
         negatives_per_doc=[2, 2],
+        min_sent_size=1,
     )
     tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
     gen = DocsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
