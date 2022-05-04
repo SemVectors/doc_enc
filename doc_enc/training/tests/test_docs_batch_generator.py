@@ -72,8 +72,8 @@ def FakeTrainingDataWithDups():
         ds1_docs_dir = tmpdirname / "ds1" / "texts"
         with open(ds1_docs_dir / '3.txt', 'w', encoding='utf8') as f:
             f.write("1 2\n3 4\n5 6")
-        with open(ds1_docs_dir / '15.txt', 'w', encoding='utf8') as f:
-            f.write("1 2 3 4 5\n" * 15)
+        with open(ds1_docs_dir / '2.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 5\n" * 2)
         with open(ds1_docs_dir / '16.txt', 'w', encoding='utf8') as f:
             f.write("1 2 3 4 6\n" * 16)
         with open(ds1_docs_dir / '30.txt', 'w', encoding='utf8') as f:
@@ -86,9 +86,9 @@ def FakeTrainingDataWithDups():
             f.write("ds1,3,40,1,3,40,3hash,40hash\n")
             f.write("ds1,3,16,1,3,16,3hash,16hash\n")
             f.write("ds1,3,30,1,3,30,3hash,30hash\n")
-            f.write("ds1,15,30,1,15,30,15hash,30hash\n")
-            f.write("ds1,15,16,0,15,16,15hash,16hash\n")
-            f.write("ds1,15,40,0,15,40,15hash,40hash\n")
+            f.write("ds1,2,30,1,2,30,2hash,30hash\n")
+            f.write("ds1,2,16,0,2,16,2hash,16hash\n")
+            f.write("ds1,2,40,0,2,40,2hash,40hash\n")
 
         yield tmpdirname
 
@@ -152,13 +152,8 @@ def test_gen_basic(FakeTrainingData):
     assert len(batch.src_sents) == 18
     assert len(batch.tgt_sents) == 166
 
-    assert batch.src_fragment_len == [3, 15]
+    assert batch.src_fragment_len == [15, 3]
     assert batch.tgt_fragment_len == [
-        16,
-        16,
-        8,
-        # doc16
-        16,
         # doc30
         16,
         14,
@@ -170,16 +165,22 @@ def test_gen_basic(FakeTrainingData):
         # doc30
         16,
         14,
+        # doc 40
+        16,
+        16,
+        8,
+        # doc16
+        16,
     ]
 
     assert batch.src_doc_len_in_frags == [1, 1]
-    assert batch.src_doc_len_in_sents == [3, 15]
+    assert batch.src_doc_len_in_sents == [15, 3]
 
-    assert batch.tgt_doc_len_in_frags == [3, 1, 2, 4, 2]
-    assert batch.tgt_doc_len_in_sents == [40, 16, 30, 50, 30]
+    assert batch.tgt_doc_len_in_frags == [2, 4, 2, 3, 1]
+    assert batch.tgt_doc_len_in_sents == [30, 50, 30, 40, 16]
 
-    assert batch.positive_idxs[0] == [0]
-    assert batch.positive_idxs[1] == [2, 3]
+    assert batch.positive_idxs[0] == [0, 1]
+    assert batch.positive_idxs[1] == [3]
 
     assert batch.info['src_docs_cnt'] == 2
     assert batch.info['tgt_docs_cnt'] == 5
@@ -193,25 +194,24 @@ def test_two_batches(FakeTrainingData):
     batches = list(gen.batches())
     assert len(batches) == 2
     batch1: DocsBatch = batches[0]
+    assert len(batch1.src_sents) == 16
+    assert len(batch1.tgt_sents) == 40
 
-    assert len(batch1.src_sents) == 18
-    assert len(batch1.tgt_sents) == 166
+    assert batch1.src_fragment_len == [16]
+    assert batch1.tgt_fragment_len == [16, 16, 8]
 
-    assert batch1.src_fragment_len == [3, 15]
-
-    assert batch1.info['src_docs_cnt'] == 2
-    assert batch1.info['tgt_docs_cnt'] == 5
+    assert batch1.info['src_docs_cnt'] == 1
+    assert batch1.info['tgt_docs_cnt'] == 1
 
     batch2: DocsBatch = batches[1]
 
-    assert len(batch2.src_sents) == 16
-    assert len(batch2.tgt_sents) == 40
+    assert len(batch2.src_sents) == 18
+    assert len(batch2.tgt_sents) == 166
 
-    assert batch2.src_fragment_len == [16]
-    assert batch2.tgt_fragment_len == [16, 16, 8]
+    assert batch2.src_fragment_len == [15, 3]
 
-    assert batch2.info['src_docs_cnt'] == 1
-    assert batch2.info['tgt_docs_cnt'] == 1
+    assert batch2.info['src_docs_cnt'] == 2
+    assert batch2.info['tgt_docs_cnt'] == 5
 
 
 def test_three_batches(FakeTrainingData):
@@ -227,13 +227,14 @@ def test_three_batches(FakeTrainingData):
     assert len(batches) == 3
     batch1: DocsBatch = batches[0]
 
-    assert len(batch1.src_sents) == 3
-    assert len(batch1.tgt_sents) == 86
+    assert len(batch1.src_sents) == 16
+    assert len(batch1.tgt_sents) == 40
 
-    assert batch1.src_fragment_len == [3]
+    assert batch1.src_fragment_len == [16]
+    assert batch1.tgt_fragment_len == [16, 16, 8]
 
     assert batch1.info['src_docs_cnt'] == 1
-    assert batch1.info['tgt_docs_cnt'] == 3
+    assert batch1.info['tgt_docs_cnt'] == 1
 
     batch2: DocsBatch = batches[1]
 
@@ -247,14 +248,14 @@ def test_three_batches(FakeTrainingData):
     assert batch2.info['tgt_docs_cnt'] == 3
 
     batch3: DocsBatch = batches[2]
-    assert len(batch3.src_sents) == 16
-    assert len(batch3.tgt_sents) == 40
 
-    assert batch3.src_fragment_len == [16]
-    assert batch3.tgt_fragment_len == [16, 16, 8]
+    assert len(batch3.src_sents) == 3
+    assert len(batch3.tgt_sents) == 86
+
+    assert batch3.src_fragment_len == [3]
 
     assert batch3.info['src_docs_cnt'] == 1
-    assert batch3.info['tgt_docs_cnt'] == 1
+    assert batch3.info['tgt_docs_cnt'] == 3
 
 
 def test_cant_fit_batch(FakeTrainingData):
@@ -285,22 +286,25 @@ def test_iterator_two_generators(FakeTrainingData):
 
     biter.init_epoch(1)
     res = list(biter.batches())
+    print(res[0])
     assert len(res) == 2
     batch1, labels1 = res[0]
+    assert batch1.src_ids == [15, 3]
     assert batch1.info['src_docs_cnt'] == 2
     assert batch1.info['tgt_docs_cnt'] == 3
     assert labels1[0].tolist() == [1, 0, 0]
-    assert labels1[1].tolist() == [0, 0, 1]
+    assert labels1[1].tolist() == [0, 1, 0]
 
     batch2, labels2 = res[1]
+    assert batch2.src_ids == [16, 15]
     assert batch2.info['src_docs_cnt'] == 2
     assert batch2.info['tgt_docs_cnt'] == 3
-    assert labels2[0].tolist() == [1, 0, 0]
-    assert labels2[1].tolist() == [0, 0, 0]
+    assert labels2[0].tolist() == [0, 0, 0]
+    assert labels2[1].tolist() == [0, 1, 0]
 
 
 def test_gen_with_dups(FakeTrainingDataWithDups):
-    random.seed(1)
+    random.seed(4)
 
     conf = DocsBatchGeneratorConf(
         input_dir=FakeTrainingDataWithDups,
@@ -315,14 +319,14 @@ def test_gen_with_dups(FakeTrainingDataWithDups):
     assert len(batches) == 1
     batch: DocsBatch = batches[0]
     print(batch.src_sents)
-    assert batch.src_ids == [3, 15]
+    assert batch.src_ids == [3, 2]
     assert batch.tgt_ids == [30, 16, 40]
-    assert len(batch.src_sents) == 18
+    assert len(batch.src_sents) == 5
     assert len(batch.tgt_sents) == 86
 
-    assert batch.src_fragment_len == [3, 15]
+    assert batch.src_fragment_len == [3, 2]
 
-    assert batch.src_doc_len_in_sents == [3, 15]
+    assert batch.src_doc_len_in_sents == [3, 2]
 
     assert batch.tgt_doc_len_in_sents == [30, 16, 40]
 
@@ -351,16 +355,16 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
     assert len(batches) == 1
     batch: DocsBatch = batches[0]
     print(batch.src_sents)
-    assert batch.src_ids == [3, 15]
-    assert batch.tgt_ids == [40, 30, 16]
-    assert len(batch.src_sents) == 18
+    assert batch.src_ids == [3, 2]
+    assert batch.tgt_ids == [16, 30, 40]
+    assert len(batch.src_sents) == 5
     assert len(batch.tgt_sents) == 86
 
-    assert batch.src_fragment_len == [3, 15]
+    assert batch.src_fragment_len == [3, 2]
 
-    assert batch.src_doc_len_in_sents == [3, 15]
+    assert batch.src_doc_len_in_sents == [3, 2]
 
-    assert batch.tgt_doc_len_in_sents == [40, 30, 16]
+    assert batch.tgt_doc_len_in_sents == [16, 30, 40]
 
     assert batch.positive_idxs[0] == [0, 1, 2]
     assert batch.positive_idxs[1] == [1]

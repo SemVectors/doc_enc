@@ -41,7 +41,7 @@ class DocsBatchGeneratorConf:
 
     max_sent_size: int = 128
     min_sent_size: int = 4
-    max_sents_per_doc: int = 512
+    max_sents_per_doc: int = 1024
     min_sents_per_doc: int = 5
     allow_docs_without_positives: bool = False
 
@@ -73,15 +73,8 @@ class DocsBatchGenerator:
     ):
         self._opts = opts
 
-        self._line_offset = line_offset
-        self._line_cnt = line_cnt
-
         self._tokenizer = create_tokenizer(tok_conf)
-        self._meta_file = None
-
-        fp = f"{self._opts.input_dir}/{self._opts.meta_prefix}_{split}.csv"
-        self._meta_file = open(fp, 'r', encoding='utf8')
-        skip_to_line(self._meta_file, self._line_offset)
+        self._doc_pair_metas = self._load_metas(split, line_offset, line_cnt)
 
         self._text_dirs_dict = {}
         for p in Path(self._opts.input_dir).iterdir():
@@ -92,9 +85,24 @@ class DocsBatchGenerator:
             elif (p / "texts_1").is_dir() and (p / "texts_2").is_dir():
                 self._text_dirs_dict[p.name] = ("texts_1", "texts_2")
 
-    def __del__(self):
-        if self._meta_file is not None:
-            self._meta_file.close()
+    def _load_metas(self, split, line_offset, line_cnt):
+        all_metas = []
+        fp = f"{self._opts.input_dir}/{self._opts.meta_prefix}_{split}.csv"
+
+        with open(fp, 'r', encoding='utf8') as fp:
+            skip_to_line(fp, line_offset)
+            for i, l in enumerate(fp):
+                if i == line_cnt:
+                    break
+                row = l.rstrip().split(',')
+                ds, src, tgt, label, slen, tlen, shash, thash = row
+                t = (ds, int(src), int(tgt), int(label), int(slen), int(tlen), shash, thash)
+                all_metas.append(t)
+
+        all_metas.sort(
+            key=lambda t: (-t[EXMPL_SRC_LEN], t[EXMPL_SRC_HASH], -t[EXMPL_LABEL], t[EXMPL_TGT_LEN])
+        )
+        return all_metas
 
     def _select_targets(self, targets, min_max_list):
         if not targets:
@@ -277,9 +285,6 @@ class DocsBatchGenerator:
         )
 
     def batches(self):
-        if self._meta_file is None:
-            raise RuntimeError("Files are not initialized")
-
         positive_targets = []
         negative_targets = []
         cur_hash = ''
@@ -287,11 +292,7 @@ class DocsBatchGenerator:
 
         batch, tgt_hashes, batch_dups = self._empty_batch()
 
-        for i, l in enumerate(self._meta_file):
-            if i == self._line_cnt:
-                break
-            metas = l.split(',')
-
+        for metas in self._doc_pair_metas:
             src_texts, tgt_texts = self._text_dirs_dict[metas[EXMPL_DATASET]]
             if cur_hash != metas[EXMPL_SRC_HASH]:
                 status = self._process_src_doc(
@@ -324,15 +325,15 @@ class DocsBatchGenerator:
                 negative_targets = []
                 cur_hash = metas[EXMPL_SRC_HASH]
 
-                src_id = int(metas[EXMPL_SRC_ID])
-                src_len = int(metas[EXMPL_SRC_LEN])
+                src_id = metas[EXMPL_SRC_ID]
+                src_len = metas[EXMPL_SRC_LEN]
                 src_path = find_file(
                     f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{src_texts}/{metas[EXMPL_SRC_ID]}.txt",
                     throw_if_not_exist=False,
                 )
                 src_info = (src_path, src_id, src_len)
 
-            tgt_id = int(metas[EXMPL_TGT_ID])
+            tgt_id = metas[EXMPL_TGT_ID]
             tgt_path = find_file(
                 f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{tgt_texts}/{metas[EXMPL_TGT_ID]}.txt",
                 throw_if_not_exist=False,
@@ -341,10 +342,10 @@ class DocsBatchGenerator:
                 logging.warning("tgt text is missing: %s", tgt_path)
                 continue
 
-            tgt_len = int(metas[EXMPL_TGT_LEN])
+            tgt_len = metas[EXMPL_TGT_LEN]
             tgt_info = (tgt_path, tgt_id, tgt_len, metas[EXMPL_TGT_HASH])
 
-            label = int(metas[EXMPL_LABEL])
+            label = metas[EXMPL_LABEL]
             if label == 1:
                 positive_targets.append(tgt_info)
             else:

@@ -28,6 +28,7 @@ def combine_docs_datasets(
     out_filename_prefix="combined",
     min_doc_len=0,
     max_doc_len=float('inf'),
+    sort_by_len=False,
 ):
     input_path = Path(input_dir)
     datasets = []
@@ -57,7 +58,11 @@ def combine_docs_datasets(
                 )
             )
 
-        all_examples.sort(key=lambda t: (-t.src_len, t.src_hash, -t.label, t.tgt_len))
+        if sort_by_len:
+            key = lambda t: (-t.src_len, t.src_hash, -t.label)
+        else:
+            key = lambda t: (t.src_hash, -t.label)
+        all_examples.sort(key=key)
         for e in all_examples:
             csv_writer.writerow(
                 (

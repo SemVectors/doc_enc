@@ -120,7 +120,7 @@ def _parse_combined_output(l):
 
 
 def test_gen_basic(FakeTrainingData):
-    combine_docs_datasets(FakeTrainingData, 'train')
+    combine_docs_datasets(FakeTrainingData, 'train', sort_by_len=True)
     assert (FakeTrainingData / "combined_train.csv").exists()
 
     with open(FakeTrainingData / "combined_train.csv", 'r', encoding='utf8') as f:
@@ -155,7 +155,7 @@ def test_gen_basic(FakeTrainingData):
 
 
 def test_gen_with_2dirs(TwoTextDirs):
-    combine_docs_datasets(TwoTextDirs, 'train')
+    combine_docs_datasets(TwoTextDirs, 'train', sort_by_len=True)
     assert (TwoTextDirs / "combined_train.csv").exists()
     with open(TwoTextDirs / "combined_train.csv", 'r', encoding='utf8') as f:
         id3_list = [_parse_combined_output(l) for l in itertools.islice(f, 3, 6)]
