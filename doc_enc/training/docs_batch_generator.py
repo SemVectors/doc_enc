@@ -123,12 +123,9 @@ class DocsBatchGenerator:
                     continue
 
                 tokens = self._tokenizer(l.rstrip())
-                if tokens:
-                    if len(tokens) >= self._opts.min_sent_size:
-                        tokens = tokens[: self._opts.max_sent_size]
-                        sents.append(tokens)
-                else:
-                    logging.warning("empty sentence, It may cause errors in doc-dual-enc")
+                if len(tokens) >= self._opts.min_sent_size:
+                    tokens = tokens[: self._opts.max_sent_size]
+                    sents.append(tokens)
             return sents
 
     def _split_on_fragments(self, sents: List, fragment_len_list: List):

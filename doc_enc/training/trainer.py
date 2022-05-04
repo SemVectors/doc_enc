@@ -130,9 +130,11 @@ def _init_dist_default_group(rank, world_size, port='29500'):
     os.environ['MASTER_ADDR'] = '127.0.0.1'
     os.environ['MASTER_PORT'] = port
     os.environ['NCCL_ASYNC_ERROR_HANDLING'] = '1'
+    timeout = int(os.environ.get("TORCH_DIST_TIMEOUT_MIN", "5"))
     dist.init_process_group(
-        'nccl', rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=5)
+        'nccl', rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=timeout)
     )
+    return timeout
 
 
 class Trainer:
@@ -160,8 +162,10 @@ class Trainer:
         self._local_model = self._create_model(vocab, model_conf)
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
-            _init_dist_default_group(rank, world_size)
-            self._cpu_group = dist.new_group(backend='gloo', timeout=datetime.timedelta(minutes=5))
+            timeout = _init_dist_default_group(rank, world_size)
+            self._cpu_group = dist.new_group(
+                backend='gloo', timeout=datetime.timedelta(minutes=timeout)
+            )
             self._model = DDP(
                 self._local_model,
                 device_ids=[rank],
