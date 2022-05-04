@@ -9,7 +9,7 @@ tokenizer:
   vocab_path: /train/unigram_96k_from_100M.spm.model
 
 model:
-  split_size: 512
+  split_size: 1024
   scale: 20
   margin: 0.0
   sent:
@@ -22,7 +22,7 @@ batches:
   sents_batch_iterator_conf:
     async_generators: 1
     batch_generator_conf:
-      batch_size: 384
+      batch_size: 512
 
   docs_batch_iterator_conf:
     async_generators: 2
@@ -31,6 +31,7 @@ batches:
       - sew
       - srw
     batch_generator_conf:
-      batch_src_sents_cnt: 1536
-      batch_total_sents_cnt: 3584
+      batch_src_sents_cnt: 4096
+      batch_total_sents_cnt: 12800
       batch_size: 128
+      max_sents_per_doc: 1024

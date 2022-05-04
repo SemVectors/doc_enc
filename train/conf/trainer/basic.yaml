@@ -6,10 +6,10 @@ max_updates: 300_000
 eval_every: 3_000
 checkpoint_every: 5_000
 debug_iters:
-  - 500
-  - 520
+  - 1000
+  - 1020
 
 
 lr: 0.006
 final_lr: 0.0006
-emb_grad_scale: 15
+max_grad_norm: 5.0

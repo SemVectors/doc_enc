@@ -18,9 +18,7 @@ batches:
 
   docs_batch_iterator_conf:
     include_datasets:
-      - pw
-      - sew
-      - srw
+      - mini
     batch_generator_conf:
-      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc_enc_datasets
+      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/temp
       batch_src_sents_cnt: 128
