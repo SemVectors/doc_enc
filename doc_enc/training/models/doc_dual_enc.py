@@ -103,7 +103,7 @@ class DocDualEncoder(nn.Module):
         assert len(doc_embs) == cnt
         return doc_embs
 
-    def _forward_doc_task(self, batch: DocsBatch, labels):
+    def calc_sim_matrix(self, batch: DocsBatch):
         src_sent_embs = self._embed_sents(batch.src_sents, batch.src_sent_len)
         tgt_sent_embs = self._embed_sents(batch.tgt_sents, batch.tgt_sent_len)
 
@@ -126,6 +126,10 @@ class DocDualEncoder(nn.Module):
             tgt_doc_embs = F.normalize(tgt_doc_embs, p=2, dim=1)
 
         m = torch.mm(src_doc_embs, tgt_doc_embs.t())  # bsz x target_bsz
+        return m
+
+    def _forward_doc_task(self, batch: DocsBatch, labels):
+        m = self.calc_sim_matrix(batch)
         if self.conf.margin:
             m[labels.to(dtype=torch.bool)] -= self.conf.margin
 

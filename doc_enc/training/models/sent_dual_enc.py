@@ -34,7 +34,7 @@ class SentDualEncoder(nn.Module):
         assert len(batch.tgt_len) == len(target_embeddings), "assert wrong size of tgt after concat"
         return target_embeddings
 
-    def forward(self, batch):
+    def calc_sim_matrix(self, batch):
         # bsz x hidden
         source_embeddings = self.encoder(batch.src, batch.src_len)['pooled_out']
         target_embeddings = self._embed_target(batch)
@@ -43,6 +43,10 @@ class SentDualEncoder(nn.Module):
             target_embeddings = F.normalize(target_embeddings, p=2, dim=1)
 
         m = torch.mm(source_embeddings, target_embeddings.t())  # bsz x target_bsz
+        return m
+
+    def forward(self, batch):
+        m = self.calc_sim_matrix(batch)
 
         if self.conf.margin:
             diag = m.diagonal()

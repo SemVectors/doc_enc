@@ -571,8 +571,13 @@ class Trainer:
                 batches = 0
                 cum_metrics = create_metrics(task)
                 dev_iter.init_epoch(epoch, [task])
+                if task == TaskType.SENT_RETR:
+                    model = self._local_model.sent_model
+                else:
+                    model = self._local_model
+
                 for batch, labels in dev_iter.batches(batches_cnt=0):
-                    output = self._local_model(task, batch, labels)
+                    output = model.calc_sim_matrix(batch)
                     _, m = self._calc_loss_and_metrics(task, output, labels, batch)
                     cum_metrics += m
                     batches += 1
