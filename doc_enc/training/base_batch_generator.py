@@ -125,10 +125,15 @@ class BaseBatchIterator:
         self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
 
     def destroy(self):
-        for p in self._processes:
-            p.terminate()
-            p.join()
+        self._terminate_workers()
         self._queue.close()
+
+    def init_epoch(self, epoch):
+        raise NotImplementedError("Impl init_epoch")
+
+    def end_epoch(self):
+        self.destroy()
+        self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
 
     def _get_line_offs_for_rank(self, filepath):
         line_cnt = _calc_line_cnt(filepath)
@@ -138,6 +143,12 @@ class BaseBatchIterator:
 
         r = _split_between_nproc(self._world_size, start_offs=0, line_cnt=line_cnt)
         return r[self._rank], r.step
+
+    def _terminate_workers(self):
+        for p in self._processes:
+            p.terminate()
+            p.join()
+        self._processes = []
 
     def _start_workers(self, filepath):
         rank_offs, per_rank_lines = self._get_line_offs_for_rank(filepath)

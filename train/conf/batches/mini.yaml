@@ -1,5 +1,7 @@
+---
 defaults:
   - base_batches_config
+  - _self_
 
 sents_batch_iterator_conf:
   async_generators: 1
