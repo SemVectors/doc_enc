@@ -97,6 +97,12 @@ class InverseSquareRootSchedule:
         self._set_lr()
         return self._lr
 
+    def state_dict(self):
+        return {'lr': self._lr}
+
+    def load_state_dict(self, d):
+        self._lr = d['lr']
+
 
 class LinearLRSchedule:
     def __init__(self, opts: TrainerConf, optimizer):
@@ -106,6 +112,7 @@ class LinearLRSchedule:
         self._set_lr()
         self._step = (self._lr - opts.final_lr) / (opts.max_updates - opts.warmup_updates)
         logging.info("step lr: %e", self._step)
+        self._last_update = 0
 
     def _set_lr(self):
         for param_group in self._optimizer.param_groups:
@@ -121,9 +128,18 @@ class LinearLRSchedule:
         """Update the learning rate after each update."""
         if num_updates < self._opts.warmup_updates:
             return self._lr
-        self._lr -= self._step
+        self._lr -= (num_updates - self._last_update) * self._step
+        self._last_update = num_updates
         self._set_lr()
         return self._lr
+
+    def state_dict(self):
+        return {'lr': self._lr, 'step': self._step, 'last_update': self._last_update}
+
+    def load_state_dict(self, d):
+        self._lr = d['lr']
+        self._step = d['step']
+        self._last_update = d['last_update']
 
 
 def _init_dist_default_group(rank, world_size, port='29500'):
@@ -402,14 +418,11 @@ class Trainer:
                     wgrad *= self._opts.emb_grad_scale
 
             if self._opts.max_grad_norm:
-                clip_grad_norm_(self._local_model.parameters(), self._opts.max_grad_norm)
+                clip_grad_norm_(self._model.parameters(), self._opts.max_grad_norm)
 
         self._scaler.step(self._optimizer)
         self._scaler.update()
         self._optimizer.zero_grad()
-
-        self._num_updates += 1
-        self._scheduler.step_update(self._num_updates)
 
     def _process_task_batches(self, task, task_batches):
         running_metrics = create_metrics(task)
@@ -431,6 +444,7 @@ class Trainer:
             logging.debug("backward step done")
 
             self._make_update(task)
+            self._num_updates += 1
             logging.debug("update done")
 
             if self._rank == 0 and self._opts.debug_iters:
@@ -446,9 +460,10 @@ class Trainer:
         # When data is unevenly split, processes may have done different number of updates
         if self._cpu_group is None:
             return n
-        t = torch.tensor([n])
+        t = torch.tensor([n, self._num_updates])
         dist.broadcast(t, 0, group=self._cpu_group, async_op=False)
-        return t.item()
+        self._num_updates = t[1].item()
+        return t[0].item()
 
     def _sync_quiting(self, done):
         # Quit from epoch with all processes at once
@@ -493,6 +508,7 @@ class Trainer:
 
             epoch_updates += metrics.updates_num()
             epoch_updates = self._sync_epoch_updates(epoch_updates)
+            self._scheduler.step_update(self._num_updates)
 
             running_metrics[task] += metrics
 
@@ -538,7 +554,7 @@ class Trainer:
         state = torch.load(self._opts.resume_snapshot, map_location=self._device)
         self._num_updates = state['num_updates']
         self._optimizer.load_state_dict(state['optimizer'])
-        self._scheduler = state['scheduler']
+        self._scheduler.load_state_dict(state['scheduler'])
         self._best_metric = state['best_metric']
         self._model.load_state_dict(state['model'])
         if isinstance(self._model, DDP):
@@ -550,7 +566,8 @@ class Trainer:
 
     def _save_checkpoint(self, epoch):
         snapshot_path = Path(self._opts.save_path) / f'checkpoint_{epoch}_{self._num_updates}.pt'
-        self._optimizer.consolidate_state_dict(to=0)
+        if self._world_size > 1:
+            self._optimizer.consolidate_state_dict(to=0)
         if self._rank == 0:
             logging.info("Saving new checkpoint")
             torch.save(
@@ -559,7 +576,7 @@ class Trainer:
                     'epoch': epoch,
                     'model': self._model.state_dict(),
                     'optimizer': self._optimizer.state_dict(),
-                    'scheduler': self._scheduler,
+                    'scheduler': self._scheduler.state_dict(),
                     'best_metric': self._best_metric,
                 },
                 snapshot_path,
