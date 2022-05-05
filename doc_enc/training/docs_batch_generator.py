@@ -43,6 +43,7 @@ class DocsBatchGeneratorConf:
     min_sent_size: int = 4
     max_sents_per_doc: int = 1024
     min_sents_per_doc: int = 5
+    min_tgt_docs_per_src_doc: int = 1
     allow_docs_without_positives: bool = False
 
 
@@ -271,6 +272,12 @@ class DocsBatchGenerator:
 
         batch.info['max_positives_per_doc'] = len(max(batch.positive_idxs, key=len))
 
+    def _is_defect_batch(self, batch):
+        return (
+            batch.info['bs'] == 1
+            and batch.info['tgt_docs_cnt'] < self._opts.min_tgt_docs_per_src_doc
+        )
+
     def _is_batch_ready(self, batch: DocsBatch, src_extra=0, tgt_extra=0):
         src_sz = len(batch.src_sents)
         d = self._opts.max_sents_cnt_delta if src_extra or tgt_extra else 0
@@ -305,7 +312,8 @@ class DocsBatchGenerator:
                     status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents
                 ) or self._is_batch_ready(batch):
                     self._finalize_batch(batch)
-                    yield batch
+                    if not self._is_defect_batch(batch):
+                        yield batch
                     batch, tgt_hashes, batch_dups = self._empty_batch()
 
                 if status == _ProcSrcStatus.CANT_FIT_IN_BATCH:
@@ -318,6 +326,7 @@ class DocsBatchGenerator:
                         batch_dups,
                     )
 
+                # preparations for new src doc
                 positive_targets = []
                 negative_targets = []
                 cur_hash = metas[EXMPL_SRC_HASH]
@@ -353,7 +362,8 @@ class DocsBatchGenerator:
         )
         if status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents:
             self._finalize_batch(batch)
-            yield batch
+            if not self._is_defect_batch(batch):
+                yield batch
             batch, tgt_hashes, batch_dups = self._empty_batch()
             self._process_src_doc(
                 src_info, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
@@ -361,7 +371,8 @@ class DocsBatchGenerator:
 
         if batch.src_sents:
             self._finalize_batch(batch)
-            yield batch
+            if not self._is_defect_batch(batch):
+                yield batch
         return
 
 

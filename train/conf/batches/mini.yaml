@@ -17,3 +17,4 @@ docs_batch_iterator_conf:
     input_dir: /train/data/docs
     batch_src_sents_cnt: 256
     max_sents_per_doc: 512
+    min_tgt_docs_per_src_doc: 2
