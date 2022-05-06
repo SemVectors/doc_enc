@@ -45,6 +45,8 @@ class SentsBatchGeneratorConf:
     batch_size: int = 128
     batch_per_bucket: int = 100
     max_tokens: int = 0
+    max_sent_size: int = 256
+
     adjust_batch_size: bool = True
     dont_use_dups: bool = False
     dont_use_hns: bool = False
@@ -284,7 +286,8 @@ class SentsBatchGenerator:
 
     def _parse_line(self, line):
         line_id, text = line.split('\t', 1)
-        return int(line_id), self._tokenizer(text)
+        sent = self._tokenizer(text)
+        return int(line_id), sent[: self._opts.max_sent_size]
 
     def _parse_dups(self, line):
         line_id, dups_str = line.split('\t', 1)
