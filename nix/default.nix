@@ -6,6 +6,7 @@
   sentencepiece,
   pytorch-bin,
   hydra,
+  mlflow-skinny,
   pytest,
 
 }:
@@ -17,7 +18,7 @@ buildPythonPackage {
 
 
   buildInputs = [];
-  propagatedBuildInputs=[scikitlearn numpy pytorch-bin sentencepiece hydra];
+  propagatedBuildInputs=[scikitlearn numpy pytorch-bin sentencepiece hydra mlflow-skinny];
   checkInputs = [pytest];
 
   checkPhase = "pytest";

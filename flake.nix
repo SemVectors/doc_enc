@@ -9,7 +9,10 @@
           overlays = [ self.overlay ];
           config = {allowUnfree = true;};
         };
-        python-overlay = pyfinal: pyprev: {doc_enc = pyfinal.callPackage ./nix {src=self;};};
+        python-overlay = pyfinal: pyprev: {
+          mlflow-skinny = pyfinal.callPackage ./nix/mlflow-skinny.nix {};
+          doc_enc = pyfinal.callPackage ./nix {src=self; mlflow-skinny=pyfinal.mlflow-skinny;};
+        };
         overridePython = py-overlay: final: prev: (
           prev.python39.override (old: {
             packageOverrides = final.lib.composeExtensions
