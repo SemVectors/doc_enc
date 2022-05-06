@@ -293,15 +293,21 @@ class Trainer:
                         'sim_unscaled': v.item() * unscale_factor,
                     }
                 )
+            gold = []
             for pidx in batch.positive_idxs[i]:
+
                 usim = output[i][pidx].item() * unscale_factor
-                obj['etal'] = {
-                    'tgt_batch_num': pidx,
-                    'tgt_id': batch.tgt_ids[pidx],
-                    'sim': output[i][pidx].item(),
-                    'sim_unscaled': usim,
-                    'sim_unscaled_wo_margin': usim + self._model_conf.margin,
-                }
+
+                gold.append(
+                    {
+                        'tgt_batch_num': pidx,
+                        'tgt_id': batch.tgt_ids[pidx],
+                        'sim': output[i][pidx].item(),
+                        'sim_unscaled': usim,
+                        'sim_unscaled_wo_margin': usim + self._model_conf.margin,
+                    }
+                )
+            obj['gold'] = gold
             examples.append(obj)
         meta['examples'] = examples
         meta_path = Path(self._opts.save_path) / 'doc_retr_debug_batches.jsonl'
@@ -339,7 +345,7 @@ class Trainer:
             wo_margin += self._model_conf.sent.margin
             wo_margin /= unscale_factor
 
-            obj['etal'] = {
+            obj['gold'] = {
                 'tgt_batch_num': i,
                 'tgt_id': batch.tgt_id[i],
                 'sim': output[i][i].item(),
