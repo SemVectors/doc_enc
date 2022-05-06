@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 import logging
 
-
 from omegaconf import MISSING
 
 import torch
@@ -175,6 +174,8 @@ class Trainer:
         self._amp_enabled = amp
         self._verbose = verbose
 
+        self._run_id = self._create_run_id()
+
         self._local_model = self._create_model(vocab, model_conf)
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
@@ -214,6 +215,13 @@ class Trainer:
         self._init_epoch = 1
         if self._opts.resume_snapshot:
             self._init_epoch = self._load_from_checkpoint()
+
+    def _create_run_id(self):
+        # hydra sets working dir to outputs/<date>/<time> by default
+        cwd = os.getcwd()
+        bn = os.path.basename
+        dn = os.path.dirname
+        return f"{bn(dn(cwd))}_{bn(cwd)}"
 
     def _create_model(self, vocab: AbcTokenizer, model_conf: DocModelConf):
         model = create_model(model_conf, vocab.vocab_size(), vocab.pad_idx())

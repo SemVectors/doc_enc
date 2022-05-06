@@ -16,8 +16,9 @@ from torch.multiprocessing.spawn import spawn as mp_spawn
 
 from doc_enc.tokenizer import create_tokenizer, TokenizerConf
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
-from doc_enc.training.sents_batch_generator import SentsBatchIteratorConf
-from doc_enc.training.docs_batch_generator import DocsBatchIteratorConf
+
+# from doc_enc.training.sents_batch_generator import SentsBatchIteratorConf
+# from doc_enc.training.docs_batch_generator import DocsBatchIteratorConf
 from doc_enc.training.trainer import Trainer, TrainerConf
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
 from doc_enc.encoders.enc_config import SentEncoderConf, FragmentEncoderConf, DocEncoderConf
@@ -59,8 +60,9 @@ def _init_proc(rank, world_size, conf: Config):
     torch.cuda.set_device(rank)
 
 
-def _destroy_proc():
-    dist.destroy_process_group()
+def _destroy_proc(world_size):
+    if world_size > 1:
+        dist.destroy_process_group()
 
 
 def _run_train(rank, world_size, conf: Config):
@@ -101,7 +103,7 @@ def _run_train(rank, world_size, conf: Config):
             dev_iter.destroy()
         sys.exit(1)
     finally:
-        _destroy_proc()
+        _destroy_proc(world_size)
 
 
 def _preproc(conf: Config):

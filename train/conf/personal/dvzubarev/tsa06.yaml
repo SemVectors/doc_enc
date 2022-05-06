@@ -4,21 +4,23 @@ defaults:
   - _self_
 
 trainer:
-  max_updates: 900
+  max_updates: 1100
   eval_every: 300
+  checkpoint_every: 500
   switch_tasks_every: 10
 
 tokenizer:
-  vocab_path: /home/dvzubarev/data/paral_data/undata0/sentencepiece.bpe.model
+  vocab_path: /home/dvzubarev/data/paral_data/undata0/bpe_8k.spm.model
 
 batches:
   sents_batch_iterator_conf:
     batch_generator_conf:
-      input_dir: /home/dvzubarev/data/paral_data/undata0/mini
+      input_dir: /home/dvzubarev/data/paral_data/undata0/sents-mini
 
   docs_batch_iterator_conf:
+    async_generators: 1
     include_datasets:
       - mini
     batch_generator_conf:
-      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/temp
       batch_src_sents_cnt: 128
+      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/docs-mini
