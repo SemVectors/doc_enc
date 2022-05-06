@@ -33,6 +33,7 @@ from doc_enc.training.metrics import create_metrics
 
 @dataclasses.dataclass
 class TrainerConf:
+    tasks: List[TaskType] = dataclasses.field(default_factory=list)
     save_path: str = ''
     sent_retr_loss_type: SentRetrLossType = SentRetrLossType.BICE
     doc_retr_loss_type: DocRetrLossType = DocRetrLossType.CE
@@ -667,7 +668,7 @@ class Trainer:
         epoch = self._init_epoch
 
         while True:
-            train_iter.init_epoch(epoch)
+            train_iter.init_epoch(epoch, self._opts.tasks)
             logging.info("Start epoch %d", epoch)
             self._train_epoch(epoch, train_iter, dev_iter)
             train_iter.end_epoch()

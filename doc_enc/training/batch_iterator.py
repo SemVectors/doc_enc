@@ -23,6 +23,7 @@ class BatchIteratorConf:
     docs_batch_iterator_conf: DocsBatchIteratorConf
 
     early_iter_end_policy: EarlyIterEndPolicy = EarlyIterEndPolicy.REITER
+    reinit_last_iter: bool = False
 
 
 class BatchIterator:
@@ -69,7 +70,7 @@ class BatchIterator:
     def init_epoch(self, epoch, tasks=None):
         self._epoch = epoch - 1
 
-        if tasks is None:
+        if not tasks:
             self._current_tasks = copy.copy(self.supported_tasks())
         else:
             self._current_tasks = copy.copy(tasks)
@@ -81,9 +82,6 @@ class BatchIterator:
         self._done = [False] * len(self._iterators)
 
         self._early_end_policy = self._opts.early_iter_end_policy
-        if len(self._current_tasks) == 1 and self._early_end_policy != EarlyIterEndPolicy.LONGEST:
-            logging.info("Set early_iter_end_policy to LONGEST since there is only one task")
-            self._early_end_policy = EarlyIterEndPolicy.LONGEST
 
     def end_epoch(self):
         # cleanup previous epoch
@@ -135,11 +133,16 @@ class BatchIterator:
     def batches(self, batches_cnt: int):
         if self._iterators is None or self._current_tasks is None or self._done is None:
             raise RuntimeError("Batch iterator is not Initialized!")
-        if not batches_cnt and self._early_end_policy == EarlyIterEndPolicy.REITER:
-            raise RuntimeError(
-                "Requested all batches for the current task and set reiter policy."
-                "That will lead to infinite loop"
+        if (
+            not batches_cnt
+            and len(self._current_tasks) == 1
+            and self._early_end_policy == EarlyIterEndPolicy.REITER
+        ):
+            logging.info(
+                "Set early_iter_end_policy to LONGEST since there is only one task "
+                "and no limit for batch count is specified"
             )
+            self._early_end_policy = EarlyIterEndPolicy.LONGEST
 
         batch_num = 0
         iterator = self._iterators[self._task_idx]
@@ -156,7 +159,7 @@ class BatchIterator:
                     self._iterators[self._task_idx] = None
                     break
                 if self._early_end_policy == EarlyIterEndPolicy.REITER:
-                    if not self.empty():
+                    if not self.empty() or self._opts.reinit_last_iter:
                         task = self._current_tasks[self._task_idx]
                         logging.info("Reinit iterator for task: %s", task)
                         iterator = self._init_iterator(task, self._epoch)
