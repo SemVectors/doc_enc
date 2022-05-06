@@ -5,6 +5,7 @@ import sys
 from typing import Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
+import random
 
 import hydra
 from hydra.core.utils import configure_log
@@ -58,6 +59,8 @@ def _init_proc(rank, world_size, conf: Config):
         logging.getLogger().setLevel(logging.WARNING)
 
     torch.cuda.set_device(rank)
+    torch.manual_seed(2022 * 8)
+    random.seed(2022 * 9)
 
 
 def _destroy_proc(world_size):

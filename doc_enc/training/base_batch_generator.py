@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
 
-from typing import Union, Optional
+from typing import Union
 from dataclasses import dataclass
 import multiprocessing
 import math
+import random
 import logging
 from gzip import GzipFile
 from io import TextIOWrapper
@@ -72,6 +73,8 @@ def _split_between_nproc(n, start_offs, line_cnt):
 def _generator_proc_wrapper(
     queue: multiprocessing.Queue, logging_conf, rank, GenCls, *args, **kwargs
 ):
+    random.seed(42 * 42)
+
     if logging_conf:
         configure_log(logging_conf, False)
         if rank != 0:
