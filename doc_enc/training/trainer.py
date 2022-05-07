@@ -24,7 +24,7 @@ from torch.distributed.algorithms.join import Join
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from doc_enc.training.batch_iterator import BatchIterator
-from doc_enc.tokenizer import AbcTokenizer
+from doc_enc.tokenizer import AbcTokenizer, TokenizerConf, create_tokenizer
 from doc_enc.training.types import DocRetrLossType, TaskType, SentRetrLossType
 from doc_enc.training.models.model_factory import create_model
 from doc_enc.training.models.model_conf import DocModelConf
@@ -158,7 +158,7 @@ class Trainer:
         self,
         opts: TrainerConf,
         model_conf: DocModelConf,
-        vocab: AbcTokenizer,
+        tokenizer_conf: TokenizerConf,
         world_size,
         rank,
         amp=True,
@@ -177,7 +177,9 @@ class Trainer:
 
         self._run_id = self._create_run_id()
 
-        self._local_model = self._create_model(vocab, model_conf)
+        self._tokenizer_conf = tokenizer_conf
+        self._vocab = create_tokenizer(tokenizer_conf)
+        self._local_model = self._create_model(model_conf)
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
             timeout = _init_dist_default_group(rank, world_size)
@@ -217,6 +219,9 @@ class Trainer:
         if self._opts.resume_snapshot:
             self._init_epoch = self._load_from_checkpoint()
 
+    def vocab(self):
+        return self._vocab
+
     def _create_run_id(self):
         # hydra sets working dir to outputs/<date>/<time> by default
         cwd = os.getcwd()
@@ -224,8 +229,8 @@ class Trainer:
         dn = os.path.dirname
         return f"{bn(dn(cwd))}_{bn(cwd)}"
 
-    def _create_model(self, vocab: AbcTokenizer, model_conf: DocModelConf):
-        model = create_model(model_conf, vocab.vocab_size(), vocab.pad_idx())
+    def _create_model(self, model_conf: DocModelConf):
+        model = create_model(model_conf, self._vocab.vocab_size(), self._vocab.pad_idx())
         model = model.to(self._device)
         logging.info("created model %s", model)
         logging.info("model loaded to %s", self._device)
@@ -655,7 +660,10 @@ class Trainer:
         # if 'func' in opts_dict:
         #     del opts_dict['func']
         state_dict = {
-            'args': self._opts,
+            'trainer_conf': self._opts,
+            'model_conf': self._model_conf,
+            'tokenizer_conf': self._tokenizer_conf,
+            'tokenizer': self._vocab.state_dict(),
             'sent_enc': self._local_model.sent_model.encoder.state_dict(),
             'doc_enc': self._local_model.doc_encoder.state_dict(),
         }

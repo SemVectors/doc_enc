@@ -74,7 +74,11 @@ def _run_train(rank, world_size, conf: Config):
     train_iter = None
     dev_iter = None
     try:
-        vocab = create_tokenizer(conf.tokenizer)
+
+        trainer = Trainer(
+            conf.trainer, conf.model, conf.tokenizer, world_size, rank, verbose=conf.verbose
+        )
+
         train_iter = BatchIterator(
             conf.batches,
             conf.tokenizer,
@@ -82,7 +86,7 @@ def _run_train(rank, world_size, conf: Config):
             split="train",
             rank=rank,
             world_size=world_size,
-            pad_idx=vocab.pad_idx(),
+            pad_idx=trainer.vocab().pad_idx(),
         )
 
         dev_iter = BatchIterator(
@@ -92,10 +96,9 @@ def _run_train(rank, world_size, conf: Config):
             split="dev",
             rank=rank,
             world_size=world_size,
-            pad_idx=vocab.pad_idx(),
+            pad_idx=trainer.vocab().pad_idx(),
         )
 
-        trainer = Trainer(conf.trainer, conf.model, vocab, world_size, rank, verbose=conf.verbose)
         trainer(train_iter, dev_iter)
 
     except Exception as e:

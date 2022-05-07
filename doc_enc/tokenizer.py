@@ -28,6 +28,12 @@ class AbcTokenizer:
     def __call__(self, sent: str) -> List[int]:
         raise NotImplementedError("Not implemented")
 
+    def state_dict(self):
+        raise NotImplementedError("Not implemented")
+
+    def load_state_dict(self, d):
+        raise NotImplementedError("Not implemented")
+
 
 class Pretokenized(AbcTokenizer):
     def __init__(self, conf: TokenizerConf) -> None:
@@ -65,6 +71,14 @@ class SentencepieceTokenizer(AbcTokenizer):
 
     def __call__(self, sent: str) -> List[int]:
         return self._vocab.EncodeAsIds(sent)
+
+    def state_dict(self):
+        return {
+            'spm': self._vocab.serialized_model_proto(),
+        }
+
+    def load_state_dict(self, d):
+        self._vocab.Load(model_proto=d['spm'])
 
 
 def create_tokenizer(conf: TokenizerConf) -> AbcTokenizer:
