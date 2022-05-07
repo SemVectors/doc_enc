@@ -1,5 +1,10 @@
 defaults:
   - base_sent_encoder_config
+
+emb_conf:
+  emb_kind: TOKEN
+  emb_dim: 320
+
 encoder_kind: LSTM
 input_size: 320
 hidden_size: 384

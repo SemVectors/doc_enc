@@ -3,7 +3,13 @@
 from enum import Enum
 
 
-class SentEncoderKind(Enum):
+class EmbKind(Enum):
+    TOKEN = 1
+    POSITIONAL = 2
+    TOKEN_WITH_POSITIONAL = 3
+
+
+class EncoderKind(Enum):
     UNDEFINED = 0
     LSTM = 1
     TRANSFORMER = 2

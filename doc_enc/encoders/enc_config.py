@@ -1,22 +1,10 @@
 #!/usr/bin/env python3
 
 from typing import Optional
-from enum import Enum
 import dataclasses
 
-
-class EncoderKind(Enum):
-    UNDEFINED = 0
-    LSTM = 1
-    TRANSFORMER = 2
-    FNET = 3
-
-
-class PoolingStrategy(Enum):
-    UNDEFINED = 0
-    MAX = 1
-    MEAN = 2
-    FIRST = 3
+from doc_enc.common_types import EncoderKind, PoolingStrategy
+from doc_enc.embs.emb_config import BaseEmbConf
 
 
 @dataclasses.dataclass
@@ -26,6 +14,9 @@ class BaseEncoderConf:
     num_layers: int
     dropout: float
     pooling_strategy: PoolingStrategy
+
+    emb_conf: Optional[BaseEmbConf] = None
+
     # lstm opts
     input_size: Optional[int] = None
     bidirectional: Optional[bool] = None

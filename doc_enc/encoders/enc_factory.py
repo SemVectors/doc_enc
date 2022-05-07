@@ -4,15 +4,16 @@ from typing import Dict, Any
 
 from omegaconf import OmegaConf
 
+from doc_enc.common_types import EncoderKind
 from doc_enc.encoders.enc_config import (
     SentEncoderConf,
     FragmentEncoderConf,
     DocEncoderConf,
-    EncoderKind,
 )
 
+from doc_enc.embs.emb_factory import create_emb_layer
+from doc_enc.encoders.sent_encoder import SentEncoder
 from doc_enc.encoders.base_lstm import LSTMEncoder
-from doc_enc.encoders.sent_lstm import SentLSTMEncoder
 from doc_enc.encoders.sent_transformer import SentTransformerEncoder
 from doc_enc.encoders.sent_fnet import SentFNetEncoder
 
@@ -20,19 +21,24 @@ from doc_enc.encoders.sent_fnet import SentFNetEncoder
 def create_sent_encoder(conf: SentEncoderConf, vocab_size, pad_idx):
     conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
 
+    if conf.emb_conf is None:
+        raise RuntimeError("Specify emb configuration for sent encoder!")
+
+    embed = create_emb_layer(conf.emb_conf, vocab_size, pad_idx)
+
     if conf.encoder_kind == EncoderKind.LSTM:
-        encoder = SentLSTMEncoder(vocab_size, pad_idx, **conf_dict)
+        encoder = LSTMEncoder(**conf_dict)
 
     elif conf.encoder_kind == EncoderKind.TRANSFORMER:
-        encoder = SentTransformerEncoder(vocab_size, pad_idx, **conf_dict)
+        encoder = SentTransformerEncoder(*conf_dict)
 
     elif conf.encoder_kind == EncoderKind.FNET:
-        encoder = SentFNetEncoder(vocab_size, pad_idx, **conf_dict)
+        encoder = SentFNetEncoder(**conf_dict)
 
     else:
         raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 
-    return encoder
+    return SentEncoder(embed, encoder)
 
 
 def create_frag_encoder(conf: FragmentEncoderConf):
