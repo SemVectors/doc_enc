@@ -31,11 +31,6 @@ class SentEncoderConf(BaseEncoderConf):
 
 
 @dataclasses.dataclass
-class FragmentEncoderConf(BaseEncoderConf):
+class EmbSeqEncoderConf(BaseEncoderConf):
     add_beg_seq_token: bool = False
     add_end_seq_token: bool = False
-
-
-@dataclasses.dataclass
-class DocEncoderConf(FragmentEncoderConf):
-    pass

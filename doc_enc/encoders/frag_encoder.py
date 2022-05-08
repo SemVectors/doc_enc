@@ -4,11 +4,11 @@ import logging
 import torch
 from torch import nn
 
-from doc_enc.encoders.enc_config import FragmentEncoderConf
+from doc_enc.encoders.enc_config import EmbSeqEncoderConf
 
 
-class FragEncoder(nn.Module):
-    def __init__(self, conf: FragmentEncoderConf, encoder, prev_output_size):
+class EmbSeqEncoder(nn.Module):
+    def __init__(self, conf: EmbSeqEncoderConf, encoder, prev_output_size):
         super().__init__()
         self.conf = conf
         self.encoder = encoder

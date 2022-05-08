@@ -22,7 +22,7 @@ from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 # from doc_enc.training.docs_batch_generator import DocsBatchIteratorConf
 from doc_enc.training.trainer import Trainer, TrainerConf
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
-from doc_enc.encoders.enc_config import SentEncoderConf, FragmentEncoderConf, DocEncoderConf
+from doc_enc.encoders.enc_config import SentEncoderConf, EmbSeqEncoderConf
 
 from doc_enc.training.combine_docs_sources import combine_docs_datasets
 
@@ -49,8 +49,8 @@ cs.store(name="base_trainer_config", group="trainer", node=TrainerConf)
 cs.store(name="base_model_config", group="model", node=DocModelConf)
 cs.store(name="base_sent_model_config", group="model/sent", node=SentModelConf)
 cs.store(name="base_sent_encoder_config", group="model/sent/encoder", node=SentEncoderConf)
-cs.store(name="base_frag_encoder_config", group="model/fragment", node=FragmentEncoderConf)
-cs.store(name="base_doc_encoder_config", group="model/doc", node=DocEncoderConf)
+cs.store(name="base_frag_encoder_config", group="model/fragment", node=EmbSeqEncoderConf)
+cs.store(name="base_doc_encoder_config", group="model/doc", node=EmbSeqEncoderConf)
 
 
 def _init_proc(rank, world_size, conf: Config):

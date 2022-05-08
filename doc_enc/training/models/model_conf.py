@@ -9,8 +9,7 @@ from omegaconf import MISSING
 from doc_enc.encoders.enc_config import (
     BaseEncoderConf,
     SentEncoderConf,
-    FragmentEncoderConf,
-    DocEncoderConf,
+    EmbSeqEncoderConf,
 )
 
 
@@ -44,8 +43,8 @@ class DocModelConf:
     kind: ModelKind
 
     sent: SentModelConf
-    doc: DocEncoderConf
-    fragment: Optional[FragmentEncoderConf] = None
+    doc: EmbSeqEncoderConf
+    fragment: Optional[EmbSeqEncoderConf] = None
 
     split_sents: bool = True
     split_size: int = 128
