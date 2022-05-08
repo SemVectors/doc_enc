@@ -5,7 +5,8 @@ defaults:
   - job_logging: default
   - batches: mini
   - trainer: basic
-  - tokenizer: sentencepiece
+  - text_proc: default
+  - text_proc/tokenizer: sentencepiece
   - model: default
   - model/sent: dual_enc
   - model/sent/encoder: lstm

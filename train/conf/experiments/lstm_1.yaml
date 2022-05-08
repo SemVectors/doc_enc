@@ -4,9 +4,9 @@ defaults:
   - override /model/fragment: null
   - _self_
 
-
-tokenizer:
-  vocab_path: /train/unigram_96k_from_100M.spm.model
+text_proc:
+  tokenizer:
+    vocab_path: /train/unigram_96k_from_100M.spm.model
 
 model:
   split_size: 1024

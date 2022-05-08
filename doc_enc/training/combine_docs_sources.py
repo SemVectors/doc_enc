@@ -6,7 +6,7 @@ from pathlib import Path
 import csv
 import hashlib
 
-from doc_enc.training.base_batch_generator import find_file, open_bin_file, open_file
+from doc_enc.utils import find_file, open_bin_file, open_file
 
 
 class Example(NamedTuple):

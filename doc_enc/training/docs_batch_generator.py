@@ -13,14 +13,14 @@ import dataclasses
 from omegaconf import MISSING
 import torch
 
-from doc_enc.tokenizer import TokenizerConf, create_tokenizer
+from doc_enc.passages import split_into_fragments_by_len
+from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
-    find_file,
-    open_file,
 )
+from doc_enc.utils import find_file, open_file
 from doc_enc.training.types import DocsBatch
 
 
@@ -37,10 +37,6 @@ class DocsBatchGeneratorConf:
     positives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [1, 2])
     negatives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [2, 4])
 
-    fragment_size: int = 24
-
-    max_sent_size: int = 128
-    min_sent_size: int = 4
     max_sents_per_doc: int = 1024
     min_sents_per_doc: int = 5
     min_tgt_docs_per_src_doc: int = 1
@@ -67,14 +63,14 @@ class DocsBatchGenerator:
     def __init__(
         self,
         opts: DocsBatchGeneratorConf,
-        tok_conf: TokenizerConf,
+        tp_conf: TextProcessorConf,
         split,
         line_offset=0,
         line_cnt=-1,
     ):
         self._opts = opts
 
-        self._tokenizer = create_tokenizer(tok_conf)
+        self._text_proc = TextProcessor(tp_conf)
         self._doc_pair_metas = self._load_metas(split, line_offset, line_cnt)
 
         self._text_dirs_dict = {}
@@ -116,29 +112,6 @@ class DocsBatchGenerator:
             return targets
         return random.sample(targets, n)
 
-    def _tokenize_doc(self, path):
-        with open_file(path) as f:
-            sents = []
-            for l in f:
-                if not l.strip():
-                    continue
-
-                tokens = self._tokenizer(l.rstrip())
-                if len(tokens) >= self._opts.min_sent_size:
-                    tokens = tokens[: self._opts.max_sent_size]
-                    sents.append(tokens)
-            return sents
-
-    def _split_on_fragments(self, sents: List, fragment_len_list: List):
-        l = len(sents)
-
-        fragments_cnt = 0
-        for offs in range(0, l, self._opts.fragment_size):
-            cnt = min(l - offs, self._opts.fragment_size)
-            fragment_len_list.append(cnt)
-            fragments_cnt += 1
-        return fragments_cnt
-
     def _populate_doc_len(
         self, sents: List, fragments_cnt, doc_len_in_sents_list, doc_len_in_frags_list: List
     ):
@@ -164,7 +137,7 @@ class DocsBatchGenerator:
             if lbl == 0 and not self._opts.allow_docs_without_positives and not positive_idxs:
                 return positive_idxs
 
-            tgt_sents = self._tokenize_doc(tgt_path)
+            tgt_sents, fragment_len_list = self._text_proc.prepare_text_from_file(tgt_path)
             if (
                 not tgt_sents
                 or len(tgt_sents) < self._opts.min_sents_per_doc
@@ -174,9 +147,12 @@ class DocsBatchGenerator:
 
             batch.tgt_ids.append(tgt_id)
             batch.tgt_sents.extend(tgt_sents)
-            fragments_cnt = self._split_on_fragments(tgt_sents, batch.tgt_fragment_len)
+            batch.tgt_fragment_len.extend(fragment_len_list)
             tgt_no = self._populate_doc_len(
-                tgt_sents, fragments_cnt, batch.tgt_doc_len_in_sents, batch.tgt_doc_len_in_frags
+                tgt_sents,
+                len(fragment_len_list),
+                batch.tgt_doc_len_in_sents,
+                batch.tgt_doc_len_in_frags,
             )
             tgt_hashes[tgt_hash] = tgt_no
             if lbl == 1:
@@ -217,7 +193,7 @@ class DocsBatchGenerator:
         if self._is_batch_ready(batch, src_extra=src_len, tgt_extra=tgt_extra_len):
             return _ProcSrcStatus.CANT_FIT_IN_BATCH
 
-        src_sents = self._tokenize_doc(src_path)
+        src_sents, fragment_len_list = self._text_proc.prepare_text_from_file(src_path)
         if (
             not src_sents
             or len(src_sents) < self._opts.min_sents_per_doc
@@ -234,9 +210,12 @@ class DocsBatchGenerator:
         batch.positive_idxs.append(positive_idxs)
         batch.src_ids.append(src_id)
         batch.src_sents.extend(src_sents)
-        fragments_cnt = self._split_on_fragments(src_sents, batch.src_fragment_len)
+        batch.src_fragment_len.extend(fragment_len_list)
         self._populate_doc_len(
-            src_sents, fragments_cnt, batch.src_doc_len_in_sents, batch.src_doc_len_in_frags
+            src_sents,
+            len(fragment_len_list),
+            batch.src_doc_len_in_sents,
+            batch.src_doc_len_in_frags,
         )
 
         src_no = len(batch.src_ids) - 1
@@ -389,7 +368,7 @@ class DocsBatchIterator(BaseBatchIterator):
     def __init__(
         self,
         opts: DocsBatchIteratorConf,
-        tok_conf: TokenizerConf,
+        tp_conf: TextProcessorConf,
         logging_conf,
         split,
         rank=0,
@@ -401,7 +380,7 @@ class DocsBatchIterator(BaseBatchIterator):
             opts,
             logging_conf,
             DocsBatchGenerator,
-            (opts.batch_generator_conf, tok_conf, split),
+            (opts.batch_generator_conf, tp_conf, split),
             rank=rank,
             world_size=world_size,
         )

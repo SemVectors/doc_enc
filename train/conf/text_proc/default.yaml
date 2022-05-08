@@ -1,0 +1,10 @@
+---
+
+defaults:
+  - base_text_processor_config
+
+
+fragment_size: 24
+
+max_sent_len: 128
+min_sent_len: 4

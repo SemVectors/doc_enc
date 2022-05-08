@@ -9,8 +9,9 @@ trainer:
   checkpoint_every: 500
   switch_tasks_every: 10
 
-tokenizer:
-  vocab_path: /home/dvzubarev/data/paral_data/undata0/bpe_8k.spm.model
+text_proc:
+  tokenizer:
+    vocab_path: /home/dvzubarev/data/paral_data/undata0/bpe_8k.spm.model
 
 batches:
   sents_batch_iterator_conf:

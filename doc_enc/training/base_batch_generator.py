@@ -1,68 +1,15 @@
 #!/usr/bin/env python3
 
 
-from typing import Union
 from dataclasses import dataclass
 import multiprocessing
 import math
 import random
 import logging
-from gzip import GzipFile
-from io import TextIOWrapper
-from pathlib import Path
 
 from hydra.core.utils import configure_log
 
-
-def _is_gzipped(fp):
-    if isinstance(fp, Path):
-        n = fp.name
-    elif isinstance(fp, str):
-        n = fp
-    else:
-        raise RuntimeError("logic error 82093")
-
-    return n.endswith('.gz')
-
-
-def open_bin_file(fp: Union[Path, str]):
-    if _is_gzipped(fp):
-        return GzipFile(fp, mode='rb')
-    return open(fp, mode='rb')
-
-
-def open_file(fp: Union[Path, str]):
-    if _is_gzipped(fp):
-        return TextIOWrapper(GzipFile(fp, 'rb'), encoding='utf8')
-    return open(fp, 'rt', encoding='utf8')
-
-
-def find_file(fp: Union[Path, str], throw_if_not_exist=True):
-    if isinstance(fp, Path):
-        sp = str(fp)
-    elif isinstance(fp, str):
-        sp = fp
-        fp = Path(fp)
-    else:
-        raise RuntimeError("logic error 82094")
-
-    np = Path(f"{sp}.gz")
-    if np.exists():
-        return np
-    if fp.exists():
-        return fp
-
-    if throw_if_not_exist:
-        raise RuntimeError(f"Failed to find {fp}[.gz]")
-    return fp
-
-
-def _calc_line_cnt(fp):
-    with open_bin_file(fp) as f:
-        i = -1
-        for i, _ in enumerate(f):
-            pass
-    return i + 1
+from doc_enc.utils import calc_line_cnt
 
 
 def _split_between_nproc(n, start_offs, line_cnt):
@@ -139,7 +86,7 @@ class BaseBatchIterator:
         self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
 
     def _get_line_offs_for_rank(self, filepath):
-        line_cnt = _calc_line_cnt(filepath)
+        line_cnt = calc_line_cnt(filepath)
 
         if self._world_size == -1:
             return 0, line_cnt

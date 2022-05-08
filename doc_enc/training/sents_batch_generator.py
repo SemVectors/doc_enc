@@ -16,11 +16,11 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
-    open_file,
-    find_file,
 )
 from doc_enc.training.types import SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
+
+from doc_enc.utils import find_file, open_file
 
 
 class Example(NamedTuple):

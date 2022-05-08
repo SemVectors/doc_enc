@@ -15,11 +15,10 @@ import torch
 import torch.distributed as dist
 from torch.multiprocessing.spawn import spawn as mp_spawn
 
-from doc_enc.tokenizer import create_tokenizer, TokenizerConf
+from doc_enc.text_processor import TextProcessorConf
+from doc_enc.tokenizer import TokenizerConf
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 
-# from doc_enc.training.sents_batch_generator import SentsBatchIteratorConf
-# from doc_enc.training.docs_batch_generator import DocsBatchIteratorConf
 from doc_enc.training.trainer import Trainer, TrainerConf
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
 from doc_enc.encoders.enc_config import SentEncoderConf, EmbSeqEncoderConf
@@ -29,7 +28,7 @@ from doc_enc.training.combine_docs_sources import combine_docs_datasets
 
 @dataclass
 class Config:
-    tokenizer: TokenizerConf
+    text_proc: TextProcessorConf
     batches: BatchIteratorConf
     trainer: TrainerConf
     model: DocModelConf
@@ -41,7 +40,8 @@ class Config:
 
 cs = ConfigStore.instance()
 cs.store(name="base_config", node=Config)
-cs.store(name="base_tokenizer_config", group="tokenizer", node=TokenizerConf)
+cs.store(name="base_text_processor_config", group="text_proc", node=TextProcessorConf)
+cs.store(name="base_tokenizer_config", group="text_proc/tokenizer", node=TokenizerConf)
 cs.store(name="base_batches_config", group="batches", node=BatchIteratorConf)
 # cs.store(name="base_sent_batches_config", group="batches/sent", node=SentsBatchIteratorConf)
 # cs.store(name="base_doc_batches_config", group="batches/doc", node=DocsBatchIteratorConf)
@@ -76,12 +76,12 @@ def _run_train(rank, world_size, conf: Config):
     try:
 
         trainer = Trainer(
-            conf.trainer, conf.model, conf.tokenizer, world_size, rank, verbose=conf.verbose
+            conf.trainer, conf.model, conf.text_proc, world_size, rank, verbose=conf.verbose
         )
 
         train_iter = BatchIterator(
             conf.batches,
-            conf.tokenizer,
+            conf.text_proc,
             conf.job_logging,
             split="train",
             rank=rank,
@@ -91,7 +91,7 @@ def _run_train(rank, world_size, conf: Config):
 
         dev_iter = BatchIterator(
             conf.batches,
-            conf.tokenizer,
+            conf.text_proc,
             conf.job_logging,
             split="dev",
             rank=rank,

@@ -9,7 +9,7 @@ import copy
 from doc_enc.training.types import TaskType
 from doc_enc.training.sents_batch_generator import SentsBatchIterator, SentsBatchIteratorConf
 from doc_enc.training.docs_batch_generator import DocsBatchIteratorConf, DocsBatchIterator
-from doc_enc.tokenizer import TokenizerConf
+from doc_enc.text_processor import TextProcessorConf
 
 
 class EarlyIterEndPolicy(Enum):
@@ -30,7 +30,7 @@ class BatchIterator:
     def __init__(
         self,
         opts: BatchIteratorConf,
-        tok_conf: TokenizerConf,
+        tp_conf: TextProcessorConf,
         logging_conf,
         split,
         rank=0,
@@ -40,7 +40,7 @@ class BatchIterator:
 
         self._sents_batch_iterator = SentsBatchIterator(
             opts.sents_batch_iterator_conf,
-            tok_conf,
+            tp_conf.tokenizer,
             logging_conf,
             split=split,
             rank=rank,
@@ -50,7 +50,7 @@ class BatchIterator:
 
         self._docs_batch_iterator = DocsBatchIterator(
             opts.docs_batch_iterator_conf,
-            tok_conf,
+            tp_conf,
             logging_conf,
             split=split,
             rank=rank,

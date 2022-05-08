@@ -54,11 +54,10 @@ class Pretokenized(AbcTokenizer):
 
 class SentencepieceTokenizer(AbcTokenizer):
     def __init__(self, conf: TokenizerConf) -> None:
-        if conf.vocab_path is None:
-            raise RuntimeError("Missing vocab_path option in SentencepieceTokenizer")
-
+        self._conf = conf
         self._vocab = spm.SentencePieceProcessor()
-        self._vocab.Load(conf.vocab_path)
+        if conf.vocab_path is not None:
+            self._vocab.Load(conf.vocab_path)
 
     def get_idx(self, token):
         self._vocab.PieceToId(token)
