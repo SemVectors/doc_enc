@@ -10,7 +10,7 @@ from doc_enc.encoders.enc_config import (
 
 from doc_enc.embs.emb_factory import create_emb_layer
 from doc_enc.encoders.sent_encoder import SentEncoder
-from doc_enc.encoders.frag_encoder import EmbSeqEncoder
+from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
 from doc_enc.encoders.base_lstm import LSTMEncoder
 from doc_enc.encoders.sent_transformer import SentTransformerEncoder
 from doc_enc.encoders.sent_fnet import SentFNetEncoder
