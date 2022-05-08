@@ -11,6 +11,9 @@ class SentEncoder(nn.Module):
         self.embed = embed
         self.encoder = encoder
 
+    def out_embs_dim(self):
+        return self.encoder.out_embs_dim()
+
     def forward(self, tokens, lengths, enforce_sorted=True, token_types=None):
         # embed tokens
         x = self.embed(tokens, token_types)

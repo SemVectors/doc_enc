@@ -3,6 +3,8 @@
 from typing import Optional
 import dataclasses
 
+from omegaconf import MISSING
+
 from doc_enc.common_types import EncoderKind, PoolingStrategy
 from doc_enc.embs.emb_config import BaseEmbConf
 
@@ -15,8 +17,6 @@ class BaseEncoderConf:
     dropout: float
     pooling_strategy: PoolingStrategy
 
-    emb_conf: Optional[BaseEmbConf] = None
-
     # lstm opts
     input_size: Optional[int] = None
     bidirectional: Optional[bool] = None
@@ -27,14 +27,15 @@ class BaseEncoderConf:
 
 @dataclasses.dataclass
 class SentEncoderConf(BaseEncoderConf):
-    pass
+    emb_conf: BaseEmbConf = MISSING
 
 
 @dataclasses.dataclass
 class FragmentEncoderConf(BaseEncoderConf):
-    pass
+    add_beg_seq_token: bool = False
+    add_end_seq_token: bool = False
 
 
 @dataclasses.dataclass
-class DocEncoderConf(BaseEncoderConf):
+class DocEncoderConf(FragmentEncoderConf):
     pass

@@ -66,41 +66,13 @@ class DocDualEncoder(nn.Module):
     def _embed_fragments(self, sent_embs, frag_len):
         if self.frag_encoder is None:
             raise RuntimeError("Logic error")
-        cnt = len(frag_len)
-        max_len = max(frag_len)
-
-        frags_tensor = torch.full(
-            (cnt, max_len, sent_embs.size(1)), self.pad_idx, dtype=sent_embs.dtype
-        )
-        offs = 0
-        for i in range(cnt):
-            l = frag_len[i]
-            frags_tensor[i, 0:l] = sent_embs[offs : offs + l]
-            offs += l
-        frags_tensor = frags_tensor.to(device=sent_embs.device)
-
-        frag_len_tensor = torch.as_tensor(frag_len, dtype=torch.int64, device=sent_embs.device)
-        frag_embs = self.frag_encoder(frags_tensor, frag_len_tensor, enforce_sorted=False)[
-            'pooled_out'
-        ]
-        assert len(frag_embs) == cnt
+        frag_embs = self.frag_encoder(sent_embs, frag_len, enforce_sorted=False)['pooled_out']
+        assert len(frag_embs) == len(frag_len)
         return frag_embs
 
-    def _embed_docs(self, embs, len_list, enforce_sorted=False):
-        cnt = len(len_list)
-        max_len = max(len_list)
-
-        tensor = torch.full((cnt, max_len, embs.size(1)), self.pad_idx, dtype=embs.dtype)
-        offs = 0
-        for i in range(cnt):
-            l = len_list[i]
-            tensor[i, 0:l] = embs[offs : offs + l]
-            offs += l
-        tensor = tensor.to(device=embs.device)
-
-        len_tensor = torch.as_tensor(len_list, dtype=torch.int64, device=embs.device)
-        doc_embs = self.doc_encoder(tensor, len_tensor, enforce_sorted=enforce_sorted)['pooled_out']
-        assert len(doc_embs) == cnt
+    def _embed_docs(self, embs, len_list):
+        doc_embs = self.doc_encoder(embs, len_list, enforce_sorted=False)['pooled_out']
+        assert len(doc_embs) == len(len_list)
         return doc_embs
 
     def calc_sim_matrix(self, batch: DocsBatch):
@@ -117,9 +89,9 @@ class DocDualEncoder(nn.Module):
             tgt_embs = tgt_sent_embs
             src_len_list = batch.src_doc_len_in_sents
             tgt_len_list = batch.tgt_doc_len_in_sents
-        src_doc_embs = self._embed_docs(src_embs, src_len_list, enforce_sorted=False)
+        src_doc_embs = self._embed_docs(src_embs, src_len_list)
 
-        tgt_doc_embs = self._embed_docs(tgt_embs, tgt_len_list, enforce_sorted=False)
+        tgt_doc_embs = self._embed_docs(tgt_embs, tgt_len_list)
 
         if self.conf.normalize:
             src_doc_embs = F.normalize(src_doc_embs, p=2, dim=1)

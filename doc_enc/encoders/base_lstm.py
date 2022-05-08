@@ -5,46 +5,34 @@ import logging
 import torch
 from torch import nn
 
-from doc_enc.encoders.enc_config import PoolingStrategy
+from doc_enc.common_types import PoolingStrategy
+from doc_enc.encoders.enc_config import BaseEncoderConf
 
 
 class BaseLSTMEncoder(nn.Module):
-    def __init__(
-        self,
-        input_size=320,
-        hidden_size=512,
-        num_layers=1,
-        bidirectional=False,
-        dropout=0.1,
-        pooling_strategy=PoolingStrategy.MAX,
-        **kwargs,
-    ):
+    def __init__(self, conf: BaseEncoderConf):
         super().__init__()
 
-        self.num_layers = num_layers
-        self.bidirectional = bidirectional
-        self.hidden_size = hidden_size
-        self.dropout = dropout
-        if pooling_strategy not in (PoolingStrategy.MAX, PoolingStrategy.MEAN):
-            raise RuntimeError(f"Unsupported pooling strategy: {pooling_strategy}")
-        self.pooling_strategy = pooling_strategy
+        self.conf = conf
+        if conf.pooling_strategy not in (PoolingStrategy.MAX, PoolingStrategy.MEAN):
+            raise RuntimeError(f"Unsupported pooling strategy: {conf.pooling_strategy}")
 
         self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            bidirectional=bidirectional,
-            dropout=dropout,
+            input_size=conf.input_size,
+            hidden_size=conf.hidden_size,
+            num_layers=conf.num_layers,
+            bidirectional=conf.bidirectional,
+            dropout=conf.dropout,
         )
         for name, param in self.lstm.named_parameters():
             if "weight" in name:
                 param.data.uniform_(-0.1, 0.1)
 
-        self.output_units = hidden_size
-        if bidirectional:
+        self.output_units = conf.hidden_size
+        if conf.bidirectional:
             self.output_units *= 2
 
-    def embs_dim(self):
+    def out_embs_dim(self):
         return self.output_units
 
     def forward(self, embs, lengths, enforce_sorted=True, token_types=None):
@@ -62,15 +50,15 @@ class BaseLSTMEncoder(nn.Module):
 
         # unpack outputs and apply dropout
         pad_value = 0.0
-        if self.pooling_strategy == PoolingStrategy.MAX:
+        if self.conf.pooling_strategy == PoolingStrategy.MAX:
             pad_value = float('-inf')
         x, out_lengths = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=pad_value)
         assert list(x.size()) == [seqlen, bsz, self.output_units]
 
-        if self.pooling_strategy == PoolingStrategy.MAX:
+        if self.conf.pooling_strategy == PoolingStrategy.MAX:
             # Build the sentence embedding by max-pooling over the encoder outputs
             sentemb = torch.max(x, dim=0)[0]
-        elif self.pooling_strategy == PoolingStrategy.MEAN:
+        elif self.conf.pooling_strategy == PoolingStrategy.MEAN:
             sum_embeddings = torch.sum(x, dim=0)
             sentemb = sum_embeddings / lengths.unsqueeze(-1).to(sum_embeddings.device)
         else:

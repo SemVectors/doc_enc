@@ -19,6 +19,9 @@ class TokenizerConf:
 
 
 class AbcTokenizer:
+    def get_idx(self, token):
+        raise NotImplementedError("Not implemented")
+
     def pad_idx(self) -> int:
         raise NotImplementedError("Not implemented")
 
@@ -56,6 +59,9 @@ class SentencepieceTokenizer(AbcTokenizer):
 
         self._vocab = spm.SentencePieceProcessor()
         self._vocab.Load(conf.vocab_path)
+
+    def get_idx(self, token):
+        self._vocab.PieceToId(token)
 
     def pad_idx(self):
         return self._vocab.pad_id()

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
-from typing import Dict, Any
 
-from omegaconf import OmegaConf
-
+from doc_enc.tokenizer import AbcTokenizer
 from doc_enc.common_types import EncoderKind
 from doc_enc.encoders.enc_config import (
     SentEncoderConf,
@@ -13,27 +11,27 @@ from doc_enc.encoders.enc_config import (
 
 from doc_enc.embs.emb_factory import create_emb_layer
 from doc_enc.encoders.sent_encoder import SentEncoder
+from doc_enc.encoders.frag_encoder import FragEncoder
+from doc_enc.encoders.doc_encoder import DocEncoder
 from doc_enc.encoders.base_lstm import LSTMEncoder
 from doc_enc.encoders.sent_transformer import SentTransformerEncoder
 from doc_enc.encoders.sent_fnet import SentFNetEncoder
 
 
-def create_sent_encoder(conf: SentEncoderConf, vocab_size, pad_idx):
-    conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
-
+def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer):
     if conf.emb_conf is None:
         raise RuntimeError("Specify emb configuration for sent encoder!")
 
-    embed = create_emb_layer(conf.emb_conf, vocab_size, pad_idx)
+    embed = create_emb_layer(conf.emb_conf, vocab.vocab_size(), vocab.pad_idx())
 
     if conf.encoder_kind == EncoderKind.LSTM:
-        encoder = LSTMEncoder(**conf_dict)
+        encoder = LSTMEncoder(conf)
 
     elif conf.encoder_kind == EncoderKind.TRANSFORMER:
-        encoder = SentTransformerEncoder(*conf_dict)
+        encoder = SentTransformerEncoder(conf_dict)
 
     elif conf.encoder_kind == EncoderKind.FNET:
-        encoder = SentFNetEncoder(**conf_dict)
+        encoder = SentFNetEncoder(conf_dict)
 
     else:
         raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
@@ -41,23 +39,21 @@ def create_sent_encoder(conf: SentEncoderConf, vocab_size, pad_idx):
     return SentEncoder(embed, encoder)
 
 
-def create_frag_encoder(conf: FragmentEncoderConf):
-    conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
-
+def create_frag_encoder(conf: FragmentEncoderConf, sent_layer_output_size):
     if conf.encoder_kind == EncoderKind.LSTM:
-        encoder = LSTMEncoder(**conf_dict)
+        encoder = LSTMEncoder(conf)
     else:
         raise RuntimeError(f"Unsupported fragment encoder kind: {conf.encoder_kind}")
 
-    return encoder
+    return FragEncoder(conf, encoder, sent_layer_output_size)
 
 
-def create_doc_encoder(conf: DocEncoderConf):
-    conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
+def create_doc_encoder(conf: DocEncoderConf, prev_layer_output_size):
+    # conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
 
     if conf.encoder_kind == EncoderKind.LSTM:
-        encoder = LSTMEncoder(**conf_dict)
+        encoder = LSTMEncoder(conf)
     else:
         raise RuntimeError(f"Unsupported doc encoder kind: {conf.encoder_kind}")
 
-    return encoder
+    return DocEncoder(conf, encoder, prev_layer_output_size)

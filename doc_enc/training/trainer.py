@@ -230,7 +230,7 @@ class Trainer:
         return f"{bn(dn(cwd))}_{bn(cwd)}"
 
     def _create_model(self, model_conf: DocModelConf):
-        model = create_model(model_conf, self._vocab.vocab_size(), self._vocab.pad_idx())
+        model = create_model(model_conf, self._vocab)
         model = model.to(self._device)
         logging.info("created model %s", model)
         logging.info("model loaded to %s", self._device)

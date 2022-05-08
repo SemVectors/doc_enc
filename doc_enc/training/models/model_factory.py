@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 
+from doc_enc.tokenizer import AbcTokenizer
 from doc_enc.training.models.model_conf import SentModelConf, DocModelConf, ModelKind
 
-from doc_enc.encoders.sent_enc_factory import (
+from doc_enc.encoders.enc_factory import (
     create_sent_encoder,
     create_frag_encoder,
     create_doc_encoder,
@@ -13,26 +14,36 @@ from doc_enc.training.models.sent_dual_enc import SentDualEncoder
 from doc_enc.training.models.doc_dual_enc import DocDualEncoder
 
 
-def _create_sent_model(conf: SentModelConf, vocab_size, pad_idx):
+def _create_sent_model(conf: SentModelConf, vocab: AbcTokenizer):
     if conf.kind == ModelKind.DUAL_ENC:
-        encoder = create_sent_encoder(conf.encoder, vocab_size, pad_idx)
+        encoder = create_sent_encoder(conf.encoder, vocab)
+        # TODO remove this?
         split_target = isinstance(encoder, SentTransformerEncoder)
         model = SentDualEncoder(conf, encoder, split_target=split_target)
         return model
     raise RuntimeError(f"Unknown model kind {conf.kind}")
 
 
-def create_model(conf: DocModelConf, vocab_size, pad_idx):
-    sent_model = _create_sent_model(conf.sent, vocab_size, pad_idx)
+def create_model(conf: DocModelConf, vocab: AbcTokenizer):
+    sent_model = _create_sent_model(conf.sent, vocab)
 
     frag_encoder = None
+    sent_embs_out_size = sent_model.encoder.out_embs_dim()
     if conf.fragment is not None:
-        frag_encoder = create_frag_encoder(conf.fragment)
-    doc_encoder = create_doc_encoder(conf.doc)
+        frag_encoder = create_frag_encoder(conf.fragment, sent_embs_out_size)
+        doc_input_size = frag_encoder.out_embs_dim()
+    else:
+        doc_input_size = sent_embs_out_size
+
+    doc_encoder = create_doc_encoder(conf.doc, doc_input_size)
 
     if conf.kind == ModelKind.DUAL_ENC:
         model = DocDualEncoder(
-            conf, sent_model, frag_encoder=frag_encoder, doc_encoder=doc_encoder, pad_idx=pad_idx
+            conf,
+            sent_model,
+            frag_encoder=frag_encoder,
+            doc_encoder=doc_encoder,
+            pad_idx=vocab.pad_idx(),
         )
         return model
     raise RuntimeError(f"Unknown doc model kind {conf.kind}")
