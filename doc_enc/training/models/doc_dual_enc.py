@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.types import TaskType, DocsBatch
+from doc_enc.encoders.sent_encoder import split_sents_and_embed
 
 
 class DocDualEncoder(nn.Module):
@@ -28,40 +29,13 @@ class DocDualEncoder(nn.Module):
                 'pooled_out'
             ]
             return embeddings
-
-        lengths, sorted_indices = torch.sort(sent_len, descending=True)
-        sorted_indices = sorted_indices.to(sent_len.device)
-        sorted_sents = [sents[i] for i in sorted_indices]
-
-        embs = []
-        for offs in range(0, len(sents), self.conf.split_size):
-            cnt = min(len(sents) - offs, self.conf.split_size)
-            max_len = len(sorted_sents[offs])
-            sents_tensor = torch.full((cnt, max_len), self.pad_idx, dtype=torch.int32)
-            for i in range(cnt):
-                sents_tensor[i, 0 : len(sorted_sents[offs + i])] = torch.as_tensor(
-                    sorted_sents[offs + i]
-                )
-            sents_tensor = sents_tensor.to(device=sent_len.device)
-
-            emb = self.sent_model.encoder(
-                sents_tensor, lengths[offs : offs + cnt], enforce_sorted=True
-            )['pooled_out']
-            embs.append(emb)
-
-        embeddings = torch.vstack(embs)
-
-        unsorted_indices = torch.empty_like(
-            sorted_indices, memory_format=torch.legacy_contiguous_format
+        return split_sents_and_embed(
+            self.sent_model.encoder,
+            sents,
+            sent_len,
+            split_size=self.conf.split_size,
+            pad_idx=self.pad_idx,
         )
-        unsorted_indices.scatter_(
-            0, sorted_indices, torch.arange(0, sorted_indices.numel(), device=sorted_indices.device)
-        )
-
-        embeddings = embeddings.index_select(0, unsorted_indices)
-
-        assert len(sents) == len(embeddings), "assert wrong size of tgt after concat"
-        return embeddings
 
     def _embed_fragments(self, sent_embs, frag_len):
         if self.frag_encoder is None:

@@ -35,6 +35,9 @@ class BaseModelConf:
 class SentModelConf(BaseModelConf):
     encoder: SentEncoderConf = MISSING
 
+    split_target_sents: bool = False
+    split_size: int = 128
+
 
 @dataclasses.dataclass
 class DocModelConf:

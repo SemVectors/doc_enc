@@ -9,7 +9,6 @@ from doc_enc.encoders.enc_factory import (
     create_frag_encoder,
     create_doc_encoder,
 )
-from doc_enc.encoders.sent_transformer import SentTransformerEncoder
 from doc_enc.training.models.sent_dual_enc import SentDualEncoder
 from doc_enc.training.models.doc_dual_enc import DocDualEncoder
 
@@ -17,9 +16,7 @@ from doc_enc.training.models.doc_dual_enc import DocDualEncoder
 def _create_sent_model(conf: SentModelConf, vocab: AbcTokenizer):
     if conf.kind == ModelKind.DUAL_ENC:
         encoder = create_sent_encoder(conf.encoder, vocab)
-        # TODO remove this?
-        split_target = isinstance(encoder, SentTransformerEncoder)
-        model = SentDualEncoder(conf, encoder, split_target=split_target)
+        model = SentDualEncoder(conf, encoder, pad_idx=vocab.pad_idx())
         return model
     raise RuntimeError(f"Unknown model kind {conf.kind}")
 

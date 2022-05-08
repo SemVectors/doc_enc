@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import math
 import logging
 
 import torch
@@ -8,31 +7,30 @@ from torch import nn
 import torch.nn.functional as F
 
 from doc_enc.training.models.model_conf import SentModelConf
+from doc_enc.encoders.sent_encoder import split_sents_and_embed
 
 
 class SentDualEncoder(nn.Module):
-    def __init__(self, conf: SentModelConf, encoder, split_target=False):
+    def __init__(self, conf: SentModelConf, encoder, pad_idx):
         super().__init__()
         self.conf = conf
         self.encoder = encoder
-        self.split_target = split_target
+        self.pad_idx = pad_idx
 
     def _embed_target(self, batch):
-        if not self.split_target:
+        if not self.conf.split_target_sents:
             # We can't sort the target input since it is aligned to source, hence enforce_sorted=False
             target_embeddings = self.encoder(batch.tgt, batch.tgt_len, enforce_sorted=False)[
                 'pooled_out'
             ]
             return target_embeddings
-        parts = int(math.ceil(len(batch.tgt_len) / batch.bs))
-        embs = []
-        for tokens, lens in zip(torch.chunk(batch.tgt, parts), torch.chunk(batch.tgt_len, parts)):
-            emb = self.encoder(tokens, lens, enforce_sorted=False)['pooled_out']
-            embs.append(emb)
-
-        target_embeddings = torch.vstack(embs)
-        assert len(batch.tgt_len) == len(target_embeddings), "assert wrong size of tgt after concat"
-        return target_embeddings
+        return split_sents_and_embed(
+            self.encoder,
+            batch.tgt,
+            batch.tgt_len,
+            split_size=self.conf.split_size,
+            pad_idx=self.pad_idx,
+        )
 
     def calc_sim_matrix(self, batch):
         # bsz x hidden
