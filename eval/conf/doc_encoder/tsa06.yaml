@@ -1,0 +1,8 @@
+---
+
+defaults:
+  - base_doc_encoder
+
+model_path: /home/dvzubarev/Workspace/projects/semvectors/models/last_model.pt
+use_gpu: 0
+max_sents: 2048

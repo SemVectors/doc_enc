@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import logging
 
+import pkg_resources  # part of setuptools
 from omegaconf import MISSING
 
 import torch
@@ -433,7 +434,7 @@ class Trainer:
             self._scaler.unscale_(self._optimizer)
 
             if self._opts.emb_grad_scale:
-                wgrad = self._local_model.sent_model.encoder.embed_tokens.weight.grad
+                wgrad = self._local_model.sent_model.encoder.embed.weight.grad
                 if wgrad is not None:
                     wgrad *= self._opts.emb_grad_scale
 

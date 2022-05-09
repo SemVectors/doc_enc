@@ -1,0 +1,7 @@
+---
+
+defaults:
+  - base_config
+  - doc_encoder: tsa06
+  - doc_matching: tsa06
+  - _self_

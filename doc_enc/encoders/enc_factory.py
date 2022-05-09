@@ -37,21 +37,11 @@ def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer):
     return SentEncoder(embed, encoder)
 
 
-def create_frag_encoder(conf: EmbSeqEncoderConf, sent_layer_output_size):
+def create_emb_seq_encoder(conf: EmbSeqEncoderConf, sent_layer_output_size):
+    # conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
     if conf.encoder_kind == EncoderKind.LSTM:
         encoder = LSTMEncoder(conf)
     else:
         raise RuntimeError(f"Unsupported fragment encoder kind: {conf.encoder_kind}")
 
     return EmbSeqEncoder(conf, encoder, sent_layer_output_size)
-
-
-def create_doc_encoder(conf: EmbSeqEncoderConf, prev_layer_output_size):
-    # conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
-
-    if conf.encoder_kind == EncoderKind.LSTM:
-        encoder = LSTMEncoder(conf)
-    else:
-        raise RuntimeError(f"Unsupported doc encoder kind: {conf.encoder_kind}")
-
-    return EmbSeqEncoder(conf, encoder, prev_layer_output_size)

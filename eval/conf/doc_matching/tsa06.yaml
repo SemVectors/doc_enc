@@ -1,0 +1,7 @@
+---
+defaults:
+  - base_doc_matching
+
+datasets:
+  - meta: /home/dvzubarev/Workspace/projects/semvectors/datasets/temp/test.csv
+    texts: /home/dvzubarev/Workspace/projects/semvectors/datasets/temp/texts

@@ -6,8 +6,7 @@ from doc_enc.training.models.model_conf import SentModelConf, DocModelConf, Mode
 
 from doc_enc.encoders.enc_factory import (
     create_sent_encoder,
-    create_frag_encoder,
-    create_doc_encoder,
+    create_emb_seq_encoder,
 )
 from doc_enc.training.models.sent_dual_enc import SentDualEncoder
 from doc_enc.training.models.doc_dual_enc import DocDualEncoder
@@ -27,12 +26,12 @@ def create_model(conf: DocModelConf, vocab: AbcTokenizer):
     frag_encoder = None
     sent_embs_out_size = sent_model.encoder.out_embs_dim()
     if conf.fragment is not None:
-        frag_encoder = create_frag_encoder(conf.fragment, sent_embs_out_size)
+        frag_encoder = create_emb_seq_encoder(conf.fragment, sent_embs_out_size)
         doc_input_size = frag_encoder.out_embs_dim()
     else:
         doc_input_size = sent_embs_out_size
 
-    doc_encoder = create_doc_encoder(conf.doc, doc_input_size)
+    doc_encoder = create_emb_seq_encoder(conf.doc, doc_input_size)
 
     if conf.kind == ModelKind.DUAL_ENC:
         model = DocDualEncoder(
