@@ -31,6 +31,8 @@ def _eval_impl(conf, doc_encoder, meta_path, texts_dir):
     filenames, doc_embs = doc_encoder.encode_docs_from_dir(texts_dir)
     filename2idx = {f: i for i, f in enumerate(filenames)}
 
+    logging.info("Shape of computed embs: %s", doc_embs.size())
+
     total = 0
     good = 0
     not_found = 0

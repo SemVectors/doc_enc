@@ -13,14 +13,13 @@ import dataclasses
 from omegaconf import MISSING
 import torch
 
-from doc_enc.passages import split_into_fragments_by_len
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
 )
-from doc_enc.utils import find_file, open_file
+from doc_enc.utils import find_file
 from doc_enc.training.types import DocsBatch
 
 

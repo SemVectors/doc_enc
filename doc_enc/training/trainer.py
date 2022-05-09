@@ -533,7 +533,7 @@ class Trainer:
 
             running_metrics[task] += metrics
 
-            if epoch_updates - last_log_update > self._opts.log_every:
+            if epoch_updates - last_log_update >= self._opts.log_every:
                 last_log_update = epoch_updates
                 running_metrics = self._collect_metrics(running_metrics)
                 if self._rank == 0:
@@ -552,11 +552,11 @@ class Trainer:
                     )
                 _reset()
 
-            if epoch_updates - last_checkpoint_update > self._opts.checkpoint_every:
+            if epoch_updates - last_checkpoint_update >= self._opts.checkpoint_every:
                 last_checkpoint_update = epoch_updates
                 self._save_checkpoint(epoch)
 
-            if epoch_updates - last_eval_update > self._opts.eval_every:
+            if epoch_updates - last_eval_update >= self._opts.eval_every:
                 last_eval_update = epoch_updates
 
                 self._eval_and_save(epoch, dev_iter)

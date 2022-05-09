@@ -128,6 +128,7 @@ class BaseBatchIterator:
 
         finished_processes = 0
         while finished_processes < self._opts.async_generators:
+            logging.debug("queue len: %s", self._queue.qsize())
             batch = self._queue.get()
             if batch is None:
                 finished_processes += 1
