@@ -15,7 +15,7 @@ import torch
 import torch.distributed as dist
 from torch.multiprocessing.spawn import spawn as mp_spawn
 
-from doc_enc.text_processor import TextProcessorConf
+from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.tokenizer import TokenizerConf
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 
@@ -36,6 +36,8 @@ class Config:
     job_logging: Dict[str, Any]
     verbose: Any = False
     enable_log_for_all_procs: bool = False
+
+    combine_datasets_use_text_proc: bool = False
 
 
 cs = ConfigStore.instance()
@@ -126,9 +128,14 @@ def _preproc(conf: Config):
             return
 
     logging.info("combining docs datasets. It may take some time...")
+
+    text_proc = None
+    if conf.combine_datasets_use_text_proc:
+        text_proc = TextProcessor(conf.text_proc)
     combine_docs_datasets(
         input_dir,
         split="train",
+        text_proc=text_proc,
         include_datasets=iter_conf.include_datasets,
         exclude_datasets=iter_conf.exclude_datasets,
         out_filename_prefix=prefix,
@@ -139,12 +146,14 @@ def _preproc(conf: Config):
     combine_docs_datasets(
         input_dir,
         split="dev",
+        text_proc=text_proc,
         include_datasets=iter_conf.include_datasets,
         exclude_datasets=iter_conf.exclude_datasets,
         out_filename_prefix=prefix,
         min_doc_len=gen_conf.min_sents_per_doc,
         max_doc_len=gen_conf.max_sents_per_doc,
     )
+    logging.info("done with dev")
 
 
 @hydra.main(config_path="conf", config_name="config")
@@ -154,6 +163,11 @@ def train_cli(conf: Config) -> None:
         raise RuntimeError("No gpu was found")
     _preproc(conf)
     mp_spawn(_run_train, args=(gpu_cnt, conf), nprocs=gpu_cnt, join=True)
+
+
+@hydra.main(config_path="conf", config_name="config")
+def preproc_cli(conf: Config) -> None:
+    _preproc(conf)
 
 
 if __name__ == "__main__":

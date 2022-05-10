@@ -11,7 +11,7 @@ trainer:
 
 text_proc:
   tokenizer:
-    vocab_path: /home/dvzubarev/data/paral_data/undata0/bpe_8k.spm.model
+    vocab_path: /home/dvzubarev/data/paral_data/data4/unigram_96k_from_100M.spm.model
 
 batches:
   sents_batch_iterator_conf:

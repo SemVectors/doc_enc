@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import logging
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 from pathlib import Path
 import csv
 import hashlib
 
+
 from doc_enc.utils import find_file, open_bin_file, open_file
+from doc_enc.text_processor import TextProcessor
 
 
 class Example(NamedTuple):
@@ -23,6 +25,7 @@ class Example(NamedTuple):
 def combine_docs_datasets(
     input_dir,
     split,
+    text_proc: Optional[TextProcessor] = None,
     include_datasets=None,
     exclude_datasets=None,
     out_filename_prefix="combined",
@@ -51,7 +54,7 @@ def combine_docs_datasets(
 
         all_examples = []
         for i, dsp in enumerate(datasets):
-            src_info_dict, tgt_info_dict = _calc_sentence_size_and_hash(dsp)
+            src_info_dict, tgt_info_dict = _calc_sentence_size_and_hash(dsp, text_proc)
             all_examples.extend(
                 _generate_examples_from_dataset(
                     dsp, split, i, src_info_dict, tgt_info_dict, min_doc_len, max_doc_len
@@ -78,28 +81,29 @@ def combine_docs_datasets(
             )
 
 
-def _calc_sentence_size_and_hash(dataset_path: Path):
+def _calc_sentence_size_and_hash(dataset_path: Path, text_proc: Optional[TextProcessor]):
     docs_path = dataset_path / "texts"
     if docs_path.exists():
         src_docs_path = docs_path
         info_dict = {}
-        _calc_sentence_size_and_hash_in_dir(docs_path, info_dict)
+        _calc_sentence_size_and_hash_in_dir(docs_path, text_proc, info_dict)
         return info_dict, info_dict
 
     src_docs_path = dataset_path / "texts_1"
     tgt_docs_path = dataset_path / "texts_2"
     if src_docs_path.exists() and tgt_docs_path.exists():
         src_info_dict = {}
-        _calc_sentence_size_and_hash_in_dir(src_docs_path, src_info_dict)
+        _calc_sentence_size_and_hash_in_dir(src_docs_path, text_proc, src_info_dict)
         tgt_info_dict = {}
-        _calc_sentence_size_and_hash_in_dir(tgt_docs_path, tgt_info_dict)
+        _calc_sentence_size_and_hash_in_dir(tgt_docs_path, text_proc, tgt_info_dict)
         return src_info_dict, tgt_info_dict
 
     raise RuntimeError(f"Not found texts folder (or texts_1,texts_2 folders) in {dataset_path}")
 
 
-def _calc_sentence_size_and_hash_in_dir(docs_path: Path, out_info_dict):
-    # info_dict = {}
+def _calc_sentence_size_and_hash_in_dir(
+    docs_path: Path, text_proc: Optional[TextProcessor], out_info_dict
+):
     for p in docs_path.iterdir():
         if not p.is_file() or not p.suffix in ('.gz', '.txt'):
             continue
@@ -112,15 +116,24 @@ def _calc_sentence_size_and_hash_in_dir(docs_path: Path, out_info_dict):
         if doc_id in out_info_dict:
             continue
 
-        with open_bin_file(p) as f:
-            i = 0
-            md5hash = hashlib.md5()
-            for l in f:
-                if l.strip():
-                    i += 1
-                    md5hash.update(l)
-            if i:
-                out_info_dict[doc_id] = (i, md5hash.hexdigest())
+        md5hash = hashlib.md5()
+        cnt = 0
+        if text_proc is not None:
+            sent_strs, _ = text_proc.prepare_text_from_file(
+                p, split_into_fragments=False, return_strings=True
+            )
+            cnt = len(sent_strs)
+            for l in sent_strs:
+                md5hash.update(l.encode('utf8'))
+        else:
+            with open_bin_file(p) as f:
+                for l in f:
+                    if l.strip():
+                        cnt += 1
+                        md5hash.update(l)
+
+        if cnt > 0:
+            out_info_dict[doc_id] = (cnt, md5hash.hexdigest())
 
 
 def _generate_examples_from_dataset(

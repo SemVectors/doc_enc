@@ -26,9 +26,10 @@ class TextProcessor:
     def vocab(self):
         return self._tokenizer
 
-    def prepare_text_from_file(self, path, split_into_fragments=True):
+    def prepare_text_from_file(self, path, split_into_fragments=True, return_strings=False):
         with open_file(path) as f:
             sents = []
+            sents_str = []
             for l in f:
                 if not l.strip():
                     continue
@@ -37,11 +38,16 @@ class TextProcessor:
                 if len(tokens) >= self._conf.min_sent_len:
                     tokens = tokens[: self._conf.max_sent_len]
                     sents.append(tokens)
+                    if return_strings:
+                        sents_str.append(l.rstrip())
+
         fragment_len_list = []
         if split_into_fragments:
             fragment_len_list = split_into_fragments_by_len(sents, self._conf.fragment_size)
 
-        return sents, fragment_len_list
+        if not return_strings:
+            return sents, fragment_len_list
+        return sents_str, fragment_len_list
 
     def state_dict(self):
         return {'tok': self._tokenizer.state_dict()}

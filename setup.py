@@ -15,6 +15,7 @@ setup(
     entry_points={
         'console_scripts': [
             'run_training = doc_enc.training.run_training:train_cli',
+            'run_preproc = doc_enc.training.run_training:preproc_cli',
         ],
     },
 )
