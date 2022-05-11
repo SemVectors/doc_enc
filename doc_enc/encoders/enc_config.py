@@ -33,4 +33,4 @@ class SentEncoderConf(BaseEncoderConf):
 @dataclasses.dataclass
 class EmbSeqEncoderConf(BaseEncoderConf):
     add_beg_seq_token: bool = False
-    add_end_seq_token: bool = False
+    # add_end_seq_token: bool = False
