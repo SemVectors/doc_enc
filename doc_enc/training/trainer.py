@@ -380,13 +380,13 @@ class Trainer:
             logging.debug(
                 "src docs cnt: %s; frags cnt: %s; sents cnt: %s",
                 len(batch.src_ids),
-                len(batch.src_fragment_len),
+                len(batch.src_fragment_len) if batch.src_fragment_len else '-',
                 len(batch.src_sents),
             )
             logging.debug(
                 "tgt docs cnt: %s; frags cnt: %s; sents cnt: %s",
                 len(batch.tgt_ids),
-                len(batch.tgt_fragment_len),
+                len(batch.tgt_fragment_len) if batch.tgt_fragment_len else '-',
                 len(batch.tgt_sents),
             )
             src_sent_sum = batch.src_sent_len.sum().item()

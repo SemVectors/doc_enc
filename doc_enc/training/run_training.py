@@ -80,12 +80,14 @@ def _run_train(rank, world_size, conf: Config):
         trainer = Trainer(
             conf.trainer, conf.model, conf.text_proc, world_size, rank, verbose=conf.verbose
         )
+        include_fragments_level = conf.model.fragment is not None
 
         train_iter = BatchIterator(
             conf.batches,
             conf.text_proc,
             conf.job_logging,
             split="train",
+            include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
             pad_idx=trainer.vocab().pad_idx(),
@@ -96,6 +98,7 @@ def _run_train(rank, world_size, conf: Config):
             conf.text_proc,
             conf.job_logging,
             split="dev",
+            include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
             pad_idx=trainer.vocab().pad_idx(),
@@ -104,7 +107,7 @@ def _run_train(rank, world_size, conf: Config):
         trainer(train_iter, dev_iter)
 
     except Exception as e:
-        logging.error(e)
+        logging.exception(e)
         if train_iter is not None:
             train_iter.destroy()
         if dev_iter is not None:

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+from typing import List, Optional
 import dataclasses
+import itertools
 
 from doc_enc.utils import open_file
 from doc_enc.tokenizer import TokenizerConf, AbcTokenizer, create_tokenizer
@@ -54,3 +56,51 @@ class TextProcessor:
 
     def load_state_dict(self, d):
         self._tokenizer.load_state_dict(d['tok'])
+
+
+def pad_sent_sequences(sents: List[List[int]], lengths: List[int], vocab: AbcTokenizer):
+    """sents - is sentences of all documents; lengths - is a length of each document.
+    This function makes all docs the same length by padding with [<pad>].
+    """
+    max_len = max(lengths)
+    pad_seq = [vocab.pad_idx()]
+    padded_sents = []
+    offs = 0
+    for l in lengths:
+        padded_sents.extend(sents[offs : offs + l])
+        offs += l
+        pad_cnt = max_len - l
+        padded_sents.extend(itertools.repeat(pad_seq, pad_cnt))
+    return padded_sents, max_len
+
+
+def pad_fragment_sequences(
+    sents: List[List[int]],
+    lengths: List[int],
+    fragment_len: int,
+    fragment_len_list: List[int],
+    vocab: AbcTokenizer,
+):
+    """sents - is sentences of all documents; lengths - is a length of each document in fragments.
+    Fragments should be already padded with function `pad_sent_sequences`.
+    All fragments should have the same length `fragment_len`.
+    fragment_len_list - Lengths of fragments in sents.
+    Adjusted version of this list is returned if any new fragment is added.
+    This function makes all docs the same length by padding with empty fragments: ([<pad>], [<pad>], ...).
+    """
+    max_len = max(lengths)
+    pad_seq = [vocab.pad_idx()]
+    padded_fragments = []
+    frag_lens_with_padding = []
+    offs = 0
+    frag_offs = 0
+    for l in lengths:
+        sents_cnt = l * fragment_len
+        padded_fragments.extend(sents[offs : offs + sents_cnt])
+        offs += sents_cnt
+        frag_lens_with_padding.extend(fragment_len_list[frag_offs : frag_offs + l])
+        frag_offs += l
+        pad_cnt = max_len - l
+        padded_fragments.extend(itertools.repeat(pad_seq, pad_cnt * fragment_len))
+        frag_lens_with_padding.extend(itertools.repeat(1, pad_cnt))
+    return padded_fragments, frag_lens_with_padding, max_len

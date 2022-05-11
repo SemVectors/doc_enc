@@ -7,13 +7,18 @@ from pathlib import Path
 from enum import Enum
 
 import random
-from typing import List, Optional
+from typing import List, Optional, Union, Mapping
 import dataclasses
 
 from omegaconf import MISSING
 import torch
 
-from doc_enc.text_processor import TextProcessorConf, TextProcessor
+from doc_enc.text_processor import (
+    TextProcessorConf,
+    TextProcessor,
+    pad_sent_sequences,
+    pad_fragment_sequences,
+)
 from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
@@ -41,6 +46,8 @@ class DocsBatchGeneratorConf:
     min_tgt_docs_per_src_doc: int = 1
     allow_docs_without_positives: bool = False
 
+    pad_sentences: bool = True
+
 
 EXMPL_DATASET = 0
 EXMPL_SRC_ID = 1
@@ -64,10 +71,12 @@ class DocsBatchGenerator:
         opts: DocsBatchGeneratorConf,
         tp_conf: TextProcessorConf,
         split,
+        include_fragments_level=True,
         line_offset=0,
         line_cnt=-1,
     ):
         self._opts = opts
+        self._include_fragments_level = include_fragments_level
 
         self._text_proc = TextProcessor(tp_conf)
         self._doc_pair_metas = self._load_metas(split, line_offset, line_cnt)
@@ -226,7 +235,7 @@ class DocsBatchGenerator:
         return _ProcSrcStatus.ADDED
 
     def _empty_batch(self):
-        iterable = [[] for _ in range(13)]
+        iterable: List[Union[List, Mapping[str, int]]] = [[] for _ in range(13)]
         iterable.append(
             {
                 'src_docs_cnt': 0,
@@ -237,6 +246,25 @@ class DocsBatchGenerator:
             }
         )
         return DocsBatch._make(iterable), {}, {}
+
+    def _pad_batch_with_fragments(
+        self, sents, fragment_lengths, doc_length_in_fragments, prefix, batch
+    ):
+
+        padded_sents, fragment_len = pad_sent_sequences(
+            sents, fragment_lengths, self._text_proc.vocab()
+        )
+        padded_sents, frag_lens_with_padding, doc_len_in_frags = pad_fragment_sequences(
+            padded_sents,
+            doc_length_in_fragments,
+            fragment_len=fragment_len,
+            fragment_len_list=fragment_lengths,
+            vocab=self._text_proc.vocab(),
+        )
+        fragment_lengths[:] = frag_lens_with_padding
+        batch.info[f'{prefix}_fragment_len'] = fragment_len
+        batch.info[f'{prefix}_doc_len_in_frags'] = doc_len_in_frags
+        return padded_sents
 
     def _finalize_batch(self, batch: DocsBatch):
         for l in batch.positive_idxs:
@@ -249,6 +277,38 @@ class DocsBatchGenerator:
         batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
 
         batch.info['max_positives_per_doc'] = len(max(batch.positive_idxs, key=len))
+        if not self._opts.pad_sentences:
+            return batch
+
+        if self._include_fragments_level:
+            src_padded_sents = self._pad_batch_with_fragments(
+                batch.src_sents, batch.src_fragment_len, batch.src_doc_len_in_frags, 'src', batch
+            )
+            tgt_padded_sents = self._pad_batch_with_fragments(
+                batch.tgt_sents, batch.tgt_fragment_len, batch.tgt_doc_len_in_frags, 'tgt', batch
+            )
+            batch.info['src_frags_cnt'] = len(batch.src_fragment_len)
+            batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
+
+            return batch._replace(src_sents=src_padded_sents, tgt_sents=tgt_padded_sents)
+
+        src_padded_sents, src_doc_len = pad_sent_sequences(
+            batch.src_sents, batch.src_doc_len_in_sents, self._text_proc.vocab()
+        )
+        tgt_padded_sents, tgt_doc_len = pad_sent_sequences(
+            batch.tgt_sents, batch.tgt_doc_len_in_sents, self._text_proc.vocab()
+        )
+        batch.info['src_doc_len_in_sents'] = src_doc_len
+        batch.info['tgt_doc_len_in_sents'] = tgt_doc_len
+
+        return batch._replace(
+            src_sents=src_padded_sents,
+            tgt_sents=tgt_padded_sents,
+            src_fragment_len=None,
+            tgt_fragment_len=None,
+            src_doc_len_in_frags=None,
+            tgt_doc_len_in_frags=None,
+        )
 
     def _is_defect_batch(self, batch):
         return (
@@ -289,7 +349,7 @@ class DocsBatchGenerator:
                 if (
                     status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents
                 ) or self._is_batch_ready(batch):
-                    self._finalize_batch(batch)
+                    batch = self._finalize_batch(batch)
                     if not self._is_defect_batch(batch):
                         yield batch
                     batch, tgt_hashes, batch_dups = self._empty_batch()
@@ -339,7 +399,7 @@ class DocsBatchGenerator:
             src_info, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
         )
         if status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents:
-            self._finalize_batch(batch)
+            batch = self._finalize_batch(batch)
             if not self._is_defect_batch(batch):
                 yield batch
             batch, tgt_hashes, batch_dups = self._empty_batch()
@@ -348,10 +408,9 @@ class DocsBatchGenerator:
             )
 
         if batch.src_sents:
-            self._finalize_batch(batch)
+            batch = self._finalize_batch(batch)
             if not self._is_defect_batch(batch):
                 yield batch
-        return
 
 
 @dataclasses.dataclass
@@ -370,6 +429,7 @@ class DocsBatchIterator(BaseBatchIterator):
         tp_conf: TextProcessorConf,
         logging_conf,
         split,
+        include_fragments_level=True,
         rank=0,
         world_size=-1,
         pad_idx=0,
@@ -379,7 +439,7 @@ class DocsBatchIterator(BaseBatchIterator):
             opts,
             logging_conf,
             DocsBatchGenerator,
-            (opts.batch_generator_conf, tp_conf, split),
+            (opts.batch_generator_conf, tp_conf, split, include_fragments_level),
             rank=rank,
             world_size=world_size,
         )

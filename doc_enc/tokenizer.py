@@ -25,6 +25,12 @@ class AbcTokenizer:
     def pad_idx(self) -> int:
         raise NotImplementedError("Not implemented")
 
+    def bos_idx(self) -> int:
+        raise NotImplementedError("Not implemented")
+
+    def eos_idx(self) -> int:
+        raise NotImplementedError("Not implemented")
+
     def vocab_size(self) -> int:
         raise NotImplementedError("Not implemented")
 
@@ -45,6 +51,12 @@ class Pretokenized(AbcTokenizer):
     def pad_idx(self):
         return 0
 
+    def bos_idx(self) -> int:
+        return -1
+
+    def eos_idx(self) -> int:
+        return -2
+
     def vocab_size(self) -> int:
         return 0
 
@@ -64,6 +76,12 @@ class SentencepieceTokenizer(AbcTokenizer):
 
     def pad_idx(self):
         return self._vocab.pad_id()
+
+    def bos_idx(self) -> int:
+        return self._vocab.bos_id()
+
+    def eos_idx(self) -> int:
+        return self._vocab.eos_id()
 
     def vocab_size(self) -> int:
         return len(self._vocab)

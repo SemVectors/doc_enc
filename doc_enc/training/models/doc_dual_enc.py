@@ -37,15 +37,19 @@ class DocDualEncoder(nn.Module):
             pad_idx=self.pad_idx,
         )
 
-    def _embed_fragments(self, sent_embs, frag_len):
+    def _embed_fragments(self, sent_embs, frag_len, padded_seq_len):
         if self.frag_encoder is None:
             raise RuntimeError("Logic error")
-        frag_embs = self.frag_encoder(sent_embs, frag_len, enforce_sorted=False)['pooled_out']
+        frag_embs = self.frag_encoder(
+            sent_embs, frag_len, padded_seq_len=padded_seq_len, enforce_sorted=False
+        )['pooled_out']
         assert len(frag_embs) == len(frag_len)
         return frag_embs
 
-    def _embed_docs(self, embs, len_list):
-        doc_embs = self.doc_encoder(embs, len_list, enforce_sorted=False)['pooled_out']
+    def _embed_docs(self, embs, len_list, padded_seq_len):
+        doc_embs = self.doc_encoder(
+            embs, len_list, padded_seq_len=padded_seq_len, enforce_sorted=False
+        )['pooled_out']
         assert len(doc_embs) == len(len_list)
         return doc_embs
 
@@ -54,18 +58,27 @@ class DocDualEncoder(nn.Module):
         tgt_sent_embs = self._embed_sents(batch.tgt_sents, batch.tgt_sent_len)
 
         if self.frag_encoder is not None:
-            src_embs = self._embed_fragments(src_sent_embs, batch.src_fragment_len)
-            tgt_embs = self._embed_fragments(tgt_sent_embs, batch.tgt_fragment_len)
+
+            src_embs = self._embed_fragments(
+                src_sent_embs, batch.src_fragment_len, batch.info['src_fragment_len']
+            )
+            tgt_embs = self._embed_fragments(
+                tgt_sent_embs, batch.tgt_fragment_len, batch.info['tgt_fragment_len']
+            )
             src_len_list = batch.src_doc_len_in_frags
             tgt_len_list = batch.tgt_doc_len_in_frags
+            src_padded_len = batch.info['src_doc_len_in_frags']
+            tgt_padded_len = batch.info['tgt_doc_len_in_frags']
         else:
             src_embs = src_sent_embs
             tgt_embs = tgt_sent_embs
             src_len_list = batch.src_doc_len_in_sents
             tgt_len_list = batch.tgt_doc_len_in_sents
-        src_doc_embs = self._embed_docs(src_embs, src_len_list)
+            src_padded_len = batch.info['src_doc_len_in_sents']
+            tgt_padded_len = batch.info['tgt_doc_len_in_sents']
+        src_doc_embs = self._embed_docs(src_embs, src_len_list, src_padded_len)
 
-        tgt_doc_embs = self._embed_docs(tgt_embs, tgt_len_list)
+        tgt_doc_embs = self._embed_docs(tgt_embs, tgt_len_list, tgt_padded_len)
 
         if self.conf.normalize:
             src_doc_embs = F.normalize(src_doc_embs, p=2, dim=1)

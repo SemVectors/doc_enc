@@ -120,21 +120,51 @@ def FakeTrainingFiltering():
             f.write("ds1,15,3,1,15,3,15hash,3hash\n")
             f.write("ds1,15,16,0,15,16,15hash,16hash\n")
             f.write("ds1,15,30,0,15,30,15hash,30hash\n")
-            f.write("ds1,4,15,1,4,15,3hash,15hash\n")
-            f.write("ds1,4,30,1,4,30,3hash,30hash\n")
-            f.write("ds1,4,16,0,4,16,3hash,16hash\n")
-            f.write("ds1,3,15,1,3,15,4hash,15hash\n")
-            f.write("ds1,3,30,1,3,30,4hash,30hash\n")
-            f.write("ds1,3,16,0,3,16,4hash,16hash\n")
+            f.write("ds1,4,15,1,4,15,4hash,15hash\n")
+            f.write("ds1,4,30,1,4,30,4hash,30hash\n")
+            f.write("ds1,4,16,0,4,16,4hash,16hash\n")
+            f.write("ds1,3,15,1,3,15,3hash,15hash\n")
+            f.write("ds1,3,30,1,3,30,3hash,30hash\n")
+            f.write("ds1,3,16,0,3,16,3hash,16hash\n")
         yield tmpdirname
 
 
-def _create_gen_opts(input_dir, **kwargs):
+@pytest.fixture
+def FakeTrainingPadding():
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        tmpdirname = Path(tmpdirname)
+        for n in ("ds1",):
+            ds = tmpdirname / n
+            ds_docs = ds / "texts"
+            ds_docs.mkdir(parents=True)
+
+        ds1_docs_dir = tmpdirname / "ds1" / "texts"
+        with open(ds1_docs_dir / '3.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4\n3 4 5 6\n5 6 7 8")
+        with open(ds1_docs_dir / '5.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 \n3 4 5 6\n5 6 \n7 8 10\n11 12 13 14")
+        with open(ds1_docs_dir / '8.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 5\n" * 8)
+        with open(ds1_docs_dir / '10.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 6\n" * 10)
+        with open(ds1_docs_dir / '30.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 6 7\n" * 30)
+
+        with open(tmpdirname / 'combined_train.csv', 'w', encoding='utf8') as f:
+            f.write("ds1,3,10,1,3,10,3hash,10hash\n")
+            f.write("ds1,3,8,0,3,8,3hash,8hash\n")
+            f.write("ds1,5,10,1,5,10,5hash,10hash\n")
+            f.write("ds1,8,30,1,8,30,8hash,30hash\n")
+        yield tmpdirname
+
+
+def _create_gen_opts(input_dir, pad_sentences=False, **kwargs):
     conf = DocsBatchGeneratorConf(
         input_dir=input_dir,
         positives_per_doc=[2, 2],
         negatives_per_doc=[2, 2],
         min_sents_per_doc=1,
+        pad_sentences=pad_sentences,
         **kwargs,
     )
     tp_conf = TextProcessorConf(
@@ -314,6 +344,7 @@ def test_gen_with_dups(FakeTrainingDataWithDups):
         positives_per_doc=[1, 1],
         negatives_per_doc=[2, 2],
         min_sents_per_doc=1,
+        pad_sentences=False,
     )
     tp_conf = TextProcessorConf(
         TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED), min_sent_len=1
@@ -352,6 +383,7 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
         positives_per_doc=[1, 1],
         negatives_per_doc=[2, 2],
         min_sents_per_doc=1,
+        pad_sentences=False,
     )
     tp_conf = TextProcessorConf(
         TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED), min_sent_len=1
@@ -387,6 +419,7 @@ def test_gen_with_filters(FakeTrainingFiltering):
         negatives_per_doc=[2, 2],
         min_sents_per_doc=4,
         max_sents_per_doc=20,
+        pad_sentences=False,
     )
     tp_conf = TextProcessorConf(
         TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
@@ -422,6 +455,7 @@ def test_gen_with_all_filtered(FakeTrainingFiltering):
         negatives_per_doc=[2, 2],
         min_sents_per_doc=5,
         max_sents_per_doc=10,
+        pad_sentences=False,
     )
 
     tp_conf = TextProcessorConf(
@@ -441,6 +475,7 @@ def test_gen_with_filtering_sents_by_len(FakeTrainingFiltering):
         negatives_per_doc=[2, 2],
         min_sents_per_doc=3,
         max_sents_per_doc=16,
+        pad_sentences=False,
     )
     tp_conf = TextProcessorConf(
         TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
@@ -467,3 +502,90 @@ def test_gen_with_filtering_sents_by_len(FakeTrainingFiltering):
     assert batch.info['src_docs_cnt'] == 2
     assert batch.info['tgt_docs_cnt'] == 2
     assert batch.info['max_positives_per_doc'] == 1
+
+
+def test_gen_with_padding_wo_fragments(FakeTrainingPadding):
+    conf, tp_conf = _create_gen_opts(FakeTrainingPadding, pad_sentences=True)
+    gen = DocsBatchGenerator(
+        conf, tp_conf=tp_conf, split='train', line_offset=0, include_fragments_level=False
+    )
+    batches = list(gen.batches())
+    assert len(batches) == 1
+    batch: DocsBatch = batches[0]
+    print(batch.src_sents)
+    assert batch.src_ids == [8, 5, 3]
+    assert batch.tgt_ids == [30, 10, 8]
+    assert len(batch.src_sents) == 24
+    assert len(batch.tgt_sents) == 90
+
+    assert batch.src_sents[4] == [1, 2, 3, 4, 5]
+    assert batch.src_sents[8] == [1, 2]
+    assert batch.src_sents[12] == [11, 12, 13, 14]
+    assert batch.src_sents[13] == [0]
+    assert batch.src_sents[15] == [0]
+    assert batch.src_sents[16] == [1, 2, 3, 4]
+    assert batch.src_sents[18] == [5, 6, 7, 8]
+    assert batch.src_sents[19] == [0]
+    assert batch.src_sents[23] == [0]
+
+    assert batch.src_fragment_len is None
+    assert batch.tgt_fragment_len is None
+
+    assert batch.src_doc_len_in_sents == [8, 5, 3]
+    assert batch.tgt_doc_len_in_sents == [30, 10, 8]
+
+    assert batch.info['src_doc_len_in_sents'] == 8
+    assert batch.info['tgt_doc_len_in_sents'] == 30
+
+    assert batch.positive_idxs == [[0], [1], [1]]
+
+
+def test_gen_with_padding_w_fragments(FakeTrainingPadding):
+    conf, tp_conf = _create_gen_opts(FakeTrainingPadding, pad_sentences=True)
+    gen = DocsBatchGenerator(
+        conf, tp_conf=tp_conf, split='train', line_offset=0, include_fragments_level=True
+    )
+    batches = list(gen.batches())
+    assert len(batches) == 1
+    batch: DocsBatch = batches[0]
+    print(batch.src_sents)
+    assert batch.src_ids == [8, 5, 3]
+    assert batch.tgt_ids == [30, 10, 8]
+    assert len(batch.src_sents) == 24
+    assert len(batch.tgt_sents) == 32 + 32 + 32
+    #                            1st d  2nd and 3rd with extra fragment
+
+    assert batch.src_sents[4] == [1, 2, 3, 4, 5]
+    assert batch.src_sents[12] == [11, 12, 13, 14]
+    assert batch.src_sents[15] == [0]
+    assert batch.src_sents[16] == [1, 2, 3, 4]
+    assert batch.src_sents[23] == [0]
+
+    assert batch.tgt_sents[18] == [1, 2, 3, 4, 6, 7]
+    assert batch.tgt_sents[29] == [1, 2, 3, 4, 6, 7]
+    assert batch.tgt_sents[30] == [0]
+    assert batch.tgt_sents[32] == [1, 2, 3, 4, 6]
+    assert batch.tgt_sents[41] == [1, 2, 3, 4, 6]
+    assert batch.tgt_sents[47] == [0]
+    assert batch.tgt_sents[63] == [0]
+    assert batch.tgt_sents[64] == [1, 2, 3, 4, 5]
+    assert batch.tgt_sents[71] == [1, 2, 3, 4, 5]
+    assert batch.tgt_sents[72] == [0]
+    assert batch.tgt_sents[79] == [0]
+    assert batch.tgt_sents[80] == [0]
+    assert batch.tgt_sents[95] == [0]
+
+    # fragment_size == 16
+    assert batch.info['src_fragment_len'] == 8
+    assert batch.info['tgt_fragment_len'] == 16
+
+    assert batch.info['src_frags_cnt'] == 3
+    assert batch.info['tgt_frags_cnt'] == 6
+    assert batch.src_fragment_len == [8, 5, 3]
+    assert batch.tgt_fragment_len == [16, 14, 10, 1, 8, 1]
+
+    assert batch.info['src_doc_len_in_frags'] == 1
+    assert batch.info['tgt_doc_len_in_frags'] == 2
+
+    assert batch.src_doc_len_in_frags == [1, 1, 1]
+    assert batch.tgt_doc_len_in_frags == [2, 1, 1]
