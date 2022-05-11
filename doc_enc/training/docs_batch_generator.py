@@ -46,7 +46,7 @@ class DocsBatchGeneratorConf:
     min_tgt_docs_per_src_doc: int = 1
     allow_docs_without_positives: bool = False
 
-    pad_sentences: bool = True
+    pad_sentences: bool = False
 
 
 EXMPL_DATASET = 0
