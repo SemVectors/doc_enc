@@ -46,7 +46,8 @@ class DocsBatchGeneratorConf:
     min_tgt_docs_per_src_doc: int = 1
     allow_docs_without_positives: bool = False
 
-    pad_sentences: bool = False
+    pad_src_sentences: bool = True
+    pad_tgt_sentences: bool = False
 
 
 EXMPL_DATASET = 0
@@ -277,38 +278,57 @@ class DocsBatchGenerator:
         batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
 
         batch.info['max_positives_per_doc'] = len(max(batch.positive_idxs, key=len))
-        if not self._opts.pad_sentences:
+        if not self._opts.pad_src_sentences and not self._opts.pad_tgt_sentences:
             return batch
 
         if self._include_fragments_level:
-            src_padded_sents = self._pad_batch_with_fragments(
-                batch.src_sents, batch.src_fragment_len, batch.src_doc_len_in_frags, 'src', batch
-            )
-            tgt_padded_sents = self._pad_batch_with_fragments(
-                batch.tgt_sents, batch.tgt_fragment_len, batch.tgt_doc_len_in_frags, 'tgt', batch
-            )
-            batch.info['src_frags_cnt'] = len(batch.src_fragment_len)
-            batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
+            src_padded_sents = batch.src_sents
+            if self._opts.pad_src_sentences:
+                src_padded_sents = self._pad_batch_with_fragments(
+                    batch.src_sents,
+                    batch.src_fragment_len,
+                    batch.src_doc_len_in_frags,
+                    'src',
+                    batch,
+                )
+                batch.info['src_frags_cnt'] = len(batch.src_fragment_len)
+
+            tgt_padded_sents = batch.tgt_sents
+            if self._opts.pad_tgt_sentences:
+                tgt_padded_sents = self._pad_batch_with_fragments(
+                    batch.tgt_sents,
+                    batch.tgt_fragment_len,
+                    batch.tgt_doc_len_in_frags,
+                    'tgt',
+                    batch,
+                )
+                batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
 
             return batch._replace(src_sents=src_padded_sents, tgt_sents=tgt_padded_sents)
 
-        src_padded_sents, src_doc_len = pad_sent_sequences(
-            batch.src_sents, batch.src_doc_len_in_sents, self._text_proc.vocab()
-        )
-        tgt_padded_sents, tgt_doc_len = pad_sent_sequences(
-            batch.tgt_sents, batch.tgt_doc_len_in_sents, self._text_proc.vocab()
-        )
-        batch.info['src_doc_len_in_sents'] = src_doc_len
-        batch.info['tgt_doc_len_in_sents'] = tgt_doc_len
+        if self._opts.pad_src_sentences:
+            src_padded_sents, src_doc_len = pad_sent_sequences(
+                batch.src_sents, batch.src_doc_len_in_sents, self._text_proc.vocab()
+            )
+            batch.info['src_doc_len_in_sents'] = src_doc_len
 
-        return batch._replace(
-            src_sents=src_padded_sents,
-            tgt_sents=tgt_padded_sents,
-            src_fragment_len=None,
-            tgt_fragment_len=None,
-            src_doc_len_in_frags=None,
-            tgt_doc_len_in_frags=None,
-        )
+            batch = batch._replace(
+                src_sents=src_padded_sents,
+                src_fragment_len=None,
+                src_doc_len_in_frags=None,
+            )
+        if self._opts.pad_tgt_sentences:
+            tgt_padded_sents, tgt_doc_len = pad_sent_sequences(
+                batch.tgt_sents, batch.tgt_doc_len_in_sents, self._text_proc.vocab()
+            )
+            batch.info['tgt_doc_len_in_sents'] = tgt_doc_len
+
+            batch = batch._replace(
+                tgt_sents=tgt_padded_sents,
+                tgt_fragment_len=None,
+                tgt_doc_len_in_frags=None,
+            )
+        return batch
 
     def _is_defect_batch(self, batch):
         return (

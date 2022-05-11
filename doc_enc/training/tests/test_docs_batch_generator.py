@@ -158,19 +158,28 @@ def FakeTrainingPadding():
         yield tmpdirname
 
 
-def _create_gen_opts(input_dir, pad_sentences=False, **kwargs):
+def _create_gen_opts(
+    input_dir,
+    positives_per_doc=[2, 2],
+    min_sents_per_doc=1,
+    pad_sentences=False,
+    min_sent_len=1,
+    **kwargs,
+):
+
     conf = DocsBatchGeneratorConf(
         input_dir=input_dir,
-        positives_per_doc=[2, 2],
+        positives_per_doc=positives_per_doc,
         negatives_per_doc=[2, 2],
-        min_sents_per_doc=1,
-        pad_sentences=pad_sentences,
+        min_sents_per_doc=min_sents_per_doc,
+        pad_src_sentences=pad_sentences,
+        pad_tgt_sentences=pad_sentences,
         **kwargs,
     )
     tp_conf = TextProcessorConf(
         TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
         fragment_size=16,
-        min_sent_len=1,
+        min_sent_len=min_sent_len,
     )
     return conf, tp_conf
 
@@ -338,17 +347,7 @@ def test_iterator_two_generators(FakeTrainingData):
 
 def test_gen_with_dups(FakeTrainingDataWithDups):
     random.seed(4)
-
-    conf = DocsBatchGeneratorConf(
-        input_dir=FakeTrainingDataWithDups,
-        positives_per_doc=[1, 1],
-        negatives_per_doc=[2, 2],
-        min_sents_per_doc=1,
-        pad_sentences=False,
-    )
-    tp_conf = TextProcessorConf(
-        TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED), min_sent_len=1
-    )
+    conf, tp_conf = _create_gen_opts(FakeTrainingDataWithDups, positives_per_doc=[1, 1])
 
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
@@ -378,16 +377,7 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
     # the same test with different seed
     random.seed(2)
 
-    conf = DocsBatchGeneratorConf(
-        input_dir=FakeTrainingDataWithDups,
-        positives_per_doc=[1, 1],
-        negatives_per_doc=[2, 2],
-        min_sents_per_doc=1,
-        pad_sentences=False,
-    )
-    tp_conf = TextProcessorConf(
-        TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED), min_sent_len=1
-    )
+    conf, tp_conf = _create_gen_opts(FakeTrainingDataWithDups, positives_per_doc=[1, 1])
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
     assert len(batches) == 1
@@ -413,18 +403,8 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
 
 
 def test_gen_with_filters(FakeTrainingFiltering):
-    conf = DocsBatchGeneratorConf(
-        input_dir=FakeTrainingFiltering,
-        positives_per_doc=[2, 2],
-        negatives_per_doc=[2, 2],
-        min_sents_per_doc=4,
-        max_sents_per_doc=20,
-        pad_sentences=False,
-    )
-    tp_conf = TextProcessorConf(
-        TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
-        fragment_size=16,
-        min_sent_len=1,
+    conf, tp_conf = _create_gen_opts(
+        FakeTrainingFiltering, min_sents_per_doc=4, max_sents_per_doc=20
     )
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
@@ -449,19 +429,8 @@ def test_gen_with_filters(FakeTrainingFiltering):
 
 
 def test_gen_with_all_filtered(FakeTrainingFiltering):
-    conf = DocsBatchGeneratorConf(
-        input_dir=FakeTrainingFiltering,
-        positives_per_doc=[2, 2],
-        negatives_per_doc=[2, 2],
-        min_sents_per_doc=5,
-        max_sents_per_doc=10,
-        pad_sentences=False,
-    )
-
-    tp_conf = TextProcessorConf(
-        TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
-        fragment_size=16,
-        min_sent_len=1,
+    conf, tp_conf = _create_gen_opts(
+        FakeTrainingFiltering, min_sents_per_doc=5, max_sents_per_doc=10
     )
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
@@ -469,18 +438,8 @@ def test_gen_with_all_filtered(FakeTrainingFiltering):
 
 
 def test_gen_with_filtering_sents_by_len(FakeTrainingFiltering):
-    conf = DocsBatchGeneratorConf(
-        input_dir=FakeTrainingFiltering,
-        positives_per_doc=[2, 2],
-        negatives_per_doc=[2, 2],
-        min_sents_per_doc=3,
-        max_sents_per_doc=16,
-        pad_sentences=False,
-    )
-    tp_conf = TextProcessorConf(
-        TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
-        fragment_size=16,
-        min_sent_len=4,
+    conf, tp_conf = _create_gen_opts(
+        FakeTrainingFiltering, min_sents_per_doc=3, max_sents_per_doc=16, min_sent_len=4
     )
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())

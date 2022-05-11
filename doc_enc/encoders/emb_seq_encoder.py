@@ -21,6 +21,7 @@ class EmbSeqEncoder(nn.Module):
         if prev_output_size != input_size:
             self.emb_to_hidden_mapping = nn.Linear(prev_output_size, input_size)
 
+        # TODO
         # self._beg_seq_param = None
         # if conf.add_beg_seq_token:
         #     self._beg_seq_param = nn.parameter.Parameter(torch.zeros(input_size))
