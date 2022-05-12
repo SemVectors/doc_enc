@@ -657,11 +657,12 @@ class Trainer:
                 )
 
     def _save_model(self, out_path):
-        # opts_dict = vars(self._opts)
-        # if 'func' in opts_dict:
-        #     del opts_dict['func']
+        try:
+            version = pkg_resources.require("doc_enc")[0].version
+        except pkg_resources.DistributionNotFound:
+            version = 0
         state_dict = {
-            'version': pkg_resources.require("doc_enc")[0].version,
+            'version': version,
             'trainer_conf': self._opts,
             'model_conf': self._model_conf,
             'tp_conf': self._tp_conf,
