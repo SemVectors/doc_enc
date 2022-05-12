@@ -81,7 +81,7 @@ class BatchIterator:
 
         logging.info("Tasks for the %d epoch: %s", epoch, self._current_tasks)
         self._iterators = [self._init_iterator(t, epoch) for t in self._current_tasks]
-        self._done = [False] * len(self._iterators)
+        self._done = [0] * len(self._iterators)
 
         self._early_end_policy = self._opts.early_iter_end_policy
 
@@ -116,19 +116,18 @@ class BatchIterator:
     def empty(self):
         if self._done is None:
             raise RuntimeError("Batch iterator is not Initialized!")
-        # return all(it is None for it in self._iterators)
         return all(self._done)
 
     def supported_tasks(self):
         return [TaskType.SENT_RETR, TaskType.DOC_RETR]
 
-    def _init_iterator(self, task, epoch):
+    def _init_iterator(self, task, epoch, iter_no=1):
         if task == TaskType.SENT_RETR:
-            self._sents_batch_iterator.init_epoch(epoch)
+            self._sents_batch_iterator.init_epoch(epoch, iter_no)
             return self._sents_batch_iterator.batches()
 
         if task == TaskType.DOC_RETR:
-            self._docs_batch_iterator.init_epoch(epoch)
+            self._docs_batch_iterator.init_epoch(epoch, iter_no)
             return self._docs_batch_iterator.batches()
         raise RuntimeError(f"Unsupported task: {task} 34289")
 
@@ -155,7 +154,7 @@ class BatchIterator:
                 b = next(iterator)
                 yield b
             except StopIteration:
-                self._done[self._task_idx] = True
+                self._done[self._task_idx] += 1
 
                 if self._early_end_policy == EarlyIterEndPolicy.LONGEST:
                     self._iterators[self._task_idx] = None
@@ -163,8 +162,9 @@ class BatchIterator:
                 if self._early_end_policy == EarlyIterEndPolicy.REITER:
                     if not self.empty() or self._opts.reinit_last_iter:
                         task = self._current_tasks[self._task_idx]
-                        logging.info("Reinit iterator for task: %s", task)
-                        iterator = self._init_iterator(task, self._epoch)
+                        iter_no = self._done[self._task_idx]
+                        logging.info("Reinit iterator for task: %s %sth time", task, iter_no)
+                        iterator = self._init_iterator(task, self._epoch, iter_no + 1)
                         self._iterators[self._task_idx] = iterator
                     else:
                         self._iterators[self._task_idx] = None

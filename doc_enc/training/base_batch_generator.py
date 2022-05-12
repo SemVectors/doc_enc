@@ -18,9 +18,11 @@ def _split_between_nproc(n, start_offs, line_cnt):
 
 
 def _generator_proc_wrapper(
-    queue: multiprocessing.Queue, logging_conf, rank, GenCls, *args, **kwargs
+    queue: multiprocessing.Queue, logging_conf, rank, GenCls, *args, seed=None, **kwargs
 ):
-    random.seed(42 * 42)
+    if seed is None:
+        seed = 42 * 42 + 51
+    random.seed(seed)
 
     if logging_conf:
         configure_log(logging_conf, False)
@@ -100,7 +102,7 @@ class BaseBatchIterator:
             p.join()
         self._processes = []
 
-    def _start_workers(self, filepath):
+    def _start_workers(self, filepath, seed=None):
         rank_offs, per_rank_lines = self._get_line_offs_for_rank(filepath)
         r = _split_between_nproc(
             self._opts.async_generators, start_offs=rank_offs, line_cnt=per_rank_lines
@@ -116,7 +118,7 @@ class BaseBatchIterator:
                     self._generator_cls,
                 )
                 + self._generator_args,
-                kwargs={'line_offset': offs, 'line_cnt': per_proc_lines},
+                kwargs={'line_offset': offs, 'line_cnt': per_proc_lines, 'seed': seed},
             )
             p.start()
 

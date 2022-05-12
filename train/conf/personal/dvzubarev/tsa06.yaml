@@ -10,6 +10,7 @@ trainer:
   switch_tasks_every: 10
 
 text_proc:
+  min_sent_len: 3
   tokenizer:
     vocab_path: /home/dvzubarev/data/paral_data/data4/unigram_96k_from_100M.spm.model
 
@@ -23,5 +24,6 @@ batches:
     include_datasets:
       - mini
     batch_generator_conf:
+      pad_src_sentences: false
       batch_src_sents_cnt: 128
       input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/docs-mini

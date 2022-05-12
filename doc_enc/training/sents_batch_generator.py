@@ -415,10 +415,10 @@ class SentsBatchIterator(BaseBatchIterator):
 
         self._epoch = 0
 
-    def init_epoch(self, epoch):
+    def init_epoch(self, epoch, iter_no=1):
         self._epoch = epoch - 1
         src_fp = _tgt_filepath(self._opts.batch_generator_conf.input_dir, self._split)
-        self._start_workers(src_fp)
+        self._start_workers(src_fp, seed=10_000 * epoch + iter_no)
 
     def _create_padded_tensor(self, tokens, max_len):
         # logging.debug('make batch with max len %s for %s', str(max_len), str(tokens))

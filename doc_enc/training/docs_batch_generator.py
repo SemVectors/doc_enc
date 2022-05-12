@@ -475,11 +475,11 @@ class DocsBatchIterator(BaseBatchIterator):
         self._pad_idx = pad_idx
         self._epoch = 0
 
-    def init_epoch(self, epoch):
+    def init_epoch(self, epoch, iter_no=1):
         self._epoch = epoch - 1
         opts = self._opts.batch_generator_conf
         fp = f"{opts.input_dir}/{opts.meta_prefix}_{self._split}.csv"
-        self._start_workers(fp)
+        self._start_workers(fp, seed=10_000 * epoch + iter_no)
 
     def _make_batch_for_retr_task(self, batch: DocsBatch):
 
