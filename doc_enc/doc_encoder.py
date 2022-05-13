@@ -114,17 +114,19 @@ class DocEncoder:
             with torch.cuda.amp.autocast(enabled=True):
                 return self._encode_docs_impl(docs, doc_fragments)
 
-    def encode_docs_from_dir(self, path: Path):
-        filenames = []
+    def encode_docs_from_path_list(self, path_list):
         docs = []
         doc_fragments = []
         cur_token_cnt = 0
         cur_sent_cnt = 0
 
         embs = []
-        for p in path.iterdir():
+        for p in path_list:
             sents, fragment_len_list = self._tp.prepare_text_from_file(p)
             token_cnt = sum(len(s) for s in sents)
+            if not token_cnt:
+                sents = [[self._tp.vocab().pad_idx()]]
+                fragment_len_list = [1]
 
             if (
                 docs
@@ -142,11 +144,16 @@ class DocEncoder:
 
             docs.append(sents)
             doc_fragments.append(fragment_len_list)
-            filenames.append(p.name)
             cur_sent_cnt += len(sents)
             cur_token_cnt += token_cnt
         if docs:
             doc_embs = self._encode_docs(docs, doc_fragments)
             embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
 
-        return filenames, torch.vstack(embs)
+        stacked = torch.vstack(embs)
+        assert len(stacked) == len(path_list)
+        return stacked
+
+    def encode_docs_from_dir(self, path: Path):
+        paths = list(path.iterdir())
+        return paths, self.encode_docs_from_path_list(paths)

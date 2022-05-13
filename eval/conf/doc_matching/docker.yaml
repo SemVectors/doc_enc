@@ -1,0 +1,17 @@
+---
+defaults:
+  - base_doc_matching
+
+datasets:
+  - name: gwiki-test
+    meta: /eval/datasets/GWikiMatch/test.csv
+    texts: /eval/datasets/GWikiMatch/texts
+  - name: gwiki-dev
+    meta: /eval/datasets/GWikiMatch/dev.csv
+    texts: /eval/datasets/GWikiMatch/texts
+  - name: srw
+    meta: /eval/datasets/srw/test.csv
+    texts: /eval/datasets/srw/texts
+  - name: sew
+    meta: /eval/datasets/sew/test.csv
+    texts: /eval/datasets/sew/texts

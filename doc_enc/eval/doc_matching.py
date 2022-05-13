@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 
 import logging
-from typing import List, Mapping
+from typing import List, Tuple, Any
 import dataclasses
 from pathlib import Path
 import csv
+import random
 
 import torch
 
+from doc_enc.eval.eval_utils import paths_from_ids
 from doc_enc.doc_encoder import DocEncoder
 
 
 @dataclasses.dataclass
 class DatasetConf:
+    name: str
     meta: str
     texts: str
 
@@ -21,48 +24,122 @@ class DatasetConf:
 class DocMatchingConf:
     datasets: List[DatasetConf]
 
-    threshold: float = 0.5
+    threshold: float = 0.0
+    choose_threshold: bool = True
+    balance_pos_and_neg_examples: bool = True
+    seed: int = 2022 * 55
 
 
-def _eval_impl(conf, doc_encoder, meta_path, texts_dir):
-    texts_dir = Path(texts_dir)
-    if not texts_dir.exists():
-        raise RuntimeError(f'{texts_dir} does not exist')
-    filenames, doc_embs = doc_encoder.encode_docs_from_dir(texts_dir)
-    filename2idx = {f: i for i, f in enumerate(filenames)}
+def _finalize_gold(conf: DocMatchingConf, src_id, positives, negatives, stat):
+    if conf.balance_pos_and_neg_examples:
+        min_len = min(len(positives), len(negatives))
+        if min_len == 0:
+            min_len = 1
+        if len(positives) > min_len:
+            positives = random.sample(positives, min_len)
+        if len(negatives) > min_len:
+            negatives = random.sample(negatives, min_len)
 
-    logging.info("Shape of computed embs: %s", doc_embs.size())
+    stat[0] += len(positives)
+    stat[1] += len(negatives)
+    examples: List[Tuple[Any, Any, Any]] = [(src_id, i, 1) for i in positives]
+    examples.extend([(src_id, i, 0) for i in negatives])
+    return examples
 
+
+def _load_gold_data(conf: DocMatchingConf, meta_path):
+    gold = []
+    stat = [0, 0]
+    with open(meta_path, 'r', encoding='utf8') as fp:
+        reader = csv.reader(fp)
+        next(reader)
+        cur_src_id = ''
+        positives = []
+        negatives = []
+        for row in reader:
+            src_id, _, tgt_id, _, label, *_ = row
+            if src_id != cur_src_id:
+                if positives or negatives:
+                    gold.extend(_finalize_gold(conf, cur_src_id, positives, negatives, stat))
+                cur_src_id = src_id
+                positives = []
+                negatives = []
+
+            if int(label) == 1:
+                positives.append(tgt_id)
+            else:
+                negatives.append(tgt_id)
+        if positives or negatives:
+            gold.extend(_finalize_gold(conf, cur_src_id, positives, negatives, stat))
+    logging.info("# of positives: %s, # of negatives: %s", stat[0], stat[1])
+    return gold
+
+
+def _calc_metrics(threshold, gold, inv_idx, doc_embs):
     total = 0
     good = 0
     not_found = 0
     Cos = torch.nn.CosineSimilarity(dim=0)
-    with open(meta_path, 'r', encoding='utf8') as fp:
-        reader = csv.reader(fp)
-        next(reader)
-        for row in reader:
-            src_id, _, tgt_id, _, label, *_ = row
-            src_i = filename2idx.get(f'{src_id}.txt')
-            if src_i is None:
-                not_found += 1
-                continue
-            tgt_i = filename2idx.get(f'{tgt_id}.txt')
-            if tgt_i is None:
-                not_found += 1
-                continue
-            sim = Cos(doc_embs[src_i], doc_embs[tgt_i]).item()
 
-            computed_label = 0
-            if sim > conf.threshold:
-                computed_label = 1
-            good += computed_label == int(label)
-            total += 1
+    for src_id, tgt_id, label in gold:
+        src_i = inv_idx.get(src_id)
+        if src_i is None:
+            not_found += 1
+            continue
+        tgt_i = inv_idx.get(tgt_id)
+        if tgt_i is None:
+            not_found += 1
+            continue
+        sim = Cos(doc_embs[src_i], doc_embs[tgt_i]).item()
+
+        computed_label = 0
+        if sim > threshold:
+            computed_label = 1
+
+        good += computed_label == label
+        total += 1
     if not_found:
-        logging.warning("%d text embeddings were missing!")
+        logging.warning("%d text embeddings were missing!", not_found)
     return good / total
 
 
+def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
+    texts_dir = Path(texts_dir)
+    if not texts_dir.exists():
+        raise RuntimeError(f'{texts_dir} does not exist')
+
+    gold = _load_gold_data(conf, meta_path)
+    all_ids = set()
+    for src_id, tgt_id, _ in gold:
+        all_ids.add(src_id)
+        all_ids.add(tgt_id)
+
+    paths = paths_from_ids(texts_dir, all_ids)
+    logging.info("encoding %s documents", len(paths))
+    doc_embs = doc_encoder.encode_docs_from_path_list(paths)
+    assert len(doc_embs) == len(paths)
+    logging.info("Shape of computed embs: %s", doc_embs.size())
+
+    inv_idx = {}
+    for i, p in enumerate(paths):
+        while p.suffix:
+            p = p.with_suffix('')
+        inv_idx[p.name] = i
+
+    if conf.choose_threshold:
+        results = []
+        for t in range(2, 9):
+            t = t / 10
+            m = _calc_metrics(t, gold, inv_idx, doc_embs)
+            results.append((t, m))
+        return results
+    return _calc_metrics(conf.threshold, meta_path, inv_idx, doc_embs)
+
+
 def doc_matching_eval(conf: DocMatchingConf, doc_encoder: DocEncoder):
+    random.seed(conf.seed)
+    results = {}
     for dataset in conf.datasets:
-        acc = _eval_impl(conf, doc_encoder, meta_path=dataset.meta, texts_dir=dataset.texts)
-        return acc
+        m = _eval_impl(conf, doc_encoder, meta_path=dataset.meta, texts_dir=dataset.texts)
+        results[dataset.name] = m
+    return results

@@ -2,6 +2,6 @@
 
 defaults:
   - base_config
-  - doc_encoder: tsa06
-  - doc_matching: tsa06
+  - doc_encoder: docker
+  - doc_matching: docker
   - _self_
