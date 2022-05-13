@@ -16,7 +16,8 @@
   protobuf,
   pytz,
   pyyaml,
-  requests
+  requests,
+  pandas,
 }:
 
 buildPythonPackage rec {
@@ -40,6 +41,7 @@ buildPythonPackage rec {
     requests
     packaging
     importlib-metadata
+    pandas
   ];
   MLFLOW_SKINNY="1";
 
