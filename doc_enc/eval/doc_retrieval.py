@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from doc_enc.utils import find_file
 from doc_enc.eval.eval_utils import paths_from_ids, collect_src_tgt_ids
+from doc_enc.eval.sim_util import calc_sim, SimKind
 from doc_enc.doc_encoder import DocEncoder
 
 
@@ -28,24 +29,12 @@ class DatasetConf:
 @dataclasses.dataclass
 class DocRetrievalConf:
     datasets: List[DatasetConf]
+    enabled_ds: List = dataclasses.field(default_factory=list)
 
+    sim_kind: SimKind = SimKind.COS
     topk: List[int] = dataclasses.field(default_factory=lambda: [3, 5, 10, 20])
 
     use_gpu: Optional[int] = None
-
-
-def _calc_similarity(conf: DocRetrievalConf, query_embs, other_doc_embs):
-    if conf.use_gpu is not None:
-        device = torch.device(f"cuda:{conf.use_gpu}")
-    else:
-        device = torch.device("cpu")
-
-    with torch.inference_mode():
-        with torch.cuda.amp.autocast():
-            norm_query = F.normalize(query_embs.to(device=device))
-            norm_embs = F.normalize(other_doc_embs.to(device=device))
-            sim_matrix = torch.mm(norm_query, norm_embs.t())
-            return sim_matrix
 
 
 def _load_gold_data(meta_path, query_dir, query_data, other_dir, other_data):
@@ -87,8 +76,9 @@ def _calc_metrics(conf: DocRetrievalConf, sim_matrix, gold_data, query_data, oth
         total_rels = 0
         found_rels = 0
         cum_ap = 0.0
-        _, all_found_idxs = torch.topk(sim_matrix, k + 1, dim=1)
+        all_found_idxs = sim_matrix[:, : k + 1]
         for query_idx, rel_idxs in gold_data:
+            gold_rel = min(k, len(rel_idxs))
             found_rel = all_found_idxs[query_idx]
 
             query_key = query_keys[query_idx]
@@ -100,7 +90,7 @@ def _calc_metrics(conf: DocRetrievalConf, sim_matrix, gold_data, query_data, oth
                 found_rel = found_rel[:-1]
 
             found_rel_cnt = len(np.intersect1d(found_rel, rel_idxs))
-            total_rels += len(rel_idxs)
+            total_rels += gold_rel
             found_rels += found_rel_cnt
 
             tp = 0
@@ -109,7 +99,7 @@ def _calc_metrics(conf: DocRetrievalConf, sim_matrix, gold_data, query_data, oth
                 rel = int(found_idx in rel_idxs)
                 tp += rel
                 ap += rel * tp / (num + 1)
-            cum_ap += ap / len(rel_idxs)
+            cum_ap += ap / gold_rel
 
         metrics[f'rec@{k}'] = found_rels / total_rels if total_rels else 0.0
         metrics[f'MAP@{k}'] = cum_ap / len(gold_data)
@@ -199,17 +189,20 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     query_inv_idx = _make_keys_dict(query_text_dir, query_paths)
     query_data = ([_make_key(query_text_dir, i) for i in query_ids], query_inv_idx)
 
-    sim_matrix = _calc_similarity(conf, query_doc_embs, other_doc_embs)
+    max_k = max(conf.topk) + 1
+    _, indexes = calc_sim(conf.sim_kind, max_k, query_doc_embs.numpy(), other_doc_embs.numpy())
 
     gold_data = _load_gold_data(dsconf.meta, query_text_dir, query_data, other_text_dir, other_data)
-    metrics = _calc_metrics(conf, sim_matrix, gold_data, query_data, other_data)
+    metrics = _calc_metrics(conf, indexes, gold_data, query_data, other_data)
     return metrics
 
 
 def doc_retrieval_eval(conf: DocRetrievalConf, doc_encoder: DocEncoder):
-    results = {}
+    results = []
     for dataset in conf.datasets:
+        if conf.enabled_ds and dataset.name not in conf.enabled_ds:
+            continue
         logging.info("Evaling doc retrieval on %s", dataset.name)
         m = _eval_impl(conf, dataset, doc_encoder)
-        results[dataset.name] = m
+        results.append((dataset.name, m))
     return results

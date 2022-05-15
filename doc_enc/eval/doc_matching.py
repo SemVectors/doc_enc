@@ -23,6 +23,7 @@ class DatasetConf:
 @dataclasses.dataclass
 class DocMatchingConf:
     datasets: List[DatasetConf]
+    enabled_ds: List = dataclasses.field(default_factory=list)
 
     threshold: float = 0.0
     choose_threshold: bool = True
@@ -138,8 +139,10 @@ def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
 
 def doc_matching_eval(conf: DocMatchingConf, doc_encoder: DocEncoder):
     random.seed(conf.seed)
-    results = {}
+    results = []
     for dataset in conf.datasets:
+        if conf.enabled_ds and dataset.name not in conf.enabled_ds:
+            continue
         m = _eval_impl(conf, doc_encoder, meta_path=dataset.meta, texts_dir=dataset.texts)
-        results[dataset.name] = m
+        results.append((dataset.name, m))
     return results

@@ -11,7 +11,15 @@
         };
         python-overlay = pyfinal: pyprev: {
           mlflow-skinny = pyfinal.callPackage ./nix/mlflow-skinny.nix {};
-          doc_enc = pyfinal.callPackage ./nix {src=self; mlflow-skinny=pyfinal.mlflow-skinny;};
+          faiss = pyfinal.callPackage ./nix/faiss.nix {swig=pkgs.swig4;};
+          doc_enc = pyfinal.callPackage ./nix {
+            src=self;
+          };
+          doc_enc_full = pyfinal.callPackage ./nix {
+            src=self;
+            with-training=true;
+            with-eval=true;
+          };
         };
         overridePython = py-overlay: final: prev: (
           prev.python39.override (old: {
@@ -21,17 +29,18 @@
           })
         );
     in {
-      overlay = final: prev: {python = overridePython python-overlay final prev;};
+      overlay = final: prev: {
+        python = overridePython python-overlay final prev;};
 
       packages.x86_64-linux = {
         inherit (pkgs)
           python;
       };
 
-      defaultPackage.x86_64-linux = pkgs.python.pkgs.doc_enc;
+      defaultPackage.x86_64-linux = pkgs.python.pkgs.doc_enc_full;
       trainDockerImage = pkgs.dockerTools.streamLayeredImage {
         name = "tsa04.isa.ru:5050/semvectors/doc_enc/train";
-        tag = pkgs.python.pkgs.doc_enc.version;
+        tag = pkgs.python.pkgs.doc_enc_full.version;
 
         contents = [
           pkgs.bashInteractive pkgs.coreutils
@@ -40,7 +49,7 @@
         # extraCommands = '' ln -s lib lib/x86_64-linux-gnu '';
         config = {
 
-          Entrypoint = [ "${pkgs.python.pkgs.doc_enc}/bin/run_training" ];
+          Entrypoint = [ "${pkgs.python.pkgs.doc_enc_full}/bin/run_training" ];
 
           #LD_LIBRARY_PATH for debian11. Also you need to install libnvidia-container1 and libnvidia-container-tools > 1.9.0
           Env = [
@@ -59,7 +68,7 @@
         let pypkgs = pkgs.python.pkgs;
         in
           pkgs.mkShell {
-            inputsFrom = [ pypkgs.doc_enc ];
+            inputsFrom = [ pypkgs.doc_enc_full ];
             buildInputs = [
               pkgs.nodePackages.pyright
               pkgs.nodePackages.bash-language-server

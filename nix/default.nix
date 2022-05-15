@@ -1,5 +1,6 @@
 {
   src,
+  lib,
   buildPythonPackage,
   scikitlearn,
   numpy,
@@ -8,7 +9,10 @@
   hydra,
   boto3,
   mlflow-skinny,
+  faiss,
   pytest,
+  with-training ? false,
+  with-eval ? false
 
 }:
 
@@ -19,8 +23,21 @@ buildPythonPackage {
 
 
   buildInputs = [];
-  propagatedBuildInputs=[scikitlearn numpy pytorch-bin sentencepiece hydra boto3 mlflow-skinny];
-  checkInputs = [pytest];
+  propagatedBuildInputs=[
+    scikitlearn
+    numpy
+    pytorch-bin
+    sentencepiece
+    hydra ]
+  ++ lib.optionals with-training [
+    boto3
+    mlflow-skinny ]
+  ++ lib.optionals with-eval [
+    mlflow-skinny
+    faiss
+  ];
 
-  checkPhase = "pytest";
+ checkInputs = [pytest];
+
+ checkPhase = "pytest";
 }

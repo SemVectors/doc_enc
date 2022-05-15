@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass
+import dataclasses
 import logging
 
 import hydra
@@ -12,7 +12,7 @@ from doc_enc.eval.doc_matching import DocMatchingConf, doc_matching_eval
 from doc_enc.eval.doc_retrieval import DocRetrievalConf, doc_retrieval_eval
 
 
-@dataclass
+@dataclasses.dataclass
 class Config:
     doc_encoder: DocEncoderConf
     eval_doc_matching: bool = True
@@ -21,6 +21,8 @@ class Config:
     eval_doc_retrieval: bool = True
     doc_retrieval: DocRetrievalConf = MISSING
 
+    print_as_csv: bool = False
+
 
 cs = ConfigStore.instance()
 cs.store(name="base_config", node=Config)
@@ -28,21 +30,42 @@ cs.store(name="base_doc_matching", group="doc_matching", node=DocMatchingConf)
 cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 
+def _print_results_as_csv(results):
+    if not results:
+        return
+
+    metrics = list(results[0][1].keys())
+    header = f"ds,{','.join(metrics)}"
+    print(header)
+    for ds, m in results:
+        values = list(m.values())
+        values = [ds] + [f"{v:.3f}" for v in values]
+        print(*values, sep=',')
+
+
+def _print_results(results):
+    for ds, m in results:
+        logging.info("Metrics for ds: %s", ds)
+        logging.info(m)
+
+
 @hydra.main(config_path="conf", config_name="config")
 def eval_cli(conf: Config) -> None:
     doc_encoder = DocEncoder(conf.doc_encoder)
+    if conf.print_as_csv:
+        printer = _print_results_as_csv
+    else:
+        printer = _print_results
+
     if conf.eval_doc_matching:
         results = doc_matching_eval(conf.doc_matching, doc_encoder)
         logging.info("doc matching results")
-        for ds, m in results.items():
-            logging.info("Metrics for ds: %s", ds)
-            logging.info(m)
+        printer(results)
+
     if conf.eval_doc_retrieval:
         results = doc_retrieval_eval(conf.doc_retrieval, doc_encoder)
         logging.info("doc retrieval results")
-        for ds, m in results.items():
-            logging.info("Metrics for ds: %s", ds)
-            logging.info(m)
+        printer(results)
 
 
 if __name__ == "__main__":
