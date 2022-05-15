@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import logging
+import math
 from typing import Optional
 import dataclasses
 from pathlib import Path
+import multiprocessing
 
 import torch
 
@@ -21,8 +23,130 @@ class DocEncoderConf:
     model_path: str
     use_gpu: Optional[int] = None
 
+    async_batch_gen: int = 2
+
     max_sents: int = 1024
     max_tokens: int = 0
+
+
+class FromPathsBatchGenerator:
+    def __init__(self, tp_conf: TextProcessorConf, conf: DocEncoderConf, tp_state_dict) -> None:
+        self._conf = conf
+        self._tp = TextProcessor(tp_conf)
+        self._tp.load_state_dict(tp_state_dict)
+
+    def _gen_idxs(self, offset, i, doc_len):
+        return list(range(offset + i, offset + i + doc_len))
+
+    def batches(self, paths, offset):
+        docs = []
+        doc_fragments = []
+        cur_token_cnt = 0
+        cur_sent_cnt = 0
+        batch_idx_beg = 0
+
+        for i, p in enumerate(paths):
+            sents, fragment_len_list = self._tp.prepare_text_from_file(p)
+            token_cnt = sum(len(s) for s in sents)
+            if not token_cnt:
+                sents = [[self._tp.vocab().pad_idx()]]
+                fragment_len_list = [1]
+
+            if (
+                docs
+                and self._conf.max_sents
+                and cur_sent_cnt + len(sents) > self._conf.max_sents
+                or self._conf.max_tokens
+                and cur_token_cnt + token_cnt > self._conf.max_tokens
+            ):
+                idxs = self._gen_idxs(offset, batch_idx_beg, len(docs))
+                yield docs, doc_fragments, idxs
+                docs = []
+                doc_fragments = []
+                batch_idx_beg = i
+                cur_sent_cnt = 0
+                cur_token_cnt = 0
+
+            docs.append(sents)
+            doc_fragments.append(fragment_len_list)
+            cur_sent_cnt += len(sents)
+            cur_token_cnt += token_cnt
+        if docs:
+            yield docs, doc_fragments, self._gen_idxs(offset, batch_idx_beg, len(docs))
+
+
+def _generator_proc_wrapper(queue: multiprocessing.Queue, GenCls, items, offset, *args, **kwargs):
+    try:
+        generator = GenCls(*args, **kwargs)
+        for b in generator.batches(items, offset):
+            queue.put(b)
+    except Exception as e:
+        logging.error(
+            "Failed to process batches: GenCls=%s; Args=%s; kwargs=%s : %s", GenCls, args, kwargs, e
+        )
+
+    queue.put(None)
+
+
+class BatchIterator:
+    def __init__(
+        self,
+        generator_cls=None,
+        generator_args=(),
+        async_generators=1,
+    ):
+
+        self._generator_cls = generator_cls
+        self._generator_args = generator_args
+        self._async_generators = async_generators
+
+        self._processes = []
+        self._queue = multiprocessing.Queue(4 * async_generators)
+
+    def destroy(self):
+        self._terminate_workers()
+        self._queue.close()
+
+    def _terminate_workers(self):
+        for p in self._processes:
+            p.terminate()
+            p.join()
+        self._processes = []
+
+    def start_workers(self, items):
+        per_worker_items = math.ceil(len(items) / self._async_generators)
+        for offs in range(0, len(items), per_worker_items):
+            p = multiprocessing.Process(
+                target=_generator_proc_wrapper,
+                args=(
+                    self._queue,
+                    self._generator_cls,
+                    items[offs : offs + per_worker_items],
+                    offs,
+                )
+                + self._generator_args,
+                kwargs={},
+            )
+            p.start()
+
+            self._processes.append(p)
+
+    def batches(self):
+        if not self._processes:
+            raise RuntimeError("Sent batch Iterator is not initialized!")
+
+        finished_processes = 0
+        while finished_processes < self._async_generators:
+            logging.debug("queue len: %s", self._queue.qsize())
+            batch = self._queue.get()
+            if batch is None:
+                finished_processes += 1
+                continue
+            yield batch
+
+        for p in self._processes:
+            p.join()
+        self._processes = []
 
 
 class DocEncoder:
@@ -30,10 +154,11 @@ class DocEncoder:
         self._conf = conf
 
         state_dict = torch.load(conf.model_path)
-        tp_conf: TextProcessorConf = state_dict['tp_conf']
-        tp_conf.tokenizer.vocab_path = None
-        self._tp = TextProcessor(tp_conf)
-        self._tp.load_state_dict(state_dict['tp'])
+        self._tp_conf: TextProcessorConf = state_dict['tp_conf']
+        self._tp_conf.tokenizer.vocab_path = None
+        self._tp_state_dict = state_dict['tp']
+        self._tp = TextProcessor(self._tp_conf)
+        self._tp.load_state_dict(self._tp_state_dict)
 
         if conf.use_gpu is not None and torch.cuda.is_available():
             logging.info("Computing on gpu:%s", conf.use_gpu)
@@ -115,45 +240,29 @@ class DocEncoder:
                 return self._encode_docs_impl(docs, doc_fragments)
 
     def encode_docs_from_path_list(self, path_list):
-        docs = []
-        doc_fragments = []
-        cur_token_cnt = 0
-        cur_sent_cnt = 0
-
         embs = []
-        for p in path_list:
-            sents, fragment_len_list = self._tp.prepare_text_from_file(p)
-            token_cnt = sum(len(s) for s in sents)
-            if not token_cnt:
-                sents = [[self._tp.vocab().pad_idx()]]
-                fragment_len_list = [1]
-
-            if (
-                docs
-                and self._conf.max_sents
-                and cur_sent_cnt + len(sents) > self._conf.max_sents
-                or self._conf.max_tokens
-                and cur_token_cnt + token_cnt > self._conf.max_tokens
-            ):
-                doc_embs = self._encode_docs(docs, doc_fragments)
-                embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
-                docs = []
-                doc_fragments = []
-                cur_sent_cnt = 0
-                cur_token_cnt = 0
-
-            docs.append(sents)
-            doc_fragments.append(fragment_len_list)
-            cur_sent_cnt += len(sents)
-            cur_token_cnt += token_cnt
-        if docs:
+        embs_idxs = []
+        batch_iter = BatchIterator(
+            FromPathsBatchGenerator,
+            (self._tp_conf, self._conf, self._tp_state_dict),
+            self._conf.async_batch_gen,
+        )
+        batch_iter.start_workers(path_list)
+        for docs, doc_fragments, idxs in batch_iter.batches():
             doc_embs = self._encode_docs(docs, doc_fragments)
             embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
+            embs_idxs.extend(idxs)
 
         stacked = torch.vstack(embs)
         assert len(stacked) == len(path_list)
-        return stacked
+
+        embs_idxs = torch.tensor(embs_idxs)
+        initial_order_idxs = torch.empty_like(embs_idxs)
+        initial_order_idxs.scatter_(0, embs_idxs, torch.arange(0, embs_idxs.numel()))
+        reordered_embs = stacked.index_select(0, initial_order_idxs)
+        return reordered_embs
 
     def encode_docs_from_dir(self, path: Path):
         paths = list(path.iterdir())
+        paths.sort()
         return paths, self.encode_docs_from_path_list(paths)
