@@ -32,6 +32,7 @@ class Config:
 cs = ConfigStore.instance()
 cs.store(name="base_config", node=Config)
 cs.store(name="base_doc_matching", group="doc_matching", node=DocMatchingConf)
+cs.store(name="base_doc_retrieval", group="doc_retrieval", node=DocRetrievalConf)
 cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 

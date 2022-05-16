@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /doc_matching: quick
+  - override /doc_retrieval: quick
+  - _self_
+
+doc_encoder:
+  model_path: /home/dvzubarev/Workspace/projects/semvectors/models/last_model.pt
+  use_gpu: 0
+  max_sents: 2048
+
+doc_matching:
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/ds
+
+doc_retrieval:
+  sim_kind: COS
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/ds

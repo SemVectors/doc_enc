@@ -2,6 +2,7 @@
 
 defaults:
   - base_config
-  - doc_encoder: docker
-  - doc_matching: docker
+  - doc_encoder: basic
+  - doc_matching: full
+  - doc_retrieval: full
   - _self_

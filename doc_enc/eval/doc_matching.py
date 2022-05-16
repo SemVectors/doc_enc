@@ -22,6 +22,7 @@ class DatasetConf:
 
 @dataclasses.dataclass
 class DocMatchingConf:
+    ds_base_dir: str
     datasets: List[DatasetConf]
     enabled_ds: List = dataclasses.field(default_factory=list)
 
@@ -51,7 +52,7 @@ def _finalize_gold(conf: DocMatchingConf, src_id, positives, negatives, stat):
 def _load_gold_data(conf: DocMatchingConf, meta_path):
     gold = []
     stat = [0, 0]
-    with open(meta_path, 'r', encoding='utf8') as fp:
+    with open(conf.ds_base_dir + '/' + meta_path, 'r', encoding='utf8') as fp:
         reader = csv.reader(fp)
         next(reader)
         cur_src_id = ''
@@ -104,9 +105,10 @@ def _calc_metrics(threshold, gold, inv_idx, doc_embs):
 
 
 def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
-    texts_dir = Path(texts_dir)
-    if not texts_dir.exists():
-        raise RuntimeError(f'{texts_dir} does not exist')
+    base_dir = Path(conf.ds_base_dir)
+    full_texts_dir = base_dir / texts_dir
+    if not full_texts_dir.exists():
+        raise RuntimeError(f'{full_texts_dir} does not exist')
 
     gold = _load_gold_data(conf, meta_path)
     all_ids = set()
@@ -114,7 +116,7 @@ def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
         all_ids.add(src_id)
         all_ids.add(tgt_id)
 
-    paths = paths_from_ids(texts_dir, all_ids)
+    paths = paths_from_ids(base_dir / texts_dir, all_ids)
     logging.info("encoding %s documents", len(paths))
     doc_embs = doc_encoder.encode_docs_from_path_list(paths)
     assert len(doc_embs) == len(paths)

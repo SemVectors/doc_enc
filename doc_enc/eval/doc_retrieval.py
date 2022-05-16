@@ -26,6 +26,7 @@ class DatasetConf:
 
 @dataclasses.dataclass
 class DocRetrievalConf:
+    ds_base_dir: str
     datasets: List[DatasetConf]
     enabled_ds: List = dataclasses.field(default_factory=list)
 
@@ -128,8 +129,8 @@ def _make_keys_dict(text_dir: Path, paths):
     return id2idx
 
 
-def _add_docs_from_other_dir(dsconf: DatasetConf, other_text_dir: Path, other_keys):
-    all_other_paths = list(f for f in other_text_dir.iterdir() if f.is_file())
+def _add_docs_from_other_dir(dsconf: DatasetConf, base_dir: Path, other_text_dir: Path, other_keys):
+    all_other_paths = list(f for f in (base_dir / other_text_dir).iterdir() if f.is_file())
     all_other_paths.sort()
     if dsconf.other_texts_limit:
         other_keys_set = frozenset(other_keys)
@@ -145,10 +146,10 @@ def _add_docs_from_other_dir(dsconf: DatasetConf, other_text_dir: Path, other_ke
     return [_make_key(other_text_dir, id_from_path(p)) for p in all_other_paths]
 
 
-def paths_from_keys(key_list):
+def paths_from_keys(base_dir: Path, key_list):
     paths = []
     for text_dir, i in key_list:
-        fp = text_dir / f"{i}.txt"
+        fp = base_dir / text_dir / f"{i}.txt"
         try:
             fp = find_file(fp, throw_if_not_exist=False)
             paths.append(fp)
@@ -158,16 +159,21 @@ def paths_from_keys(key_list):
 
 
 def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEncoder):
-    query_text_dir, other_text_dir = _find_text_dirs(Path(dsconf.texts))
+    base_dir = Path(conf.ds_base_dir)
+    abs_query_text_dir, abs_other_text_dir = _find_text_dirs(base_dir / dsconf.texts)
+    query_text_dir = abs_query_text_dir.relative_to(base_dir)
+    other_text_dir = abs_other_text_dir.relative_to(base_dir)
 
-    query_ids, other_ids = collect_src_tgt_ids(Path(dsconf.meta))
+    query_ids, other_ids = collect_src_tgt_ids(base_dir / dsconf.meta)
     other_keys = [_make_key(other_text_dir, o) for o in other_ids]
     if dsconf.search_over_all_texts:
-        other_keys = _add_docs_from_other_dir(dsconf, other_text_dir, other_keys)
+        other_keys = _add_docs_from_other_dir(dsconf, base_dir, other_text_dir, other_keys)
         if dsconf.extra_other_dir:
-            other_keys = _add_docs_from_other_dir(dsconf, Path(dsconf.extra_other_dir), other_keys)
+            other_keys = _add_docs_from_other_dir(
+                dsconf, base_dir, Path(dsconf.extra_other_dir), other_keys
+            )
 
-    other_paths = paths_from_keys(other_keys)
+    other_paths = paths_from_keys(base_dir, other_keys)
     logging.info("computing embeddings for %s docs", len(other_paths))
     other_doc_embs = doc_encoder.encode_docs_from_path_list(other_paths)
     assert len(other_doc_embs) == len(other_paths) == len(other_keys)
@@ -175,7 +181,7 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     other_inv_idx = _make_keys_dict(other_text_dir, other_paths)
     other_data = (other_keys, other_inv_idx)
 
-    query_paths = paths_from_ids(query_text_dir, query_ids)
+    query_paths = paths_from_ids(abs_query_text_dir, query_ids)
     query_doc_embs = doc_encoder.encode_docs_from_path_list(query_paths)
     assert len(query_paths) == len(query_doc_embs) == len(query_ids)
     logging.info("Shape of computed query embs: %s", query_doc_embs.shape)
@@ -185,7 +191,9 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     max_k = max(conf.topk) + 1
     _, indexes = calc_sim(conf.sim_kind, max_k, query_doc_embs, other_doc_embs)
 
-    gold_data = _load_gold_data(dsconf.meta, query_text_dir, query_data, other_text_dir, other_data)
+    gold_data = _load_gold_data(
+        base_dir / dsconf.meta, query_text_dir, query_data, other_text_dir, other_data
+    )
     metrics = _calc_metrics(conf, indexes, gold_data, query_data, other_data)
     return metrics
 

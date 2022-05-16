@@ -1,0 +1,31 @@
+---
+
+sim_kind: COS
+ds_base_dir: /eval/datasets
+datasets:
+  - name: gwiki-test
+    search_over_all_texts: true
+    meta: GWikiMatch/test.csv
+    texts: GWikiMatch/texts
+  - name: paral-wiki
+    search_over_all_texts: true
+    meta: pw/test.csv
+    texts: pw/texts
+  - name: sew
+    meta: sew/test.csv
+    texts: sew/texts
+    search_over_all_texts: true
+  - name: srw
+    meta: srw/test.csv
+    texts: srw/texts
+    search_over_all_texts: true
+  - name: essay1
+    meta: essay1/test.csv
+    texts: essay1/texts
+    extra_other_dir: sew/texts
+    search_over_all_texts: true
+  - name: essay2
+    meta: essay2/test.csv
+    texts: essay2/texts
+    extra_other_dir: sew/texts
+    search_over_all_texts: true

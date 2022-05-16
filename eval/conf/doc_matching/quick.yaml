@@ -10,9 +10,9 @@ datasets:
   - name: gwiki-dev
     meta: GWikiMatch/dev.csv
     texts: GWikiMatch/texts
-  - name: srw
-    meta: srw/test.csv
+  - name: srw-mini
+    meta: srw/test_mini.csv
     texts: srw/texts
-  - name: sew
-    meta: sew/test.csv
+  - name: sew-mini
+    meta: sew/test_mini.csv
     texts: sew/texts
