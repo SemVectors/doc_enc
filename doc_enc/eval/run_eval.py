@@ -2,12 +2,14 @@
 
 import dataclasses
 import logging
+from typing import Optional
 
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 
 from doc_enc.doc_encoder import DocEncoder, DocEncoderConf
+from doc_enc.eval.caching_doc_encoder import CachingDocEncoder
 from doc_enc.eval.doc_matching import DocMatchingConf, doc_matching_eval
 from doc_enc.eval.doc_retrieval import DocRetrievalConf, doc_retrieval_eval
 
@@ -22,6 +24,9 @@ class Config:
     doc_retrieval: DocRetrievalConf = MISSING
 
     print_as_csv: bool = False
+
+    cache_embeddings: bool = True
+    model_id: Optional[str] = None
 
 
 cs = ConfigStore.instance()
@@ -51,20 +56,25 @@ def _print_results(results):
 
 @hydra.main(config_path="conf", config_name="config")
 def eval_cli(conf: Config) -> None:
-    doc_encoder = DocEncoder(conf.doc_encoder)
+    if conf.cache_embeddings:
+        if conf.model_id is None:
+            raise RuntimeError("You need to specify model id if you use caching doc encoder")
+        doc_encoder = CachingDocEncoder(conf.doc_encoder, conf.model_id)
+    else:
+        doc_encoder = DocEncoder(conf.doc_encoder)
     if conf.print_as_csv:
         printer = _print_results_as_csv
     else:
         printer = _print_results
 
-    if conf.eval_doc_matching:
-        results = doc_matching_eval(conf.doc_matching, doc_encoder)
-        logging.info("doc matching results")
-        printer(results)
-
     if conf.eval_doc_retrieval:
         results = doc_retrieval_eval(conf.doc_retrieval, doc_encoder)
         logging.info("doc retrieval results")
+        printer(results)
+
+    if conf.eval_doc_matching:
+        results = doc_matching_eval(conf.doc_matching, doc_encoder)
+        logging.info("doc matching results")
         printer(results)
 
 

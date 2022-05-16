@@ -7,11 +7,9 @@ from pathlib import Path
 import csv
 
 import numpy as np
-import torch
-import torch.nn.functional as F
 
 from doc_enc.utils import find_file
-from doc_enc.eval.eval_utils import paths_from_ids, collect_src_tgt_ids
+from doc_enc.eval.eval_utils import paths_from_ids, collect_src_tgt_ids, id_from_path
 from doc_enc.eval.sim_util import calc_sim, SimKind
 from doc_enc.doc_encoder import DocEncoder
 
@@ -121,27 +119,21 @@ def _make_key(text_dir: Path, doc_id):
     return (text_dir, doc_id)
 
 
-def _id_from_path(p: Path):
-    while p.suffix:
-        p = p.with_suffix('')
-    return p.name
-
-
 def _make_keys_dict(text_dir: Path, paths):
     id2idx = {}
     for i, p in enumerate(paths):
-        doc_id = _id_from_path(p)
+        doc_id = id_from_path(p)
         id2idx[_make_key(text_dir, doc_id)] = i
 
     return id2idx
 
 
 def _add_docs_from_other_dir(dsconf: DatasetConf, other_text_dir: Path, other_keys):
-    all_other_paths = list(other_text_dir.iterdir())
+    all_other_paths = list(f for f in other_text_dir.iterdir() if f.is_file())
     if dsconf.other_texts_limit:
         other_keys_set = frozenset(other_keys)
         for p in all_other_paths:
-            i = _id_from_path(p)
+            i = id_from_path(p)
             key = _make_key(other_text_dir, i)
             if key in other_keys_set:
                 continue
@@ -149,7 +141,7 @@ def _add_docs_from_other_dir(dsconf: DatasetConf, other_text_dir: Path, other_ke
             if len(other_keys) >= dsconf.other_texts_limit:
                 break
         return other_keys
-    return [_make_key(other_text_dir, _id_from_path(p)) for p in all_other_paths]
+    return [_make_key(other_text_dir, id_from_path(p)) for p in all_other_paths]
 
 
 def paths_from_keys(key_list):
@@ -178,19 +170,19 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     logging.info("computing embeddings for %s docs", len(other_paths))
     other_doc_embs = doc_encoder.encode_docs_from_path_list(other_paths)
     assert len(other_doc_embs) == len(other_paths) == len(other_keys)
-    logging.info("Shape of computed other embs: %s", other_doc_embs.size())
+    logging.info("Shape of computed other embs: %s", other_doc_embs.shape)
     other_inv_idx = _make_keys_dict(other_text_dir, other_paths)
     other_data = (other_keys, other_inv_idx)
 
     query_paths = paths_from_ids(query_text_dir, query_ids)
     query_doc_embs = doc_encoder.encode_docs_from_path_list(query_paths)
     assert len(query_paths) == len(query_doc_embs) == len(query_ids)
-    logging.info("Shape of computed query embs: %s", query_doc_embs.size())
+    logging.info("Shape of computed query embs: %s", query_doc_embs.shape)
     query_inv_idx = _make_keys_dict(query_text_dir, query_paths)
     query_data = ([_make_key(query_text_dir, i) for i in query_ids], query_inv_idx)
 
     max_k = max(conf.topk) + 1
-    _, indexes = calc_sim(conf.sim_kind, max_k, query_doc_embs.numpy(), other_doc_embs.numpy())
+    _, indexes = calc_sim(conf.sim_kind, max_k, query_doc_embs, other_doc_embs)
 
     gold_data = _load_gold_data(dsconf.meta, query_text_dir, query_data, other_text_dir, other_data)
     metrics = _calc_metrics(conf, indexes, gold_data, query_data, other_data)

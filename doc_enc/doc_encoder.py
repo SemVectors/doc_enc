@@ -81,9 +81,7 @@ def _generator_proc_wrapper(queue: multiprocessing.Queue, GenCls, items, offset,
         for b in generator.batches(items, offset):
             queue.put(b)
     except Exception as e:
-        logging.error(
-            "Failed to process batches: GenCls=%s; Args=%s; kwargs=%s : %s", GenCls, args, kwargs, e
-        )
+        logging.error("Failed to process batches: GenCls=%s: %s", GenCls, e)
 
     queue.put(None)
 
@@ -260,7 +258,7 @@ class DocEncoder:
         initial_order_idxs = torch.empty_like(embs_idxs)
         initial_order_idxs.scatter_(0, embs_idxs, torch.arange(0, embs_idxs.numel()))
         reordered_embs = stacked.index_select(0, initial_order_idxs)
-        return reordered_embs
+        return reordered_embs.numpy()
 
     def encode_docs_from_dir(self, path: Path):
         paths = list(path.iterdir())
