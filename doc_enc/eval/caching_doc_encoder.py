@@ -94,6 +94,13 @@ class CachingDocEncoder(DocEncoder):
     def _save_cache_to_disk(self, cache_key: Path):
         p = cache_key / self._cache_dir
         p.mkdir(exist_ok=True, parents=True)
+
+        # can be used with tar: tar  --exclude-caches-all
+        tag_file = cache_key / "__cached_embs__/CACHEDIR.TAG"
+        if not tag_file.exists():
+            with open(tag_file, 'w', encoding='ascii') as fp:
+                fp.write("Signature: 8a477f597d28d172789f06886806bc55\n")
+
         cache = self._caches[cache_key]
         np.savez(p / 'embs.npz', embs=cache.get_embs(), ids=cache.get_ids())
 
