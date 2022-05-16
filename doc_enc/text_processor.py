@@ -51,6 +51,16 @@ class TextProcessor:
             return sents, fragment_len_list
         return sents_str, fragment_len_list
 
+    def prepare_sents(self, sent_strs):
+        sent_ids = []
+        for s in sent_strs:
+            tokens = self._tokenizer(s)
+            tokens = tokens[: self._conf.max_sent_len]
+            if not tokens:
+                tokens = [self.vocab().pad_idx()]
+            sent_ids.append(tokens)
+        return sent_ids
+
     def state_dict(self):
         return {'tok': self._tokenizer.state_dict()}
 

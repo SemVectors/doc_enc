@@ -3,6 +3,7 @@ defaults:
   - /base_config
   - override /doc_matching: quick
   - override /doc_retrieval: quick
+  - override /sent_retrieval: full
   - _self_
 
 doc_encoder:
@@ -11,8 +12,11 @@ doc_encoder:
   max_sents: 2048
 
 doc_matching:
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/ds
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc
 
 doc_retrieval:
   sim_kind: COS
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/ds
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc
+
+sent_retrieval:
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/sent

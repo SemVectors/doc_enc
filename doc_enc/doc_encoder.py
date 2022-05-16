@@ -188,7 +188,7 @@ class DocEncoder:
 
         logging.debug("doc layer\n:%s", self._doc_layer)
 
-    def _encode_sents(self, sents):
+    def _encode_sents_impl(self, sents):
         cnt = len(sents)
         sent_lengths = [len(t) for t in sents]
         sent_lengths = torch.as_tensor(sent_lengths, dtype=torch.int64, device=self._device)
@@ -215,7 +215,7 @@ class DocEncoder:
         """Each doc is a list of tokenized sentences."""
 
         all_sents = [s for d in docs for s in d]
-        sent_embs = self._encode_sents(all_sents)
+        sent_embs = self._encode_sents_impl(all_sents)
 
         if self._fragment_layer is not None:
             frag_len = []
@@ -234,8 +234,17 @@ class DocEncoder:
 
     def _encode_docs(self, docs, doc_fragments):
         with torch.inference_mode():
-            with torch.cuda.amp.autocast(enabled=True):
+            with torch.cuda.amp.autocast():
                 return self._encode_docs_impl(docs, doc_fragments)
+
+    def _encode_sents(self, sents):
+        with torch.inference_mode():
+            with torch.cuda.amp.autocast():
+                return self._encode_sents_impl(sents)
+
+    def encode_sents(self, sents):
+        sent_ids = self._tp.prepare_sents(sents)
+        return self._encode_sents(sent_ids).cpu().numpy()
 
     def encode_docs_from_path_list(self, path_list):
         embs = []

@@ -12,6 +12,7 @@ from doc_enc.doc_encoder import DocEncoder, DocEncoderConf
 from doc_enc.eval.caching_doc_encoder import CachingDocEncoder
 from doc_enc.eval.doc_matching import DocMatchingConf, doc_matching_eval
 from doc_enc.eval.doc_retrieval import DocRetrievalConf, doc_retrieval_eval
+from doc_enc.eval.sent_retrieval import SentRetrievalConf, sent_retrieval_eval
 
 
 @dataclasses.dataclass
@@ -23,6 +24,9 @@ class Config:
     eval_doc_retrieval: bool = True
     doc_retrieval: DocRetrievalConf = MISSING
 
+    eval_sent_retrieval: bool = True
+    sent_retrieval: SentRetrievalConf = MISSING
+
     print_as_csv: bool = False
 
     cache_embeddings: bool = True
@@ -33,20 +37,36 @@ cs = ConfigStore.instance()
 cs.store(name="base_config", node=Config)
 cs.store(name="base_doc_matching", group="doc_matching", node=DocMatchingConf)
 cs.store(name="base_doc_retrieval", group="doc_retrieval", node=DocRetrievalConf)
+cs.store(name="base_sent_retrieval", group="sent_retrieval", node=SentRetrievalConf)
 cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
+
+
+def _print_row(ds, metrics_dict):
+    values = list(metrics_dict.values())
+    values = [ds] + [f"{v:.3f}" for v in values]
+    print(*values, sep=',')
 
 
 def _print_results_as_csv(results):
     if not results:
         return
 
-    metrics = list(results[0][1].keys())
+    first_m = results[0][1]
+    if isinstance(first_m, dict):
+        metrics = list(first_m.keys())
+    elif isinstance(first_m, list):
+        metrics = first_m[0].keys()
+    else:
+        raise RuntimeError("Unknown metrics format")
+
     header = f"ds,{','.join(metrics)}"
     print(header)
-    for ds, m in results:
-        values = list(m.values())
-        values = [ds] + [f"{v:.3f}" for v in values]
-        print(*values, sep=',')
+    for ds, maybe_list in results:
+        if isinstance(maybe_list, list):
+            for m in maybe_list:
+                _print_row(ds, m)
+        else:
+            _print_row(ds, maybe_list)
 
 
 def _print_results(results):
@@ -76,6 +96,11 @@ def eval_cli(conf: Config) -> None:
     if conf.eval_doc_matching:
         results = doc_matching_eval(conf.doc_matching, doc_encoder)
         logging.info("doc matching results")
+        printer(results)
+
+    if conf.eval_sent_retrieval:
+        results = sent_retrieval_eval(conf.sent_retrieval, doc_encoder)
+        logging.info("sent retrieval results")
         printer(results)
 
 

@@ -1,0 +1,17 @@
+---
+
+sim_kind: COS
+ds_base_dir: /eval/datasets/sents
+datasets:
+  - name: essay1-dev
+    meta: essay1/dev.gold
+    sents: essay1/dev
+  - name: essay1-test
+    meta: essay1/test.gold
+    sents: essay1/test
+  - name: essay2-dev
+    meta: essay2/dev.gold
+    sents: essay2/dev
+  - name: essay2-test
+    meta: essay2/test.gold
+    sents: essay2/test

@@ -5,4 +5,5 @@ defaults:
   - doc_encoder: basic
   - doc_matching: full
   - doc_retrieval: full
+  - sent_retrieval: full
   - _self_
