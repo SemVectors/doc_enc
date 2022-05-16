@@ -7,7 +7,7 @@ from pathlib import Path
 import csv
 import random
 
-import torch
+import scipy.spatial.distance as scipy_dist
 
 from doc_enc.eval.eval_utils import paths_from_ids
 from doc_enc.doc_encoder import DocEncoder
@@ -80,7 +80,6 @@ def _calc_metrics(threshold, gold, inv_idx, doc_embs):
     total = 0
     good = 0
     not_found = 0
-    Cos = torch.nn.CosineSimilarity(dim=0)
 
     for src_id, tgt_id, label in gold:
         src_i = inv_idx.get(src_id)
@@ -91,7 +90,7 @@ def _calc_metrics(threshold, gold, inv_idx, doc_embs):
         if tgt_i is None:
             not_found += 1
             continue
-        sim = Cos(doc_embs[src_i], doc_embs[tgt_i]).item()
+        sim = 1.0 - scipy_dist.cosine(doc_embs[src_i], doc_embs[tgt_i])
 
         computed_label = 0
         if sim > threshold:
@@ -119,7 +118,7 @@ def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
     logging.info("encoding %s documents", len(paths))
     doc_embs = doc_encoder.encode_docs_from_path_list(paths)
     assert len(doc_embs) == len(paths)
-    logging.info("Shape of computed embs: %s", doc_embs.size())
+    logging.info("Shape of computed embs: %s", doc_embs.shape)
 
     inv_idx = {}
     for i, p in enumerate(paths):
@@ -128,13 +127,14 @@ def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
         inv_idx[p.name] = i
 
     if conf.choose_threshold:
-        results = []
+        results = {}
         for t in range(2, 9):
             t = t / 10
-            m = _calc_metrics(t, gold, inv_idx, doc_embs)
-            results.append((t, m))
+            acc = _calc_metrics(t, gold, inv_idx, doc_embs)
+            results[f"thr_{t}_acc"] = acc
         return results
-    return _calc_metrics(conf.threshold, meta_path, inv_idx, doc_embs)
+    acc = _calc_metrics(conf.threshold, meta_path, inv_idx, doc_embs)
+    return {"acc": acc}
 
 
 def doc_matching_eval(conf: DocMatchingConf, doc_encoder: DocEncoder):

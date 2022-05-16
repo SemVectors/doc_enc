@@ -130,6 +130,7 @@ def _make_keys_dict(text_dir: Path, paths):
 
 def _add_docs_from_other_dir(dsconf: DatasetConf, other_text_dir: Path, other_keys):
     all_other_paths = list(f for f in other_text_dir.iterdir() if f.is_file())
+    all_other_paths.sort()
     if dsconf.other_texts_limit:
         other_keys_set = frozenset(other_keys)
         for p in all_other_paths:
