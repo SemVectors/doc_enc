@@ -24,7 +24,7 @@ class SentRetrievalConf:
     enabled_ds: List = dataclasses.field(default_factory=list)
 
     sim_kind: SimKind = SimKind.COS
-    topk: List[int] = dataclasses.field(default_factory=lambda: [1, 5, 10, 20])
+    topk: List[int] = dataclasses.field(default_factory=lambda: [1, 20])
     thresholds: List[float] = dataclasses.field(default_factory=lambda: [0.4, 0.5, 0.6, 0.7, 0.8])
 
     use_gpu: Optional[int] = None

@@ -19,7 +19,7 @@ from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.tokenizer import TokenizerConf
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 
-from doc_enc.training.trainer import Trainer, TrainerConf
+from doc_enc.training.trainer import Trainer, TrainerConf, OptimConf
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
 from doc_enc.encoders.enc_config import SentEncoderConf, EmbSeqEncoderConf
 
@@ -45,9 +45,8 @@ cs.store(name="base_config", node=Config)
 cs.store(name="base_text_processor_config", group="text_proc", node=TextProcessorConf)
 cs.store(name="base_tokenizer_config", group="text_proc/tokenizer", node=TokenizerConf)
 cs.store(name="base_batches_config", group="batches", node=BatchIteratorConf)
-# cs.store(name="base_sent_batches_config", group="batches/sent", node=SentsBatchIteratorConf)
-# cs.store(name="base_doc_batches_config", group="batches/doc", node=DocsBatchIteratorConf)
 cs.store(name="base_trainer_config", group="trainer", node=TrainerConf)
+cs.store(name="base_optim_config", group="trainer/optim", node=OptimConf)
 cs.store(name="base_model_config", group="model", node=DocModelConf)
 cs.store(name="base_sent_model_config", group="model/sent", node=SentModelConf)
 cs.store(name="base_sent_encoder_config", group="model/sent/encoder", node=SentEncoderConf)

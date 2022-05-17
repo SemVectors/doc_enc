@@ -1,0 +1,9 @@
+---
+
+defaults:
+  - base_optim_config
+
+lr_scheduler: NONE
+optim_kind: ADAM
+
+common_lr: 0.006

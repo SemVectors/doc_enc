@@ -1,8 +1,11 @@
+---
+
 defaults:
   - base_trainer_config
 
+
 switch_tasks_every: 50
-max_updates: 300_000
+max_updates: 10_000
 eval_every: 3_000
 checkpoint_every: 5_000
 debug_iters:
@@ -10,6 +13,4 @@ debug_iters:
   - 1020
 
 
-lr: 0.006
-final_lr: 0.0006
 max_grad_norm: 5.0

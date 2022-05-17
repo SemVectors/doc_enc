@@ -3,7 +3,8 @@
 import os
 import datetime
 import contextlib
-from typing import List
+from enum import Enum
+from typing import Any, List, Optional, Dict
 import dataclasses
 import json
 from pathlib import Path
@@ -15,7 +16,7 @@ from omegaconf import MISSING
 import torch
 import torch.distributed as dist
 
-from torch.distributed.optim.zero_redundancy_optimizer import ZeroRedundancyOptimizer as ZeRO
+from torch.distributed.optim.zero_redundancy_optimizer import ZeroRedundancyOptimizer as ZeRoOptim
 from torch.nn.utils.clip_grad import clip_grad_norm_
 
 from torch.cuda.amp.grad_scaler import GradScaler
@@ -32,6 +33,40 @@ from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.metrics import create_metrics
 
 
+class LRSchedulerKind(Enum):
+    NONE = 0
+    LINEAR = 1
+    MULT = 2
+    CYCLIC = 3
+    ONE_CYCLE = 4
+
+
+class OptimKind(Enum):
+    SGD = 1
+    ADAM = 2
+
+
+@dataclasses.dataclass
+class OptimConf:
+    optim_kind: OptimKind = OptimKind.ADAM
+    # SGD opts
+    momentum: float = 0.9
+    use_zero_optim: bool = True
+
+    # LR
+    common_lr: float = MISSING
+    sent_lr: Optional[float] = None
+    fragment_lr: Optional[float] = None
+    doc_lr: Optional[float] = None
+
+    lr_scheduler: LRSchedulerKind = LRSchedulerKind.NONE
+    lr_scheduler_kwargs: Dict = dataclasses.field(default_factory=dict)
+    final_common_lr: float = 0.0
+    final_sent_lr: Optional[float] = None
+    final_fragment_lr: Optional[float] = None
+    final_doc_lr: Optional[float] = None
+
+
 @dataclasses.dataclass
 class TrainerConf:
     tasks: List[TaskType] = dataclasses.field(default_factory=list)
@@ -41,10 +76,8 @@ class TrainerConf:
     max_updates: int = MISSING
     switch_tasks_every: int = 10
 
-    lr: float = MISSING
-    warmup_updates: int = 1
-    warmup_init_lr: float = -1.0
-    final_lr: float = -1.0
+    optim: OptimConf = MISSING
+
     resume_snapshot: str = ''
     emb_grad_scale: float = 0.0
     max_grad_norm: float = 0.0
@@ -56,91 +89,108 @@ class TrainerConf:
     print_batches: bool = False
 
 
-# from fairseq
-class InverseSquareRootSchedule:
-    def __init__(self, opts: TrainerConf, optimizer):
+def _create_lr_scheduler(conf: TrainerConf, optimizer):
+    optim_conf = conf.optim
+    if optim_conf.lr_scheduler == LRSchedulerKind.NONE:
+        return None
+    approx_iters = conf.max_updates // conf.switch_tasks_every
+    gr_num = len(optimizer.param_groups)
+    max_lr, base_lr = _create_lr_lists(optim_conf, gr_num)
+    if optim_conf.lr_scheduler == LRSchedulerKind.MULT:
+        return torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1, end_factor=1 / 3, total_iters=approx_iters
+        )
+    if optim_conf.lr_scheduler == LRSchedulerKind.LINEAR:
+        return LinearLRSchedule(optim_conf, optimizer, approx_iters)
+
+    if optim_conf.lr_scheduler == LRSchedulerKind.CYCLIC:
+        return torch.optim.lr_scheduler.CyclicLR(
+            optimizer, base_lr, max_lr, **optim_conf.lr_scheduler_kwargs
+        )
+    if optim_conf.lr_scheduler == LRSchedulerKind.ONE_CYCLE:
+        return torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr, total_steps=approx_iters, **optim_conf.lr_scheduler_kwargs
+        )
+
+    raise RuntimeError(f"Unknown lr scheduler: {optim_conf.lr_scheduler}")
+
+
+def _create_optimizer(conf: OptimConf, model, world_size):
+    param_groups = [
+        {
+            'params': model.sent_model.encoder.parameters(),
+            'lr': conf.common_lr if conf.sent_lr is None else conf.sent_lr,
+        },
+        {
+            'params': model.doc_encoder.parameters(),
+            'lr': conf.common_lr if conf.doc_lr is None else conf.doc_lr,
+        },
+    ]
+    if model.frag_encoder is not None:
+        param_groups.append(
+            {
+                'params': model.frag_encoder.parameters(),
+                'lr': conf.common_lr if conf.fragment_lr is None else conf.fragment_lr,
+            }
+        )
+
+    if conf.optim_kind == OptimKind.ADAM:
+        # TODO ZeRoOptim does not support param_groups in 1.11
+        # Its fixed in 1.12
+        if world_size > 1 and conf.use_zero_optim:
+            return ZeRoOptim(model.parameters(), torch.optim.Adam, lr=conf.common_lr)
+        return torch.optim.Adam(param_groups, lr=conf.common_lr)
+    if conf.optim_kind == OptimKind.SGD:
+        return torch.optim.SGD(param_groups, lr=conf.common_lr, momentum=conf.momentum)
+
+    raise RuntimeError(f"Unsupported optim kind: {conf.optim_kind}")
+
+
+def _create_lr_lists(conf: OptimConf, optim_group_num):
+    def _v(v, d):
+        return v if v is not None else d
+
+    if optim_group_num == 1:
+        # its only common lr
+        final_lr = [conf.final_common_lr]
+        lr = [conf.common_lr]
+    elif 1 < optim_group_num < 4:
+        final_lr = [
+            _v(conf.final_sent_lr, conf.final_common_lr),
+            _v(conf.final_doc_lr, conf.final_common_lr),
+        ]
+        lr = [_v(conf.sent_lr, conf.common_lr), _v(conf.doc_lr, conf.common_lr)]
+        if optim_group_num == 3:
+            final_lr.append(_v(conf.final_fragment_lr, conf.final_common_lr))
+            lr.append(_v(conf.fragment_lr, conf.common_lr))
+
+    else:
+        raise RuntimeError(f"Unsupported # of param groups: {optim_group_num}")
+
+    return lr, final_lr
+
+
+class LinearLRSchedule(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, opts: OptimConf, optimizer, total_iters, last_epoch=-1, verbose=False):
+        super().__init__(optimizer, last_epoch=last_epoch, verbose=verbose)
+
         self._opts = opts
-        self._optimizer = optimizer
 
-        if opts.warmup_updates <= 0:
-            raise RuntimeError("set warmup_updates > 0")
-        self._decay_factor = opts.lr * opts.warmup_updates**0.5
-
-        # initial learning rate
-        if opts.warmup_init_lr >= 0:
-            self._lr_warmup_step = (opts.lr - opts.warmup_init_lr) / opts.warmup_updates
-            self._lr = opts.warmup_init_lr
-        else:
-            self._lr_warmup_step = 0.0
-            self._lr = opts.lr
-
-        self._set_lr()
-
-    def _set_lr(self):
-        for param_group in self._optimizer.param_groups:
-            param_group["lr"] = self._lr
+        b = self.base_lrs
+        _, self._final_lrs = _create_lr_lists(opts, len(b))
+        self._steps = [(l - f) / total_iters for l, f in zip(b, self._final_lrs)]
+        logging.info("step lrs: %s", self._steps)
 
     def get_lr(self):
-        return self._lr
+        if not self._get_lr_called_within_step:
+            logging.warning(
+                "To get the last learning rate computed by the scheduler, "
+                "please use `get_last_lr()`."
+            )
+        if self.last_epoch == 0:
+            return [group['lr'] for group in self.optimizer.param_groups]
 
-    def step(self, epoch, val_loss=None):
-        """Update the learning rate at the end of the given epoch."""
-
-    def step_update(self, num_updates):
-        """Update the learning rate after each update."""
-        if num_updates < self._opts.warmup_updates:
-            if self._lr_warmup_step:
-                self._lr = self._opts.warmup_init_lr + num_updates * self._lr_warmup_step
-                self._set_lr()
-            return self._lr
-
-        self._lr = self._decay_factor * num_updates**-0.5
-        self._set_lr()
-        return self._lr
-
-    def state_dict(self):
-        return {'lr': self._lr}
-
-    def load_state_dict(self, d):
-        self._lr = d['lr']
-
-
-class LinearLRSchedule:
-    def __init__(self, opts: TrainerConf, optimizer):
-        self._opts = opts
-        self._optimizer = optimizer
-        self._lr = opts.lr
-        self._set_lr()
-        self._step = (self._lr - opts.final_lr) / (opts.max_updates - opts.warmup_updates)
-        logging.info("step lr: %e", self._step)
-        self._last_update = 0
-
-    def _set_lr(self):
-        for param_group in self._optimizer.param_groups:
-            param_group["lr"] = self._lr
-
-    def get_lr(self):
-        return self._lr
-
-    def step(self, epoch, val_loss=None):
-        """Update the learning rate at the end of the given epoch."""
-
-    def step_update(self, num_updates):
-        """Update the learning rate after each update."""
-        if num_updates < self._opts.warmup_updates:
-            return self._lr
-        self._lr -= (num_updates - self._last_update) * self._step
-        self._last_update = num_updates
-        self._set_lr()
-        return self._lr
-
-    def state_dict(self):
-        return {'lr': self._lr, 'step': self._step, 'last_update': self._last_update}
-
-    def load_state_dict(self, d):
-        self._lr = d['lr']
-        self._step = d['step']
-        self._last_update = d['last_update']
+        return [group['lr'] - s for group, s in zip(self.optimizer.param_groups, self._steps)]
 
 
 def _init_dist_default_group(rank, world_size, port='29500'):
@@ -204,14 +254,9 @@ class Trainer:
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
         self._doc_retr_criterion = torch.nn.CrossEntropyLoss()
 
-        if world_size > 1:
-            self._optimizer = ZeRO(self._model.parameters(), torch.optim.Adam)
-        else:
-            self._optimizer = torch.optim.Adam(self._model.parameters())
-        if opts.final_lr != -1.0:
-            self._scheduler = LinearLRSchedule(opts, self._optimizer)
-        else:
-            self._scheduler = InverseSquareRootSchedule(opts, self._optimizer)
+        self._optimizer = _create_optimizer(opts.optim, self._local_model, world_size)
+
+        self._scheduler = _create_lr_scheduler(opts, self._optimizer)
         self._scaler = GradScaler(enabled=amp)
         self._num_updates = 1
         self._best_metric = 0.0
@@ -506,6 +551,13 @@ class Trainer:
         dist.reduce(t, 0, op=dist.ReduceOp.SUM, group=self._cpu_group)
         return {k: create_metrics(k, v) for k, v in zip(tasks, t.tolist())}
 
+    def _format_lr(self):
+        if self._scheduler is None:
+            return '-'
+        lrs = self._scheduler.get_last_lr()
+        lrstr = ','.join(f"{l:.4e}" for l in lrs)
+        return f"[{lrstr}]"
+
     def _train_epoch(self, epoch, train_iter: BatchIterator, dev_iter: BatchIterator):
         epoch_updates = 1
         running_metrics = {}
@@ -520,16 +572,25 @@ class Trainer:
 
         _reset()
 
+        join_modules: List[Any] = [self._model]
+        if isinstance(self._optimizer, ZeRoOptim):
+            join_modules.append(self._optimizer)
+
         while True:
             task = train_iter.current_task()
             logging.debug("current task is %s", task)
             gen = train_iter.batches(self._opts.switch_tasks_every)
-            with self._uneven_input_handling([self._model, self._optimizer]):
+            with self._uneven_input_handling(join_modules):
                 metrics = self._process_task_batches(task, gen)
 
             epoch_updates += metrics.updates_num()
             epoch_updates = self._sync_epoch_updates(epoch_updates)
-            self._scheduler.step_update(self._num_updates)
+
+            if self._num_updates >= self._opts.max_updates:
+                break
+
+            if self._scheduler is not None:
+                self._scheduler.step()
 
             running_metrics[task] += metrics
 
@@ -543,11 +604,11 @@ class Trainer:
                         sm += f"\nTask: {tstr} #up: {m.updates_num()/self._world_size}{m}"
 
                     logging.info(
-                        "#%d %d/%d, lr %.4e%s",
+                        "#%d %d/%d, lr %s%s",
                         self._num_updates,
                         epoch,
                         epoch_updates,
-                        self._scheduler.get_lr(),
+                        self._format_lr(),
                         sm,
                     )
                 _reset()
@@ -575,7 +636,9 @@ class Trainer:
         state = torch.load(self._opts.resume_snapshot, map_location=self._device)
         self._num_updates = state['num_updates']
         self._optimizer.load_state_dict(state['optimizer'])
-        self._scheduler.load_state_dict(state['scheduler'])
+        if self._scheduler is not None:
+            self._scheduler.load_state_dict(state['scheduler'])
+        self._scaler.load_state_dict(state['scaler'])
         self._best_metric = state['best_metric']
         self._model.load_state_dict(state['model'])
         if isinstance(self._model, DDP):
@@ -587,21 +650,23 @@ class Trainer:
 
     def _save_checkpoint(self, epoch):
         snapshot_path = Path(self._opts.save_path) / f'checkpoint_{epoch}_{self._num_updates}.pt'
-        if self._world_size > 1:
+        if isinstance(self._optimizer, ZeRoOptim):
             self._optimizer.consolidate_state_dict(to=0)
         if self._rank == 0:
             logging.info("Saving new checkpoint")
-            torch.save(
-                {
-                    'num_updates': self._num_updates,
-                    'epoch': epoch,
-                    'model': self._model.state_dict(),
-                    'optimizer': self._optimizer.state_dict(),
-                    'scheduler': self._scheduler.state_dict(),
-                    'best_metric': self._best_metric,
-                },
-                snapshot_path,
-            )
+
+            state_dict = {
+                'num_updates': self._num_updates,
+                'epoch': epoch,
+                'model': self._model.state_dict(),
+                'optimizer': self._optimizer.state_dict(),
+                'scaler': self._scaler.state_dict(),
+                'best_metric': self._best_metric,
+            }
+            if self._scheduler is not None:
+                state_dict['scheduler'] = self._scheduler.state_dict()
+
+            torch.save(state_dict, snapshot_path)
 
     def _eval_on_dev(self, epoch, dev_iter: BatchIterator):
         with torch.no_grad():

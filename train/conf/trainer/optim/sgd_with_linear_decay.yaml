@@ -1,0 +1,11 @@
+---
+
+lr_scheduler: LINEAR
+optim_kind: SGD
+
+common_lr: 0.006
+sent_lr: 0.001
+doc_lr: 0.06
+final_common_lr: 0.0009
+final_sent_lr: 0.0001
+final_doc_lr: 0.006
