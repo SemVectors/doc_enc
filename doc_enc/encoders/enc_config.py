@@ -16,6 +16,7 @@ class BaseEncoderConf:
     num_layers: int
     dropout: float
     pooling_strategy: PoolingStrategy
+    output_size: Optional[int] = None
 
     # lstm opts
     input_size: Optional[int] = None

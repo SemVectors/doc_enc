@@ -34,7 +34,7 @@ def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer):
     else:
         raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 
-    return SentEncoder(embed, encoder)
+    return SentEncoder(conf, embed, encoder)
 
 
 def create_emb_seq_encoder(conf: EmbSeqEncoderConf, sent_layer_output_size):

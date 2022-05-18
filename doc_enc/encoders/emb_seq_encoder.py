@@ -5,6 +5,7 @@ from typing import Optional
 
 import torch
 from torch import nn
+from torch.nn.functional import dropout
 
 from doc_enc.encoders.enc_config import EmbSeqEncoderConf
 
@@ -14,12 +15,21 @@ class EmbSeqEncoder(nn.Module):
         super().__init__()
         self.conf = conf
         self.encoder = encoder
+        self.output_size = (
+            conf.output_size if conf.output_size is not None else self.encoder.out_embs_dim()
+        )
 
         input_size = conf.input_size if conf.input_size is not None else conf.hidden_size
 
         self.emb_to_hidden_mapping = None
         if prev_output_size != input_size:
             self.emb_to_hidden_mapping = nn.Linear(prev_output_size, input_size)
+
+        self.hidden_to_output_mapping = None
+        self.hidden_dropout = None
+        if self.output_size != self.encoder.out_embs_dim():
+            self.hidden_dropout = nn.Dropout(conf.dropout)
+            self.hidden_to_output_mapping = nn.Linear(self.encoder.out_embs_dim(), self.output_size)
 
         self._beg_seq_param = None
         if conf.add_beg_seq_token:
@@ -29,7 +39,16 @@ class EmbSeqEncoder(nn.Module):
         # self._end_seq_param = None
 
     def out_embs_dim(self):
-        return self.encoder.out_embs_dim()
+        return self.output_size
+
+    def _post_proc_enc_results(self, enc_result_dict):
+        if self.hidden_to_output_mapping and self.hidden_dropout:
+            embs = enc_result_dict.get('pooled_out')
+            if embs is None:
+                raise RuntimeError("pooled_out field was not found")
+            embs = self.hidden_dropout(embs)
+            enc_result_dict['pooled_out'] = self.hidden_to_output_mapping(embs)
+        return enc_result_dict
 
     def forward(self, sent_embs, lengths, padded_seq_len: Optional[int] = None, **kwargs):
         if self.emb_to_hidden_mapping is not None:
@@ -66,4 +85,5 @@ class EmbSeqEncoder(nn.Module):
         if extra_len:
             len_tensor += extra_len
         seqs_tensor = padded_seq.reshape(len(lengths), max_len, emb_sz)
-        return self.encoder(seqs_tensor, len_tensor, **kwargs)
+        enc_result_dict = self.encoder(seqs_tensor, len_tensor, **kwargs)
+        return self._post_proc_enc_results(enc_result_dict)
