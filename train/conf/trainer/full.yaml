@@ -5,12 +5,9 @@ defaults:
 
 
 switch_tasks_every: 50
-max_updates: 10_000
+max_updates: 50_000
 eval_every: 3_000
 checkpoint_every: 5_000
 debug_iters:
   - 1000
   - 1020
-
-
-max_grad_norm: 5.0
