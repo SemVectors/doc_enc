@@ -15,7 +15,7 @@ from doc_enc.training.models.doc_dual_enc import DocDualEncoder
 def _create_sent_model(conf: SentModelConf, vocab: AbcTokenizer):
     if conf.kind == ModelKind.DUAL_ENC:
         encoder = create_sent_encoder(conf.encoder, vocab)
-        model = SentDualEncoder(conf, encoder, pad_idx=vocab.pad_idx())
+        model = SentDualEncoder(conf, encoder)
         return model
     raise RuntimeError(f"Unknown model kind {conf.kind}")
 
@@ -36,10 +36,9 @@ def create_model(conf: DocModelConf, vocab: AbcTokenizer):
     if conf.kind == ModelKind.DUAL_ENC:
         model = DocDualEncoder(
             conf,
-            sent_model,
-            frag_encoder=frag_encoder,
+            sent_model=sent_model,
             doc_encoder=doc_encoder,
-            pad_idx=vocab.pad_idx(),
+            frag_encoder=frag_encoder,
         )
         return model
     raise RuntimeError(f"Unknown doc model kind {conf.kind}")

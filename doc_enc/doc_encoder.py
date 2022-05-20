@@ -188,27 +188,29 @@ class DocEncoder:
 
         logging.debug("doc layer\n:%s", self._doc_layer)
 
+    def _make_sent_tensor(self, cnt, max_len, sents):
+        sent_tensor = torch.full((cnt, max_len), self._tp.vocab().pad_idx(), dtype=torch.int32)
+        for i, sent in enumerate(sents):
+            sent_tensor[i, 0 : len(sent)] = torch.as_tensor(sent)
+        return sent_tensor
+
     def _encode_sents_impl(self, sents):
         cnt = len(sents)
         sent_lengths = [len(t) for t in sents]
-        sent_lengths = torch.as_tensor(sent_lengths, dtype=torch.int64, device=self._device)
+        lengths_tensor = torch.as_tensor(sent_lengths, dtype=torch.int64, device=self._device)
+        sent_tensor = self._make_sent_tensor(cnt, max(sent_lengths), sents)
+        sent_tensor = sent_tensor.to(device=self._device)
+
         if cnt > self._conf.max_sents:
             return split_sents_and_embed(
                 self._sent_layer,
-                sents,
-                sent_lengths,
+                sent_tensor,
+                lengths_tensor,
                 self._conf.max_sents,
-                pad_idx=self._tp.vocab().pad_idx(),
             )
 
-        max_len = len(max(sents, key=len))
-        sent_tensor = torch.full((cnt, max_len), self._tp.vocab().pad_idx(), dtype=torch.int32)
-        for i in range(cnt):
-            sent_tensor[i, 0 : len(sents[i])] = torch.as_tensor(sents[i])
-
-        sent_tensor = sent_tensor.to(device=self._device)
-
-        sent_embs = self._sent_layer(sent_tensor, sent_lengths, enforce_sorted=False)['pooled_out']
+        res = self._sent_layer(sent_tensor, lengths_tensor, enforce_sorted=False)
+        sent_embs = res.pooled_out
         return sent_embs
 
     def _encode_docs_impl(self, docs, doc_fragments):
@@ -224,12 +226,12 @@ class DocEncoder:
                 frag_len.extend(fragments)
                 len_list.append(len(fragments))
 
-            embs = self._fragment_layer(sent_embs, frag_len, enforce_sorted=False)['pooled_out']
+            embs = self._fragment_layer(sent_embs, frag_len, enforce_sorted=False).pooled_out
         else:
             embs = sent_embs
             len_list = [len(d) for d in docs]
 
-        doc_embs = self._doc_layer(embs, len_list, enforce_sorted=False)['pooled_out']
+        doc_embs = self._doc_layer(embs, len_list, enforce_sorted=False).pooled_out
         return doc_embs
 
     def _encode_docs(self, docs, doc_fragments):

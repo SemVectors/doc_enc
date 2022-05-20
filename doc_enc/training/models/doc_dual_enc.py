@@ -8,33 +8,27 @@ from torch import nn
 import torch.nn.functional as F
 
 from doc_enc.training.models.model_conf import DocModelConf
-from doc_enc.training.types import TaskType, DocsBatch
+from doc_enc.training.types import DocsBatch
 from doc_enc.encoders.sent_encoder import split_sents_and_embed
 
 
 class DocDualEncoder(nn.Module):
-    def __init__(
-        self, conf: DocModelConf, sent_model, doc_encoder, frag_encoder=None, pad_idx=None
-    ):
+    def __init__(self, conf: DocModelConf, sent_model, doc_encoder, frag_encoder=None):
         super().__init__()
         self.conf = conf
         self.sent_model = sent_model
         self.doc_encoder = doc_encoder
         self.frag_encoder = frag_encoder
-        self.pad_idx = pad_idx
 
     def _embed_sents(self, sents, sent_len):
-        if not self.conf.split_sents:
-            embeddings = self.sent_model.encoder(sents, sent_len, enforce_sorted=False)[
-                'pooled_out'
-            ]
-            return embeddings
+        if not self.conf.split_sents or len(sents) < self.conf.split_size:
+            res = self.sent_model.encoder(sents, sent_len, enforce_sorted=False)
+            return res.pooled_out
         return split_sents_and_embed(
             self.sent_model.encoder,
             sents,
             sent_len,
             split_size=self.conf.split_size,
-            pad_idx=self.pad_idx,
         )
 
     def _embed_fragments(self, sent_embs, frag_len, padded_seq_len):
@@ -42,14 +36,14 @@ class DocDualEncoder(nn.Module):
             raise RuntimeError("Logic error")
         frag_embs = self.frag_encoder(
             sent_embs, frag_len, padded_seq_len=padded_seq_len, enforce_sorted=False
-        )['pooled_out']
+        ).pooled_out
         assert len(frag_embs) == len(frag_len)
         return frag_embs
 
     def _embed_docs(self, embs, len_list, padded_seq_len):
         doc_embs = self.doc_encoder(
             embs, len_list, padded_seq_len=padded_seq_len, enforce_sorted=False
-        )['pooled_out']
+        ).pooled_out
         assert len(doc_embs) == len(len_list)
         return doc_embs
 
@@ -96,9 +90,5 @@ class DocDualEncoder(nn.Module):
             return m * self.conf.scale
         return m
 
-    def forward(self, task, batch, labels):
-        if task == TaskType.SENT_RETR:
-            return self.sent_model(batch)
-        if task == TaskType.DOC_RETR:
-            return self._forward_doc_task(batch, labels)
-        raise RuntimeError(f"Unknown task {task}")
+    def forward(self, batch, labels):
+        return self._forward_doc_task(batch, labels)

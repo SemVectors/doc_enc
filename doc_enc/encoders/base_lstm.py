@@ -7,6 +7,7 @@ from torch import nn
 
 from doc_enc.common_types import PoolingStrategy
 from doc_enc.encoders.enc_config import BaseEncoderConf
+from doc_enc.encoders.enc_out import BaseEncoderOut
 
 
 class BaseLSTMEncoder(nn.Module):
@@ -35,7 +36,7 @@ class BaseLSTMEncoder(nn.Module):
     def out_embs_dim(self):
         return self.output_units
 
-    def forward(self, embs, lengths, enforce_sorted=True, token_types=None):
+    def forward(self, embs, lengths, enforce_sorted=True, token_types=None) -> BaseEncoderOut:
 
         bsz, seqlen = embs.size()[:2]
         # BS x SeqLen x Dim -> SeqLen x BS x DIM
@@ -58,13 +59,14 @@ class BaseLSTMEncoder(nn.Module):
         if self.conf.pooling_strategy == PoolingStrategy.MAX:
             # Build the sentence embedding by max-pooling over the encoder outputs
             sentemb = torch.max(x, dim=0)[0]
+
         elif self.conf.pooling_strategy == PoolingStrategy.MEAN:
             sum_embeddings = torch.sum(x, dim=0)
             sentemb = sum_embeddings / lengths.unsqueeze(-1).to(sum_embeddings.device)
         else:
             raise RuntimeError("Logic error ps_lstm")
 
-        return {'pooled_out': sentemb, 'encoder_out': x, 'out_lengths': out_lengths}
+        return BaseEncoderOut(sentemb, x, out_lengths)
 
 
 class LSTMEncoder(BaseLSTMEncoder):

@@ -237,18 +237,28 @@ class Trainer:
             self._cpu_group = dist.new_group(
                 backend='gloo', timeout=datetime.timedelta(minutes=timeout)
             )
-            self._model = DDP(
+            self._sent_model = DDP(
+                self._local_model.sent_model,
+                device_ids=[rank],
+                output_device=rank,
+                bucket_cap_mb=100,
+                find_unused_parameters=False,
+                static_graph=False,
+            )
+            self._doc_model = DDP(
                 self._local_model,
                 device_ids=[rank],
                 output_device=rank,
-                bucket_cap_mb=200,
-                find_unused_parameters=True,
+                bucket_cap_mb=100,
+                find_unused_parameters=False,
+                static_graph=False,
             )
             self._uneven_input_handling = Join
         else:
             logging.info("Skip creating DistributedDataParallel since world size == 1")
             self._cpu_group = None
-            self._model = self._local_model
+            self._doc_model = self._local_model
+            self._sent_model = self._local_model.sent_model
             self._uneven_input_handling = contextlib.nullcontext
 
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
@@ -484,11 +494,25 @@ class Trainer:
                     wgrad *= self._opts.emb_grad_scale
 
             if self._opts.max_grad_norm:
-                clip_grad_norm_(self._model.parameters(), self._opts.max_grad_norm)
+                if task == TaskType.SENT_RETR:
+                    params = self._sent_model.parameters()
+                else:
+                    params = self._doc_model.parameters()
+                clip_grad_norm_(params, self._opts.max_grad_norm)
 
         self._scaler.step(self._optimizer)
         self._scaler.update()
         self._optimizer.zero_grad()
+
+    def _run_forward(self, task, batch, labels):
+
+        if task == TaskType.SENT_RETR:
+            output = self._sent_model(batch)
+        elif task == TaskType.DOC_RETR:
+            output = self._doc_model(batch, labels)
+        else:
+            raise RuntimeError("Logic error 89837")
+        return output
 
     def _process_task_batches(self, task, task_batches):
         running_metrics = create_metrics(task)
@@ -497,7 +521,9 @@ class Trainer:
 
             # forward pass
             with autocast(enabled=self._amp_enabled):
-                output = self._model(task, batch, labels)
+                output = self._run_forward(task, batch, labels)
+
+                # output = self._model(batch, labels)
                 logging.debug("output of model shape: %s", output.size())
                 # output size is bsz x tgt_size for retrieval task
                 loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
@@ -564,7 +590,6 @@ class Trainer:
         last_log_update = 0
         last_eval_update = 0
         last_checkpoint_update = 0
-        self._model.train()
 
         def _reset():
             nonlocal running_metrics
@@ -572,14 +597,21 @@ class Trainer:
 
         _reset()
 
-        join_modules: List[Any] = [self._model]
-        if isinstance(self._optimizer, ZeRoOptim):
-            join_modules.append(self._optimizer)
-
         while True:
             task = train_iter.current_task()
             logging.debug("current task is %s", task)
             gen = train_iter.batches(self._opts.switch_tasks_every)
+
+            join_modules = []
+            if task == TaskType.SENT_RETR:
+                self._sent_model.train()
+                join_modules.append(self._sent_model)
+            else:
+                self._doc_model.train()
+                join_modules.append(self._doc_model)
+            if isinstance(self._optimizer, ZeRoOptim):
+                join_modules.append(self._optimizer)
+
             with self._uneven_input_handling(join_modules):
                 metrics = self._process_task_batches(task, gen)
 
@@ -619,9 +651,7 @@ class Trainer:
 
             if epoch_updates - last_eval_update >= self._opts.eval_every:
                 last_eval_update = epoch_updates
-
                 self._eval_and_save(epoch, dev_iter)
-                self._model.train()
 
             if self._sync_quiting(train_iter.empty()):
                 break
@@ -640,11 +670,13 @@ class Trainer:
             self._scheduler.load_state_dict(state['scheduler'])
         self._scaler.load_state_dict(state['scaler'])
         self._best_metric = state['best_metric']
-        self._model.load_state_dict(state['model'])
-        if isinstance(self._model, DDP):
-            self._local_model = self._model.module
+        self._doc_model.load_state_dict(state['model'])
+        if isinstance(self._doc_model, DDP):
+            self._local_model = self._doc_model.module
+            self._sent_model.module = self._local_model.sent_model
         else:
-            self._local_model = self._model
+            self._local_model = self._doc_model
+            self._sent_model = self._local_model.sent_model
 
         return state['epoch']
 
@@ -658,7 +690,7 @@ class Trainer:
             state_dict = {
                 'num_updates': self._num_updates,
                 'epoch': epoch,
-                'model': self._model.state_dict(),
+                'model': self._doc_model.state_dict(),
                 'optimizer': self._optimizer.state_dict(),
                 'scaler': self._scaler.state_dict(),
                 'best_metric': self._best_metric,

@@ -4,10 +4,11 @@ import logging
 from typing import Optional
 
 import torch
+import torch.utils.checkpoint
 from torch import nn
-from torch.nn.functional import dropout
 
 from doc_enc.encoders.enc_config import EmbSeqEncoderConf
+from doc_enc.encoders.enc_out import BaseEncoderOut
 
 
 class EmbSeqEncoder(nn.Module):
@@ -41,14 +42,12 @@ class EmbSeqEncoder(nn.Module):
     def out_embs_dim(self):
         return self.output_size
 
-    def _post_proc_enc_results(self, enc_result_dict):
+    def _post_proc_enc_results(self, enc_result: BaseEncoderOut):
         if self.hidden_to_output_mapping and self.hidden_dropout:
-            embs = enc_result_dict.get('pooled_out')
-            if embs is None:
-                raise RuntimeError("pooled_out field was not found")
+            embs = enc_result.pooled_out
             embs = self.hidden_dropout(embs)
-            enc_result_dict['pooled_out'] = self.hidden_to_output_mapping(embs)
-        return enc_result_dict
+            return enc_result._replace(pooled_out=self.hidden_to_output_mapping(embs))
+        return enc_result
 
     def forward(self, sent_embs, lengths, padded_seq_len: Optional[int] = None, **kwargs):
         if self.emb_to_hidden_mapping is not None:
@@ -85,5 +84,6 @@ class EmbSeqEncoder(nn.Module):
         if extra_len:
             len_tensor += extra_len
         seqs_tensor = padded_seq.reshape(len(lengths), max_len, emb_sz)
-        enc_result_dict = self.encoder(seqs_tensor, len_tensor, **kwargs)
-        return self._post_proc_enc_results(enc_result_dict)
+        enc_result = self.encoder(seqs_tensor, len_tensor, **kwargs)
+
+        return self._post_proc_enc_results(enc_result)
