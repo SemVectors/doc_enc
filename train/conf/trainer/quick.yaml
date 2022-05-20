@@ -5,11 +5,8 @@ defaults:
 
 
 switch_tasks_every: 50
-max_updates: 4_000
+max_updates: 3_100
 eval_every: 1_000
-checkpoint_every: 2_000
 debug_iters:
   - 1000
-  - 1020
-
-
+  - 1060

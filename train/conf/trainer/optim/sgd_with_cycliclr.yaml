@@ -3,11 +3,8 @@
 lr_scheduler: CYCLIC
 optim_kind: SGD
 
-common_lr: 0.006
-sent_lr: 0.001
-final_common_lr: 0.0009
-final_sent_lr: 0.0001
-final_doc_lr: 0.005
+common_lr: 0.001
+final_common_lr: 0.0001
 
 lr_scheduler_kwargs:
   step_size_up: 2000

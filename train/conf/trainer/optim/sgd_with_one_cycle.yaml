@@ -3,10 +3,10 @@
 defaults:
   - base_optim_config
 
-optim_kind: ADAM
+optim_kind: SGD
 
 common_lr: 0.001
 
 lr_scheduler: ONE_CYCLE
 lr_scheduler_kwargs:
-  cycle_momentum: false
+  cycle_momentum: true
