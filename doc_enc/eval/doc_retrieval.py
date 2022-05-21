@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 import dataclasses
 from pathlib import Path
 import csv
+import itertools
 
 import numpy as np
 
@@ -22,6 +23,7 @@ class DatasetConf:
     search_over_all_texts: bool = False
     other_texts_limit: int = 0
     extra_other_dir: Optional[str] = None
+    eval_for_len_groups: bool = False
 
 
 @dataclasses.dataclass
@@ -48,18 +50,18 @@ def _load_gold_data(meta_path, query_dir, query_data, other_dir, other_data):
         cur_src_id = ''
         cur_rel = []
         for row in reader:
-            src_id, _, tgt_id, _, label, *_ = row
+            src_id, _, tgt_id, _, label, *rest = row
             if int(label) != 1:
                 continue
             if src_id != cur_src_id:
                 if cur_rel:
-                    gold.append((query_inv_idx[_make_key(query_dir, cur_src_id)], cur_rel))
+                    gold.append((query_inv_idx[_make_key(query_dir, cur_src_id)], cur_rel, rest))
                 cur_src_id = src_id
                 cur_rel = []
             cur_rel.append(other_inv_idx[_make_key(other_dir, tgt_id)])
 
         if cur_rel:
-            gold.append((query_inv_idx[_make_key(query_dir, cur_src_id)], cur_rel))
+            gold.append((query_inv_idx[_make_key(query_dir, cur_src_id)], cur_rel, rest))
     return gold
 
 
@@ -76,7 +78,7 @@ def _calc_metrics(conf: DocRetrievalConf, sim_matrix, gold_data, query_data, oth
         found_rels = 0
         cum_ap = 0.0
         all_found_idxs = sim_matrix[:, : k + 1]
-        for query_idx, rel_idxs in gold_data:
+        for query_idx, rel_idxs, _ in gold_data:
             gold_rel = min(k, len(rel_idxs))
             found_rel = all_found_idxs[query_idx]
 
@@ -158,6 +160,30 @@ def paths_from_keys(base_dir: Path, key_list):
     return paths
 
 
+def _eval_each_group(conf, sim_matrix, gold_data, query_data, other_data):
+    all_group_metrics = []
+
+    if not gold_data:
+        return all_group_metrics
+    # check if gold data contain group info
+    rest = gold_data[0][-1]
+    if len(rest) != 3:
+        raise RuntimeError(f"expected that extra data contains 3 fields: {rest}")
+
+    key_func = lambda t: (t[-1][0], t[-1][2])
+    gold_data.sort(key=key_func)
+    for key, group in itertools.groupby(gold_data, key=key_func):
+        group_gold = list(group)
+        group_metrics = _calc_metrics(conf, sim_matrix, group_gold, query_data, other_data)
+        avg_sent_len = sum(int(t[-1][1]) for t in group_gold) / len(group_gold)
+        group_metrics['comparable'] = int(key[0])
+        group_metrics['bin'] = int(key[1])
+        group_metrics['avg_sent_len'] = avg_sent_len
+        all_group_metrics.append(group_metrics)
+
+    return all_group_metrics
+
+
 def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEncoder):
     base_dir = Path(conf.ds_base_dir)
     abs_query_text_dir, abs_other_text_dir = _find_text_dirs(base_dir / dsconf.texts)
@@ -195,6 +221,9 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
         base_dir / dsconf.meta, query_text_dir, query_data, other_text_dir, other_data
     )
     metrics = _calc_metrics(conf, indexes, gold_data, query_data, other_data)
+    if dsconf.eval_for_len_groups:
+        group_metrics = _eval_each_group(conf, indexes, gold_data, query_data, other_data)
+        metrics = [metrics] + group_metrics
     return metrics
 
 

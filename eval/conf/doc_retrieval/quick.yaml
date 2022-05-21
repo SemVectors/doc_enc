@@ -12,6 +12,7 @@ datasets:
     other_texts_limit: 50_000
     meta: pw/test.csv
     texts: pw/texts
+    eval_for_len_groups: true
   - name: sew-mini
     meta: sew/test_mini.csv
     texts: sew/texts

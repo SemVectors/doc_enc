@@ -43,7 +43,7 @@ cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 def _print_row(ds, metrics_dict):
     values = list(metrics_dict.values())
-    values = [ds] + [f"{v:.3f}" for v in values]
+    values = [ds] + [f"{v:.3f}" if isinstance(v, float) else str(v) for v in values]
     print(*values, sep=',')
 
 
