@@ -4,10 +4,11 @@ import os
 import datetime
 import contextlib
 from enum import Enum
-from typing import Any, List, Optional, Dict
+from typing import List, Optional, Dict
 import dataclasses
 import json
 from pathlib import Path
+import multiprocessing
 import logging
 
 import pkg_resources  # part of setuptools
@@ -87,6 +88,7 @@ class TrainerConf:
     checkpoint_every: int = 200_000
     debug_iters: List[int] = dataclasses.field(default_factory=list)
     print_batches: bool = False
+    print_gpu_memory_stat_every: int = 0
 
 
 def _create_lr_scheduler(conf: TrainerConf, optimizer):
@@ -484,6 +486,16 @@ class Trainer:
                 )
                 logging.debug("labels: %s", labels)
 
+    def _save_gpu_memory_stat(self):
+        summary = torch.cuda.memory_summary()
+        process_name = multiprocessing.current_process().name
+        out_dir = Path(self._opts.save_path) / 'gpu_memory_stat'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with open(out_dir / process_name, 'a', encoding='ascii') as f:
+            f.write(f'#UP {self._num_updates}\n')
+            f.write(summary)
+            f.write('\n\n')
+
     def _make_update(self, task):
         if self._opts.max_grad_norm or self._opts.emb_grad_scale:
             self._scaler.unscale_(self._optimizer)
@@ -546,6 +558,12 @@ class Trainer:
                     meta.update(m.metrics())
                     meta.update(m.stats())
                     self._save_debug_info(batch, output, labels, meta)
+            if (
+                self._opts.print_gpu_memory_stat_every
+                and self._num_updates % self._opts.print_gpu_memory_stat_every == 0
+            ):
+                self._save_gpu_memory_stat()
+
         return running_metrics
 
     def _sync_epoch_updates(self, n):
