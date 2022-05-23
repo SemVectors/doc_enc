@@ -41,13 +41,18 @@ cs.store(name="base_sent_retrieval", group="sent_retrieval", node=SentRetrievalC
 cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 
-def _print_row(ds, metrics_dict):
+def _print_row(ds, metrics_dict, model_id=None):
     values = list(metrics_dict.values())
-    values = [ds] + [f"{v:.3f}" if isinstance(v, float) else str(v) for v in values]
+    first_values = []
+    if model_id is not None:
+        first_values = [model_id]
+    first_values.append(ds)
+
+    values = first_values + [f"{v:.3f}" if isinstance(v, float) else str(v) for v in values]
     print(*values, sep=',')
 
 
-def _print_results_as_csv(results):
+def _print_results_as_csv(conf: Config, results):
     if not results:
         return
 
@@ -59,17 +64,21 @@ def _print_results_as_csv(results):
     else:
         raise RuntimeError("Unknown metrics format")
 
-    header = f"ds,{','.join(metrics)}"
+    header_prefix = ""
+    if conf.model_id is not None:
+        header_prefix = "model,"
+
+    header = f"{header_prefix}ds,{','.join(metrics)}"
     print(header)
     for ds, maybe_list in results:
         if isinstance(maybe_list, list):
             for m in maybe_list:
-                _print_row(ds, m)
+                _print_row(ds, m, model_id=conf.model_id)
         else:
-            _print_row(ds, maybe_list)
+            _print_row(ds, maybe_list, model_id=conf.model_id)
 
 
-def _print_results(results):
+def _print_results(conf: Config, results):
     for ds, m in results:
         logging.info("Metrics for ds: %s", ds)
         logging.info(m)
@@ -91,17 +100,17 @@ def eval_cli(conf: Config) -> None:
     if conf.eval_doc_retrieval:
         results = doc_retrieval_eval(conf.doc_retrieval, doc_encoder)
         logging.info("doc retrieval results")
-        printer(results)
+        printer(conf, results)
 
     if conf.eval_doc_matching:
         results = doc_matching_eval(conf.doc_matching, doc_encoder)
         logging.info("doc matching results")
-        printer(results)
+        printer(conf, results)
 
     if conf.eval_sent_retrieval:
         results = sent_retrieval_eval(conf.sent_retrieval, doc_encoder)
         logging.info("sent retrieval results")
-        printer(results)
+        printer(conf, results)
 
 
 if __name__ == "__main__":

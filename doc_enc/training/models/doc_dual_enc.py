@@ -21,7 +21,7 @@ class DocDualEncoder(nn.Module):
         self.frag_encoder = frag_encoder
 
     def _embed_sents(self, sents, sent_len):
-        if not self.conf.split_sents or len(sents) < self.conf.split_size:
+        if not self.conf.split_sents or len(sents) <= self.conf.split_size:
             res = self.sent_model.encoder(sents, sent_len, enforce_sorted=False)
             return res.pooled_out
         return split_sents_and_embed(
