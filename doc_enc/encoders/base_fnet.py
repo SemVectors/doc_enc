@@ -3,8 +3,8 @@
 import torch
 from torch import nn
 
-from doc_enc.encoders.sent_transformer import SentTransformerEncoder
-from doc_enc.encoders.enc_config import PoolingStrategy
+from doc_enc.encoders.base_transformer import BaseTransformerEncoder
+from doc_enc.encoders.enc_config import BaseEncoderConf
 
 
 class FnetEncoderLayer(nn.Module):
@@ -20,8 +20,10 @@ class FnetEncoderLayer(nn.Module):
         self.activation = torch.nn.GELU()
 
     def forward(self, src, src_key_padding_mask, **kwargs):
+        # src shape: seq_len, batch_sz, hidden_dim
         residual = src
-        src = torch.fft.fft2(src, dim=(-1, 0)).real
+        with torch.cuda.amp.autocast_mode.autocast(enabled=False):
+            src = torch.fft.fft2(src.float(), dim=(0, 2)).real
         src = src.masked_fill(src_key_padding_mask.t().unsqueeze(-1), 0.0)
 
         src = self.norm1(src + residual)
@@ -32,27 +34,6 @@ class FnetEncoderLayer(nn.Module):
         return src
 
 
-class SentFNetEncoder(SentTransformerEncoder):
-    def __init__(
-        self,
-        num_embeddings,
-        padding_idx=0,
-        num_heads=8,
-        hidden_size=512,
-        num_layers=1,
-        dropout=0.1,
-        dim_feedforward=512,
-        pooling_strategy=PoolingStrategy.FIRST,
-        **kwargs,
-    ):
-        super().__init__(
-            num_embeddings,
-            padding_idx,
-            num_heads,
-            hidden_size,
-            num_layers,
-            dropout,
-            dim_feedforward,
-            pooling_strategy,
-            FnetEncoderLayer,
-        )
+class BaseFNetEncoder(BaseTransformerEncoder):
+    def __init__(self, conf: BaseEncoderConf):
+        super().__init__(conf, FnetEncoderLayer)

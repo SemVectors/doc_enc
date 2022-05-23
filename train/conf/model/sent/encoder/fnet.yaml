@@ -5,7 +5,7 @@ emb_conf:
   emb_kind: TOKEN_WITH_POSITIONAL
   emb_dim: 320
 
-encoder_kind: TRANSFORMER
+encoder_kind: FNET
 hidden_size: 512
 num_layers: 3
 dropout: 0.1

@@ -12,8 +12,8 @@ from doc_enc.embs.emb_factory import create_emb_layer
 from doc_enc.encoders.sent_encoder import SentEncoder
 from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
 from doc_enc.encoders.base_lstm import LSTMEncoder
-from doc_enc.encoders.sent_transformer import SentTransformerEncoder
-from doc_enc.encoders.sent_fnet import SentFNetEncoder
+from doc_enc.encoders.base_transformer import BaseTransformerEncoder
+from doc_enc.encoders.base_fnet import BaseFNetEncoder
 
 
 def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer):
@@ -26,10 +26,10 @@ def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer):
         encoder = LSTMEncoder(conf)
 
     elif conf.encoder_kind == EncoderKind.TRANSFORMER:
-        encoder = SentTransformerEncoder(conf_dict)
+        encoder = BaseTransformerEncoder(conf)
 
     elif conf.encoder_kind == EncoderKind.FNET:
-        encoder = SentFNetEncoder(conf_dict)
+        encoder = BaseFNetEncoder(conf)
 
     else:
         raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")

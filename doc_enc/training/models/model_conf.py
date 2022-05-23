@@ -24,7 +24,7 @@ class BaseModelConf:
     # dual enc model opts
     normalize: bool = True
     scale: float = 0.0
-    margin: float = 0.1
+    margin: float = 0.0
 
     # encoders
     encoder: BaseEncoderConf = MISSING
@@ -52,4 +52,4 @@ class DocModelConf:
     # dual enc model opts
     normalize: bool = True
     scale: float = 0.0
-    margin: float = 0.1
+    margin: float = 0.0

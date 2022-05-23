@@ -49,27 +49,27 @@ class EmbSeqEncoder(nn.Module):
             return enc_result._replace(pooled_out=self.hidden_to_output_mapping(embs))
         return enc_result
 
-    def forward(self, sent_embs, lengths, padded_seq_len: Optional[int] = None, **kwargs):
+    def forward(self, embs, lengths, padded_seq_len: Optional[int] = None, **kwargs):
         if self.emb_to_hidden_mapping is not None:
-            sent_embs = self.emb_to_hidden_mapping(sent_embs)
+            embs = self.emb_to_hidden_mapping(embs)
 
         extra_len = int(self._beg_seq_param is not None)
-        emb_sz = sent_embs.size(1)
+        emb_sz = embs.size(1)
         if padded_seq_len is None:
-            # pad sequence of sents
+            # pad sequence of embs
             max_len = max(lengths) + extra_len
             padded_seq = torch.zeros(
                 (len(lengths) * max_len, emb_sz),
-                device=sent_embs.device,
-                dtype=sent_embs.dtype,
+                device=embs.device,
+                dtype=embs.dtype,
             )
             idx = []
             offs = 0 + extra_len
             for l in lengths:
                 idx.extend([i] for i in range(offs, offs + l))
                 offs += max_len
-            idx = torch.tensor(idx, dtype=torch.int64, device=sent_embs.device).expand(-1, emb_sz)
-            padded_seq.scatter_(0, idx, sent_embs)
+            idx = torch.tensor(idx, dtype=torch.int64, device=embs.device).expand(-1, emb_sz)
+            padded_seq.scatter_(0, idx, embs)
             if self._beg_seq_param is not None:
                 padded_seq[0 : padded_seq.size(0) : max_len] = self._beg_seq_param
         else:
@@ -77,10 +77,10 @@ class EmbSeqEncoder(nn.Module):
                 raise RuntimeError(
                     "Unsupported option add_beg_seq_token when batch  is preliminary padded"
                 )
-            padded_seq = sent_embs
+            padded_seq = embs
             max_len = padded_seq_len
 
-        len_tensor = torch.as_tensor(lengths, dtype=torch.int64, device=sent_embs.device)
+        len_tensor = torch.as_tensor(lengths, dtype=torch.int64, device=embs.device)
         if extra_len:
             len_tensor += extra_len
         seqs_tensor = padded_seq.reshape(len(lengths), max_len, emb_sz)

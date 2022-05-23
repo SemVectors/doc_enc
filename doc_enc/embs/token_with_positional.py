@@ -17,4 +17,5 @@ class TokenWithPositionalEmbedding(TokenEmbedding):
     def forward(self, tokens, token_types=None):
         x = self.embed_tokens(tokens) * math.sqrt(self.embed_tokens.embedding_dim)
         x = x.transpose(0, 1)
-        return self.pos_encoder(x)
+        x = self.pos_encoder(x)
+        return x.transpose(0, 1)

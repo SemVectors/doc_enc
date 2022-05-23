@@ -20,6 +20,11 @@ class SentEncoder(nn.Module):
             conf.output_size if conf.output_size is not None else self.encoder.out_embs_dim()
         )
 
+        input_size = conf.input_size if conf.input_size is not None else conf.hidden_size
+        self.emb_to_hidden_mapping = None
+        if conf.emb_conf.emb_dim != input_size:
+            self.emb_to_hidden_mapping = nn.Linear(conf.emb_conf.emb_dim, input_size)
+
         self.hidden_to_output_mapping = None
         self.hidden_dropout = None
         if self.output_size != self.encoder.out_embs_dim():
@@ -41,6 +46,9 @@ class SentEncoder(nn.Module):
     ) -> enc_out.BaseEncoderOut:
         # embed tokens
         x = self.embed(tokens.int(), token_types)
+
+        if self.emb_to_hidden_mapping is not None:
+            x = self.emb_to_hidden_mapping(x)
 
         enc_result = self.encoder.forward(x, lengths, enforce_sorted=enforce_sorted)
         return self._post_proc_enc_results(enc_result)

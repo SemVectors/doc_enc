@@ -244,6 +244,7 @@ class Trainer:
                 device_ids=[rank],
                 output_device=rank,
                 bucket_cap_mb=100,
+                gradient_as_bucket_view=True,
                 find_unused_parameters=False,
                 static_graph=False,
             )
@@ -252,6 +253,7 @@ class Trainer:
                 device_ids=[rank],
                 output_device=rank,
                 bucket_cap_mb=100,
+                gradient_as_bucket_view=True,
                 find_unused_parameters=False,
                 static_graph=False,
             )

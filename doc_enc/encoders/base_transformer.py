@@ -24,15 +24,12 @@ class BaseTransformerEncoder(nn.Module):
         )
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, conf.num_layers)
 
-        # self.hidden_size = hidden_size
-
         if conf.pooling_strategy not in (
             PoolingStrategy.MAX,
             PoolingStrategy.MEAN,
             PoolingStrategy.FIRST,
         ):
             raise RuntimeError(f"Unsupported pooling strategy: {conf.pooling_strategy}")
-        # self.pooling_strategy = pooling_strategy
 
     def out_embs_dim(self):
         return self.conf.hidden_size
@@ -46,16 +43,18 @@ class BaseTransformerEncoder(nn.Module):
         return mask
 
     def forward(self, embs, lengths, **kwargs):
+        # embs shape: batch_sz, seq_len, hidden_dim
+        embs = embs.transpose(0, 1)
         mask = self._create_key_padding_mask(embs.size()[0], lengths, embs.device)
         output = self.transformer_encoder(embs, src_key_padding_mask=mask)
 
-        if self._pooling_strategy == PoolingStrategy.FIRST:
+        if self.conf.pooling_strategy == PoolingStrategy.FIRST:
             sentemb = output[0]
-        elif self._pooling_strategy == PoolingStrategy.MEAN:
+        elif self.conf.pooling_strategy == PoolingStrategy.MEAN:
             masked = output.masked_fill(mask.t().unsqueeze(-1), 0.0)
             sum_embeddings = torch.sum(masked, dim=0)
             sentemb = sum_embeddings / lengths.unsqueeze(-1)
-        elif self._pooling_strategy == PoolingStrategy.MAX:
+        elif self.conf.pooling_strategy == PoolingStrategy.MAX:
             masked = output.masked_fill(mask.t().unsqueeze(-1), float('-inf'))
             sentemb = torch.max(masked, dim=0)[0]
         else:
