@@ -1,53 +1,41 @@
 #!/usr/bin/env python3
 
-import math
 
 import torch
 from torch import nn
 
-from doc_enc.encoders.pos_enc import PositionalEncoding
 from doc_enc.encoders.enc_config import PoolingStrategy
+from doc_enc.encoders.enc_config import BaseEncoderConf
+from doc_enc.encoders.enc_out import BaseEncoderOut
 
 
-class SentTransformerEncoder(nn.Module):
-    def __init__(
-        self,
-        num_embeddings,
-        padding_idx=0,
-        num_heads=8,
-        hidden_size=512,
-        num_layers=1,
-        dropout=0.1,
-        filter_size=2048,
-        pooling_strategy=PoolingStrategy.FIRST,
-        layer_cls=nn.TransformerEncoderLayer,
-        **kwargs,
-    ):
+class BaseTransformerEncoder(nn.Module):
+    def __init__(self, conf: BaseEncoderConf, layer_cls=nn.TransformerEncoderLayer):
         super().__init__()
-        self.embed_tokens = nn.Embedding(num_embeddings, hidden_size, padding_idx=padding_idx)
-        nn.init.uniform_(self.embed_tokens.weight, -0.1, 0.1)
-        nn.init.constant_(self.embed_tokens.weight[padding_idx], 0)
-        self.token_type_embeddings = torch.nn.Embedding(2, hidden_size)
-        torch.nn.init.uniform_(self.token_type_embeddings.weight, -0.1, 0.1)
+        self.conf = conf
+        if conf.num_heads is None or conf.filter_size is None:
+            raise RuntimeError("set num_heads and filter_size")
 
-        self.pos_encoder = PositionalEncoding(hidden_size)
         encoder_layer = layer_cls(
-            hidden_size, nhead=num_heads, dim_feedforward=filter_size, dropout=dropout
+            conf.hidden_size,
+            nhead=conf.num_heads,
+            dim_feedforward=conf.filter_size,
+            dropout=conf.dropout,
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, conf.num_layers)
 
-        self.hidden_size = hidden_size
+        # self.hidden_size = hidden_size
 
-        if pooling_strategy not in (
+        if conf.pooling_strategy not in (
             PoolingStrategy.MAX,
             PoolingStrategy.MEAN,
             PoolingStrategy.FIRST,
         ):
-            raise RuntimeError(f"Unsupported pooling strategy: {pooling_strategy}")
-        self.pooling_strategy = pooling_strategy
+            raise RuntimeError(f"Unsupported pooling strategy: {conf.pooling_strategy}")
+        # self.pooling_strategy = pooling_strategy
 
-    def embs_dim(self):
-        return self.hidden_size
+    def out_embs_dim(self):
+        return self.conf.hidden_size
 
     def _create_key_padding_mask(self, max_len, src_lengths, device):
         bs = len(src_lengths)
@@ -57,17 +45,9 @@ class SentTransformerEncoder(nn.Module):
 
         return mask
 
-    def forward(self, tokens, lengths, token_types=None, **kwargs):
-        src = self.embed_tokens(tokens) * math.sqrt(self.hidden_size)
-        src = src.transpose(0, 1)
-        if token_types is not None:
-            token_type_embeddings = self.token_type_embeddings(token_types)
-            src = src + token_type_embeddings.transpose(0, 1)
-
-        src = self.pos_encoder(src)
-
-        mask = self._create_key_padding_mask(src.size()[0], lengths, tokens.device)
-        output = self.transformer_encoder(src, src_key_padding_mask=mask)
+    def forward(self, embs, lengths, **kwargs):
+        mask = self._create_key_padding_mask(embs.size()[0], lengths, embs.device)
+        output = self.transformer_encoder(embs, src_key_padding_mask=mask)
 
         if self._pooling_strategy == PoolingStrategy.FIRST:
             sentemb = output[0]
@@ -81,4 +61,4 @@ class SentTransformerEncoder(nn.Module):
         else:
             raise RuntimeError("Unsupported pooling strategy trans")
 
-        return {'pooled_out': sentemb, 'encoder_out': output, 'out_lengths': lengths}
+        return BaseEncoderOut(sentemb, output, lengths)
