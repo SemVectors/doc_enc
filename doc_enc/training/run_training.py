@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import os
 from typing import Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,7 @@ class Config:
     enable_log_for_all_procs: bool = False
 
     combine_datasets_use_text_proc: bool = False
+    force_determinism: bool = False
 
 
 cs = ConfigStore.instance()
@@ -58,6 +60,17 @@ def _init_proc(rank, world_size, conf: Config):
     configure_log(conf.job_logging, conf.verbose)
     if not conf.enable_log_for_all_procs and rank != 0:
         logging.getLogger().setLevel(logging.WARNING)
+
+    if conf.force_determinism:
+        torch.use_deterministic_algorithms(True)
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+        if (
+            conf.batches.docs_batch_iterator_conf.async_generators > 1
+            or conf.batches.sents_batch_iterator_conf.async_generators > 1
+        ):
+            if rank == 0:
+                logging.error("set async_generators==1 in all batch_iterators")
+            raise RuntimeError("force_determinism is true but some async_generators > 1")
 
     torch.cuda.set_device(rank)
     torch.manual_seed(2022 * 8)
