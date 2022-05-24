@@ -16,6 +16,8 @@ class TokenizerType(Enum):
 class TokenizerConf:
     tokenizer_type: TokenizerType = TokenizerType.SENTENCEPIECE
     vocab_path: Optional[str] = None
+    add_bos: bool = False
+    add_eos: bool = False
 
 
 class AbcTokenizer:
@@ -86,14 +88,21 @@ class SentencepieceTokenizer(AbcTokenizer):
     def vocab_size(self) -> int:
         return len(self._vocab)
 
-    def _modify_sent_for_retr_task(self, sents):
-        # TODO
-        if self._add_special_symbols_in_retr:
-            return [[self._bos] + sent + [self._eos] for sent in sents]
-        return sents
+    def _modify_sent(self, sent):
+        prefix = []
+        if self._conf.add_bos:
+            prefix = [self.bos_idx()]
+        suffix = []
+        if self._conf.add_eos:
+            suffix = [self.eos_idx()]
+        if not prefix and not suffix:
+            return sent
+
+        return prefix + sent + suffix
 
     def __call__(self, sent: str) -> List[int]:
-        return self._vocab.EncodeAsIds(sent)
+        sent = self._vocab.EncodeAsIds(sent)
+        return self._modify_sent(sent)
 
     def state_dict(self):
         return {
