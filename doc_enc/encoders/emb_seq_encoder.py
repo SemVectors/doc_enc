@@ -8,6 +8,7 @@ import torch.utils.checkpoint
 from torch import nn
 
 from doc_enc.encoders.enc_config import EmbSeqEncoderConf
+from doc_enc.embs.pos_emb import PositionalEmbedding
 
 
 class EmbSeqEncoder(nn.Module):
@@ -30,6 +31,11 @@ class EmbSeqEncoder(nn.Module):
         if conf.add_beg_seq_token:
             self._beg_seq_param = nn.parameter.Parameter(torch.zeros(input_size))
             nn.init.uniform_(self._beg_seq_param, -0.1, 0.1)
+
+        self.pos_emb = None
+        if conf.add_pos_emb:
+            self.pos_emb = PositionalEmbedding(input_size)
+
         # TODO end seq param
         # self._end_seq_param = None
 
@@ -46,28 +52,32 @@ class EmbSeqEncoder(nn.Module):
                 embs = self.inp_dropout(embs)
         return embs
 
+    def _pad_embs_seq(self, embs, lengths, extra_len):
+        emb_sz = embs.size(1)
+        # pad sequence of embs
+        max_len = max(lengths) + extra_len
+        padded_seq = torch.zeros(
+            (len(lengths) * max_len, emb_sz),
+            device=embs.device,
+            dtype=embs.dtype,
+        )
+        idx = []
+        offs = 0 + extra_len
+        for l in lengths:
+            idx.extend([i] for i in range(offs, offs + l))
+            offs += max_len
+        idx = torch.tensor(idx, dtype=torch.int64, device=embs.device).expand(-1, emb_sz)
+        padded_seq.scatter_(0, idx, embs)
+        if self._beg_seq_param is not None:
+            padded_seq[0 : padded_seq.size(0) : max_len] = self._beg_seq_param
+        return padded_seq, max_len
+
     def forward(self, embs, lengths, padded_seq_len: Optional[int] = None, **kwargs):
         embs = self._prepare_input(embs)
 
         extra_len = int(self._beg_seq_param is not None)
-        emb_sz = embs.size(1)
         if padded_seq_len is None:
-            # pad sequence of embs
-            max_len = max(lengths) + extra_len
-            padded_seq = torch.zeros(
-                (len(lengths) * max_len, emb_sz),
-                device=embs.device,
-                dtype=embs.dtype,
-            )
-            idx = []
-            offs = 0 + extra_len
-            for l in lengths:
-                idx.extend([i] for i in range(offs, offs + l))
-                offs += max_len
-            idx = torch.tensor(idx, dtype=torch.int64, device=embs.device).expand(-1, emb_sz)
-            padded_seq.scatter_(0, idx, embs)
-            if self._beg_seq_param is not None:
-                padded_seq[0 : padded_seq.size(0) : max_len] = self._beg_seq_param
+            padded_seq, max_len = self._pad_embs_seq(embs, lengths, extra_len)
         else:
             if self.conf.add_beg_seq_token:
                 raise RuntimeError(
@@ -79,7 +89,12 @@ class EmbSeqEncoder(nn.Module):
         len_tensor = torch.as_tensor(lengths, dtype=torch.int64, device=embs.device)
         if extra_len:
             len_tensor += extra_len
+
+        emb_sz = embs.size(1)
         seqs_tensor = padded_seq.reshape(len(lengths), max_len, emb_sz)
+        if self.pos_emb is not None:
+            seqs_tensor = self.pos_emb(seqs_tensor, len_tensor)
+
         enc_result = self.encoder(seqs_tensor, len_tensor, **kwargs)
 
         return enc_result

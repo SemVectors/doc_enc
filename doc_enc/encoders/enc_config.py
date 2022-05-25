@@ -35,4 +35,4 @@ class SentEncoderConf(BaseEncoderConf):
 class EmbSeqEncoderConf(BaseEncoderConf):
     add_beg_seq_token: bool = False
     input_dropout: float = 0.0
-    # add_end_seq_token: bool = False
+    add_pos_emb: bool = False

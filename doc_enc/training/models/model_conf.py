@@ -23,7 +23,7 @@ class BaseModelConf:
     kind: ModelKind = ModelKind.DUAL_ENC
     # dual enc model opts
     normalize: bool = True
-    scale: float = 0.0
+    scale: float = 20.0
     margin: float = 0.0
 
     # encoders
@@ -35,7 +35,7 @@ class SentModelConf(BaseModelConf):
     encoder: SentEncoderConf = MISSING
 
     split_target_sents: bool = False
-    split_size: int = 128
+    split_size: int = 512
 
 
 @dataclasses.dataclass
@@ -47,9 +47,9 @@ class DocModelConf:
     fragment: Optional[EmbSeqEncoderConf] = None
 
     split_sents: bool = True
-    split_size: int = 128
+    split_size: int = 512
 
     # dual enc model opts
     normalize: bool = True
-    scale: float = 0.0
+    scale: float = 20.0
     margin: float = 0.0

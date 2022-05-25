@@ -2,6 +2,3 @@ defaults:
   - base_sent_model_config
 
 kind: DUAL_ENC
-normalize: true
-margin: 0.2
-scale: 20.0

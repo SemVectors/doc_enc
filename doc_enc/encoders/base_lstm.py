@@ -64,7 +64,7 @@ class BaseLSTMEncoder(nn.Module):
     def out_embs_dim(self):
         return self.output_units
 
-    def forward(self, embs, lengths, enforce_sorted=True, token_types=None) -> BaseEncoderOut:
+    def forward(self, embs, lengths, enforce_sorted=True) -> BaseEncoderOut:
 
         bsz, seqlen = embs.size()[:2]
         # BS x SeqLen x Dim -> SeqLen x BS x DIM
