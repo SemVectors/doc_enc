@@ -10,6 +10,14 @@
           config = {allowUnfree = true;};
         };
         python-overlay = pyfinal: pyprev: {
+          pytorch-bin = pyprev.pytorch-bin.overridePythonAttrs(old: {
+            version="1.12.0-rc1";
+            src= pkgs.fetchurl {
+              name = "torch-1.12.0-cp39-cp39-linux_x86_64.whl";
+                url = "https://download.pytorch.org/whl/nightly/cu113/torch-1.12.0.dev20220520%2Bcu113-cp39-cp39-linux_x86_64.whl";
+                sha256 = "0bq0q196v45cdzh0z3dg8cfwpn627bq5bnnszry4ybxlr79rhjsb";
+            };
+          });
           mlflow-skinny = pyfinal.callPackage ./nix/mlflow-skinny.nix {};
           faiss = pyfinal.callPackage ./nix/faiss.nix {swig=pkgs.swig4;};
           doc_enc = pyfinal.callPackage ./nix {
@@ -23,6 +31,7 @@
         };
         overridePython = py-overlay: final: prev: (
           prev.python39.override (old: {
+            self = pkgs.python;
             packageOverrides = final.lib.composeExtensions
               (old.packageOverrides or (_: _: { }))
               py-overlay;
@@ -30,7 +39,8 @@
         );
     in {
       overlay = final: prev: {
-        python = overridePython python-overlay final prev;};
+        python = overridePython python-overlay final prev;
+      };
 
       packages.x86_64-linux = {
         inherit (pkgs)

@@ -5,7 +5,7 @@ defaults:
   - job_logging: default
   - batches: mini
   - trainer: full
-  - trainer/optim: sgd_with_linear_decay
+  - trainer/optim: basic_adam
   - text_proc: default
   - text_proc/tokenizer: sentencepiece
   - model: default
