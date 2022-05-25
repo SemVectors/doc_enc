@@ -22,6 +22,10 @@ class EmbSeqEncoder(nn.Module):
 
         input_size = conf.input_size if conf.input_size is not None else conf.hidden_size
 
+        self.inp_dropout = None
+        if conf.input_dropout > 0.0:
+            self.inp_dropout = nn.Dropout(conf.input_dropout)
+
         self.emb_to_hidden_mapping = None
         if prev_output_size != input_size:
             self.emb_to_hidden_mapping = nn.Linear(prev_output_size, input_size)
@@ -42,6 +46,16 @@ class EmbSeqEncoder(nn.Module):
     def out_embs_dim(self):
         return self.output_size
 
+    def _prepare_input(self, embs):
+        if self.inp_dropout is not None:
+            embs = self.inp_dropout(embs)
+
+        if self.emb_to_hidden_mapping is not None:
+            embs = self.emb_to_hidden_mapping(embs)
+            if self.inp_dropout is not None:
+                embs = self.inp_dropout(embs)
+        return embs
+
     def _post_proc_enc_results(self, enc_result: BaseEncoderOut):
         if self.hidden_to_output_mapping and self.hidden_dropout:
             embs = enc_result.pooled_out
@@ -50,8 +64,7 @@ class EmbSeqEncoder(nn.Module):
         return enc_result
 
     def forward(self, embs, lengths, padded_seq_len: Optional[int] = None, **kwargs):
-        if self.emb_to_hidden_mapping is not None:
-            embs = self.emb_to_hidden_mapping(embs)
+        embs = self._prepare_input(embs)
 
         extra_len = int(self._beg_seq_param is not None)
         emb_sz = embs.size(1)
