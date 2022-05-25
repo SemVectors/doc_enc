@@ -5,8 +5,9 @@ import dataclasses
 
 from omegaconf import MISSING
 
-from doc_enc.common_types import EncoderKind, PoolingStrategy
+from doc_enc.common_types import EncoderKind
 from doc_enc.embs.emb_config import BaseEmbConf
+from doc_enc.encoders.base_pooler import BasePoolerConf
 
 
 @dataclasses.dataclass
@@ -15,8 +16,7 @@ class BaseEncoderConf:
     hidden_size: int
     num_layers: int
     dropout: float
-    pooling_strategy: PoolingStrategy
-    output_size: Optional[int] = None
+    pooler: BasePoolerConf
 
     # lstm opts
     input_size: Optional[int] = None

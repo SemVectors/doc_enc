@@ -1,9 +1,11 @@
 defaults:
   - base_doc_encoder_config
+pooler:
+  pooling_strategy: MAX
+
 encoder_kind: LSTM
 input_size: 1024
 hidden_size: 512
 num_layers: 2
 dropout: 0.1
 bidirectional: true
-pooling_strategy: MAX

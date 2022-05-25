@@ -16,30 +16,14 @@ class SentEncoder(nn.Module):
 
         self.embed = embed
         self.encoder = encoder
-        self.output_size = (
-            conf.output_size if conf.output_size is not None else self.encoder.out_embs_dim()
-        )
 
         input_size = conf.input_size if conf.input_size is not None else conf.hidden_size
         self.emb_to_hidden_mapping = None
         if conf.emb_conf.emb_dim != input_size:
             self.emb_to_hidden_mapping = nn.Linear(conf.emb_conf.emb_dim, input_size)
 
-        self.hidden_to_output_mapping = None
-        self.hidden_dropout = None
-        if self.output_size != self.encoder.out_embs_dim():
-            self.hidden_dropout = nn.Dropout(conf.dropout)
-            self.hidden_to_output_mapping = nn.Linear(self.encoder.out_embs_dim(), self.output_size)
-
     def out_embs_dim(self):
-        return self.output_size
-
-    def _post_proc_enc_results(self, enc_result: enc_out.BaseEncoderOut):
-        if self.hidden_to_output_mapping and self.hidden_dropout:
-            embs = enc_result.pooled_out
-            embs = self.hidden_dropout(embs)
-            return enc_result._replace(pooled_out=self.hidden_to_output_mapping(embs))
-        return enc_result
+        return self.encoder.out_embs_dim()
 
     def forward(
         self, tokens, lengths, enforce_sorted=True, token_types=None
@@ -51,7 +35,7 @@ class SentEncoder(nn.Module):
             x = self.emb_to_hidden_mapping(x)
 
         enc_result = self.encoder.forward(x, lengths, enforce_sorted=enforce_sorted)
-        return self._post_proc_enc_results(enc_result)
+        return enc_result
 
 
 def split_sents_and_embed(encoder: SentEncoder, sents, sent_lengths, split_size):

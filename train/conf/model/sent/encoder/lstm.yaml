@@ -5,10 +5,12 @@ emb_conf:
   emb_kind: TOKEN
   emb_dim: 320
 
+pooler:
+  pooling_strategy: MAX
+
 encoder_kind: LSTM
 input_size: 320
 hidden_size: 384
 num_layers: 3
 dropout: 0.1
 bidirectional: true
-pooling_strategy: MAX
