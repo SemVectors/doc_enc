@@ -503,7 +503,7 @@ class Trainer:
             self._scaler.unscale_(self._optimizer)
 
             if self._opts.emb_grad_scale:
-                wgrad = self._local_model.sent_model.encoder.embed.weight.grad
+                wgrad = self._local_model.sent_model.encoder.embed.embed_tokens.weight.grad
                 if wgrad is not None:
                     wgrad *= self._opts.emb_grad_scale
 
