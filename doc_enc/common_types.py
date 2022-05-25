@@ -5,7 +5,8 @@ from enum import Enum
 
 class EmbKind(Enum):
     TOKEN = 1
-    TOKEN_WITH_POSITIONAL = 2
+    TOKEN_WITH_POSITIONAL_EMB = 2
+    TOKEN_WITH_POSITIONAL_ENC = 3
 
 
 class EncoderKind(Enum):

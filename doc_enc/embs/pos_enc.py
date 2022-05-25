@@ -31,7 +31,7 @@ class PositionalEncoding(torch.nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0).transpose(0, 1)
         # BUG see https://github.com/pytorch/pytorch/issues/68407
-        self.register_parameter('pe', torch.nn.Parameter(pe, requires_grad=False))
+        self.register_parameter('pe', torch.nn.parameter.Parameter(pe, requires_grad=False))
         # self.register_buffer('pe', pe)
 
     def forward(self, x):

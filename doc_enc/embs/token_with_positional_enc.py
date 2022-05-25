@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 
 import logging
-import math
 
 from doc_enc.embs.pos_enc import PositionalEncoding
 from doc_enc.embs.token_embed import TokenEmbedding
+from doc_enc.embs.emb_config import BaseEmbConf
 
 
-class TokenWithPositionalEmbedding(TokenEmbedding):
-    def __init__(self, embs_dim, num_embeddings, padding_idx):
-        super().__init__(embs_dim, num_embeddings, padding_idx)
+class TokenWithPositionalEncoding(TokenEmbedding):
+    def __init__(self, conf: BaseEmbConf, num_embeddings, padding_idx):
+        super().__init__(conf, num_embeddings, padding_idx)
 
-        self.pos_encoder = PositionalEncoding(embs_dim)
+        self.pos_encoder = PositionalEncoding(conf.emb_dim)
 
-    def forward(self, tokens, token_types=None):
-        x = self.embed_tokens(tokens) * math.sqrt(self.embed_tokens.embedding_dim)
+    def forward(self, tokens, lengths=None, token_types=None):
+        x = super()._embed(tokens, token_types=token_types)
         x = x.transpose(0, 1)
         x = self.pos_encoder(x)
-        return x.transpose(0, 1)
+        return super()._post_proc(x.transpose(0, 1))

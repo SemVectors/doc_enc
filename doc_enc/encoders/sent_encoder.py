@@ -45,7 +45,7 @@ class SentEncoder(nn.Module):
         self, tokens, lengths, enforce_sorted=True, token_types=None
     ) -> enc_out.BaseEncoderOut:
         # embed tokens
-        x = self.embed(tokens.int(), token_types)
+        x = self.embed(tokens.int(), lengths=lengths, token_types=token_types)
 
         if self.emb_to_hidden_mapping is not None:
             x = self.emb_to_hidden_mapping(x)
