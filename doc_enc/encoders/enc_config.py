@@ -23,7 +23,9 @@ class BaseEncoderConf:
     bidirectional: Optional[bool] = None
     # transformer opts
     num_heads: Optional[int] = None
-    filter_size: Optional[int] = None
+    intermediate_size: Optional[int] = None
+    intermediate_activation: Optional[str] = None
+    full_intermediate: bool = False
 
 
 @dataclasses.dataclass

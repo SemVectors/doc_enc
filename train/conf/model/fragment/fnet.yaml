@@ -8,4 +8,5 @@ hidden_size: 512
 num_layers: 3
 dropout: 0.1
 num_heads: 8
-filter_size: 2048
+intermediate_size: 2048
+intermediate_activation: gelu

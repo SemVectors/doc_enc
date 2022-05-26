@@ -13,8 +13,8 @@ from doc_enc.embs.emb_factory import create_emb_layer
 from doc_enc.encoders.sent_encoder import SentEncoder
 from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
 from doc_enc.encoders.base_lstm import LSTMEncoder
-from doc_enc.encoders.base_transformer import BaseTransformerEncoder
-from doc_enc.encoders.base_fnet import BaseFNetEncoder
+from doc_enc.encoders.base_transformer import TransformerEncoder
+from doc_enc.encoders.base_fnet import FNetEncoder
 
 
 def create_encoder(conf: BaseEncoderConf):
@@ -22,10 +22,10 @@ def create_encoder(conf: BaseEncoderConf):
         return LSTMEncoder(conf)
 
     if conf.encoder_kind == EncoderKind.TRANSFORMER:
-        return BaseTransformerEncoder(conf)
+        return TransformerEncoder(conf)
 
     if conf.encoder_kind == EncoderKind.FNET:
-        return BaseFNetEncoder(conf)
+        return FNetEncoder(conf)
 
     raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 

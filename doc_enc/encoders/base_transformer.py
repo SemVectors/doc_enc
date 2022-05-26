@@ -44,20 +44,84 @@ class TransformerPooler(BasePooler):
         raise RuntimeError("Unsupported pooling strategy trans")
 
 
+def _create_activation(act_str: str):
+    if not hasattr(nn.functional, act_str):
+        raise RuntimeError(f"No such activation ({act_str}) in torch.nn.functional")
+    return getattr(nn.functional, act_str)
+
+
+class _BasicLayer(nn.Module):
+    """Based on implementation from transformers library"""
+
+    def __init__(self, conf: BaseEncoderConf, attention: nn.Module):
+        super().__init__()
+        self.attn = attention
+        if conf.intermediate_size is None or conf.intermediate_activation is None:
+            raise RuntimeError(
+                "check that encoder's intermediate_size, intermediate_activation are not None"
+            )
+        self.linear1 = nn.Linear(conf.hidden_size, conf.intermediate_size)
+        self.activation = _create_activation(conf.intermediate_activation)
+
+        self.linear2 = nn.Linear(conf.intermediate_size, conf.hidden_size)
+        self.norm = nn.LayerNorm(conf.hidden_size)
+        self.dropout = nn.Dropout(conf.dropout)
+
+    def _ff(self, x_attn):
+        x_lin1 = self.linear1(x_attn)
+        x_act = self.activation(x_lin1)
+        x_lin2 = self.linear2(x_act)
+        x_drop = self.dropout(x_lin2)
+        return self.norm(x_drop + x_attn)
+
+    def forward(self, x, **kwargs):
+        x_attn = self.attn(x, **kwargs)
+        return self._ff(x_attn)
+
+
+class _FullLayer(nn.Module):
+    """Based on implementation of TransformerEncoderLayer from pytorch"""
+
+    def __init__(self, conf: BaseEncoderConf, attention: nn.Module):
+        super().__init__()
+        if conf.intermediate_size is None or conf.intermediate_activation is None:
+            raise RuntimeError(
+                "check that encoder's intermediate_size, intermediate_activation are not None"
+            )
+        self.attn = attention
+
+        self.linear1 = torch.nn.Linear(conf.hidden_size, conf.intermediate_size)
+        self.linear2 = torch.nn.Linear(conf.intermediate_size, conf.hidden_size)
+        self.activation = _create_activation(conf.intermediate_activation)
+
+        self.norm1 = torch.nn.LayerNorm(conf.hidden_size)
+        self.norm2 = torch.nn.LayerNorm(conf.hidden_size)
+        self.dropout1 = torch.nn.Dropout(conf.dropout)
+        self.dropout2 = torch.nn.Dropout(conf.dropout)
+
+    def _ff(self, x_attn, input_x):
+        # dropout of x_attn is intentionally skipped
+        x_norm1 = self.norm1(x_attn + input_x)
+        x_lin1 = self.linear1(x_norm1)
+        x_act = self.activation(x_lin1)
+        x_drop1 = self.dropout1(x_act)
+        x_lin2 = self.linear2(x_drop1)
+        x_drop2 = self.dropout2(x_lin2)
+        return self.norm2(x_norm1 + x_drop2)
+
+    def forward(self, x, **kwargs):
+        x_attn = self.attn(x, **kwargs)
+        return self._ff(x_attn, x)
+
+
 class BaseTransformerEncoder(nn.Module):
-    def __init__(self, conf: BaseEncoderConf, layer_cls=nn.TransformerEncoderLayer):
+    def __init__(self, conf: BaseEncoderConf, attention: nn.Module):
         super().__init__()
         self.conf = conf
-        if conf.num_heads is None or conf.filter_size is None:
-            raise RuntimeError("set num_heads and filter_size")
-
-        encoder_layer = layer_cls(
-            conf.hidden_size,
-            nhead=conf.num_heads,
-            dim_feedforward=conf.filter_size,
-            dropout=conf.dropout,
-        )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, conf.num_layers)
+        layer_cls = _BasicLayer
+        if conf.full_intermediate:
+            layer_cls = _FullLayer
+        self.layers = nn.ModuleList([layer_cls(conf, attention) for _ in range(conf.num_layers)])
 
         self.pooler = TransformerPooler(conf.hidden_size, conf.pooler)
         self.output_units = conf.hidden_size
@@ -79,7 +143,30 @@ class BaseTransformerEncoder(nn.Module):
         # embs shape: batch_sz, seq_len, hidden_dim
         embs = embs.transpose(0, 1)
         mask = self._create_key_padding_mask(embs.size()[0], lengths, embs.device)
-        output = self.transformer_encoder(embs, src_key_padding_mask=mask)
+
+        output = embs
+        for layer_module in self.layers:
+            output = layer_module(output, key_padding_mask=mask)
 
         sentemb = self.pooler(output, lengths, mask=mask)
         return BaseEncoderOut(sentemb, output, lengths)
+
+
+class GlobalSelfAttention(nn.Module):
+    def __init__(self, conf: BaseEncoderConf):
+        super().__init__()
+        if conf.num_heads is None:
+            raise RuntimeError("Should set num_heads in encoding config")
+
+        self.self_attn = nn.modules.activation.MultiheadAttention(
+            conf.hidden_size, conf.num_heads, dropout=conf.dropout
+        )
+
+    def forward(self, x, key_padding_mask=None, **kwargs):
+        return self.self_attn(x, x, x, key_padding_mask=key_padding_mask, need_weights=False)[0]
+
+
+class TransformerEncoder(BaseTransformerEncoder):
+    def __init__(self, conf: BaseEncoderConf):
+        self_attn = GlobalSelfAttention(conf)
+        super().__init__(conf, self_attn)
