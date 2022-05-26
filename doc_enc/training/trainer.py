@@ -16,6 +16,7 @@ from omegaconf import MISSING
 
 import torch
 import torch.distributed as dist
+import torch.utils.checkpoint
 
 from torch.distributed.optim.zero_redundancy_optimizer import ZeroRedundancyOptimizer as ZeRoOptim
 from torch.nn.utils.clip_grad import clip_grad_norm_
@@ -71,24 +72,29 @@ class OptimConf:
 @dataclasses.dataclass
 class TrainerConf:
     tasks: List[TaskType] = dataclasses.field(default_factory=list)
-    save_path: str = ''
-    sent_retr_loss_type: SentRetrLossType = SentRetrLossType.BICE
-    doc_retr_loss_type: DocRetrLossType = DocRetrLossType.CE
-    max_updates: int = MISSING
-    switch_tasks_every: int = 10
 
     optim: OptimConf = MISSING
+    max_updates: int = MISSING
 
+    sent_retr_loss_type: SentRetrLossType = SentRetrLossType.BICE
+    doc_retr_loss_type: DocRetrLossType = DocRetrLossType.CE
+
+    save_path: str = ''
     resume_snapshot: str = ''
+
+    use_grad_checkpoint: bool = False
     emb_grad_scale: float = 0.0
     max_grad_norm: float = 0.0
 
+    switch_tasks_every: int = 10
     log_every: int = 100
     eval_every: int = 300_000
     checkpoint_every: int = 200_000
+
     debug_iters: List[int] = dataclasses.field(default_factory=list)
     print_batches: bool = False
     print_gpu_memory_stat_every: int = 0
+    spam_allocated_memory_info: bool = False
 
 
 def _create_lr_scheduler(conf: TrainerConf, optimizer):
@@ -176,7 +182,7 @@ class LinearLRSchedule(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, opts: OptimConf, optimizer, total_iters, last_epoch=-1, verbose=False):
         super().__init__(optimizer, last_epoch=last_epoch, verbose=verbose)
 
-        self._opts = opts
+        self._conf = opts
 
         b = self.base_lrs
         _, self._final_lrs = _create_lr_lists(opts, len(b))
@@ -217,9 +223,9 @@ class Trainer:
         amp=True,
         verbose=False,
     ):
-        self._opts = opts
-        if not self._opts.save_path:
-            self._opts.save_path = os.getcwd()
+        self._conf = opts
+        if not self._conf.save_path:
+            self._conf.save_path = os.getcwd()
 
         self._model_conf = model_conf
         self._rank = rank
@@ -276,8 +282,13 @@ class Trainer:
         self._best_metric = 0.0
 
         self._init_epoch = 1
-        if self._opts.resume_snapshot:
+        if self._conf.resume_snapshot:
             self._init_epoch = self._load_from_checkpoint()
+
+    def _log_current_mem_usage(self, prefix=''):
+        if self._conf.spam_allocated_memory_info:
+            mem = torch.cuda.memory_allocated(self._device)
+            logging.info("%s mem usage: %.3fMb", prefix, mem / 1024 / 1024)
 
     def vocab(self):
         return self._tp.vocab()
@@ -291,15 +302,21 @@ class Trainer:
 
     def _create_model(self, model_conf: DocModelConf):
         model = create_model(model_conf, self.vocab())
+        self._log_current_mem_usage('start')
         model = model.to(self._device)
+        self._log_current_mem_usage('after loading')
         logging.info("created model %s", model)
         logging.info("model loaded to %s", self._device)
+        mem_params = sum([param.nelement() * param.element_size() for param in model.parameters()])
+        mem_bufs = sum([buf.nelement() * buf.element_size() for buf in model.buffers()])
+        logging.info("Model params mem usage %.3f Mb", mem_params / 1024 / 1024)
+        logging.info("Model buf mem usage %.3f Kb", mem_bufs / 1024)
         return model
 
     def _calc_sent_retr_loss(self, output, labels, batch_size):
-        if self._opts.sent_retr_loss_type == SentRetrLossType.CE:
+        if self._conf.sent_retr_loss_type == SentRetrLossType.CE:
             loss = self._sent_retr_criterion(output, labels)
-        elif self._opts.sent_retr_loss_type == SentRetrLossType.BICE:
+        elif self._conf.sent_retr_loss_type == SentRetrLossType.BICE:
             loss_src = self._sent_retr_criterion(output, labels)
             loss_tgt = self._sent_retr_criterion(output.t()[:batch_size], labels)
             loss = loss_src + loss_tgt
@@ -308,7 +325,7 @@ class Trainer:
         return loss
 
     def _calc_doc_retr_loss(self, output, labels, batch_size):
-        if self._opts.doc_retr_loss_type == DocRetrLossType.CE:
+        if self._conf.doc_retr_loss_type == DocRetrLossType.CE:
             loss = self._doc_retr_criterion(output, labels)
         else:
             raise RuntimeError("Logic error 988")
@@ -376,7 +393,7 @@ class Trainer:
             obj['gold'] = gold
             examples.append(obj)
         meta['examples'] = examples
-        meta_path = Path(self._opts.save_path) / 'doc_retr_debug_batches.jsonl'
+        meta_path = Path(self._conf.save_path) / 'doc_retr_debug_batches.jsonl'
         with open(meta_path, 'a', encoding='utf8') as f:
             f.write(json.dumps(meta))
             f.write('\n')
@@ -421,7 +438,7 @@ class Trainer:
             examples.append(obj)
         meta['examples'] = examples
 
-        meta_path = Path(self._opts.save_path) / 'sent_retr_debug_batches.jsonl'
+        meta_path = Path(self._conf.save_path) / 'sent_retr_debug_batches.jsonl'
         with open(meta_path, 'a', encoding='utf8') as f:
             f.write(json.dumps(meta))
             f.write('\n')
@@ -432,7 +449,7 @@ class Trainer:
         if task == TaskType.SENT_RETR:
             logging.debug('src sents shape: %s', batch.src.size())
             logging.debug('tgt sents shape: %s', batch.tgt.size())
-            if self._opts.print_batches:
+            if self._conf.print_batches:
                 logging.debug('src_len: %s', batch.src_len)
                 logging.debug('tgt_len: %s', batch.tgt_len)
         elif task == TaskType.DOC_RETR:
@@ -465,7 +482,7 @@ class Trainer:
                 tgt_sent_sum,
             )
 
-            if self._opts.print_batches:
+            if self._conf.print_batches:
                 logging.debug(
                     'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
                     'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
@@ -491,7 +508,7 @@ class Trainer:
     def _save_gpu_memory_stat(self):
         summary = torch.cuda.memory_summary()
         process_name = multiprocessing.current_process().name
-        out_dir = Path(self._opts.save_path) / 'gpu_memory_stat'
+        out_dir = Path(self._conf.save_path) / 'gpu_memory_stat'
         out_dir.mkdir(parents=True, exist_ok=True)
         with open(out_dir / process_name, 'a', encoding='ascii') as f:
             f.write(f'#UP {self._num_updates}\n')
@@ -499,20 +516,20 @@ class Trainer:
             f.write('\n\n')
 
     def _make_update(self, task):
-        if self._opts.max_grad_norm or self._opts.emb_grad_scale:
+        if self._conf.max_grad_norm or self._conf.emb_grad_scale:
             self._scaler.unscale_(self._optimizer)
 
-            if self._opts.emb_grad_scale:
+            if self._conf.emb_grad_scale:
                 wgrad = self._local_model.sent_model.encoder.embed.embed_tokens.weight.grad
                 if wgrad is not None:
-                    wgrad *= self._opts.emb_grad_scale
+                    wgrad *= self._conf.emb_grad_scale
 
-            if self._opts.max_grad_norm:
+            if self._conf.max_grad_norm:
                 if task == TaskType.SENT_RETR:
                     params = self._sent_model.parameters()
                 else:
                     params = self._doc_model.parameters()
-                clip_grad_norm_(params, self._opts.max_grad_norm)
+                clip_grad_norm_(params, self._conf.max_grad_norm)
 
         self._scaler.step(self._optimizer)
         self._scaler.update()
@@ -523,7 +540,14 @@ class Trainer:
         if task == TaskType.SENT_RETR:
             output = self._sent_model(batch)
         elif task == TaskType.DOC_RETR:
-            output = self._doc_model(batch, labels)
+            if not self._conf.use_grad_checkpoint:
+                output = self._doc_model(batch, labels)
+            else:
+                # use_reentrant=True requires any input tensor has requires_grad field set to true
+                labels.requires_grad_(True)
+                output = torch.utils.checkpoint.checkpoint(
+                    self._doc_model, batch, labels, use_reentrant=True
+                )
         else:
             raise RuntimeError("Logic error 89837")
         return output
@@ -535,7 +559,10 @@ class Trainer:
 
             # forward pass
             with autocast(enabled=self._amp_enabled):
+
+                self._log_current_mem_usage('before forward')
                 output = self._run_forward(task, batch, labels)
+                self._log_current_mem_usage('after forward')
 
                 # output = self._model(batch, labels)
                 logging.debug("output of model shape: %s", output.size())
@@ -546,23 +573,25 @@ class Trainer:
                 running_metrics += m
 
             # backpropagate and update optimizer learning rate
+            self._log_current_mem_usage('before backward')
             self._scaler.scale(loss).backward()
+            self._log_current_mem_usage('after backward')
             logging.debug("backward step done")
 
             self._make_update(task)
             self._num_updates += 1
             logging.debug("update done")
 
-            if self._rank == 0 and self._opts.debug_iters:
-                l = [self._num_updates % int(v) for v in self._opts.debug_iters]
+            if self._rank == 0 and self._conf.debug_iters:
+                l = [self._num_updates % int(v) for v in self._conf.debug_iters]
                 if not all(l):
                     meta = {'task': task, 'loss': loss.item()}
                     meta.update(m.metrics())
                     meta.update(m.stats())
                     self._save_debug_info(batch, output, labels, meta)
             if (
-                self._opts.print_gpu_memory_stat_every
-                and self._num_updates % self._opts.print_gpu_memory_stat_every == 0
+                self._conf.print_gpu_memory_stat_every
+                and self._num_updates % self._conf.print_gpu_memory_stat_every == 0
             ):
                 self._save_gpu_memory_stat()
 
@@ -620,7 +649,7 @@ class Trainer:
         while True:
             task = train_iter.current_task()
             logging.debug("current task is %s", task)
-            gen = train_iter.batches(self._opts.switch_tasks_every)
+            gen = train_iter.batches(self._conf.switch_tasks_every)
 
             join_modules = []
             if task == TaskType.SENT_RETR:
@@ -638,7 +667,7 @@ class Trainer:
             epoch_updates += metrics.updates_num()
             epoch_updates = self._sync_epoch_updates(epoch_updates)
 
-            if self._num_updates >= self._opts.max_updates:
+            if self._num_updates >= self._conf.max_updates:
                 break
 
             if self._scheduler is not None:
@@ -646,7 +675,7 @@ class Trainer:
 
             running_metrics[task] += metrics
 
-            if epoch_updates - last_log_update >= self._opts.log_every:
+            if epoch_updates - last_log_update >= self._conf.log_every:
                 last_log_update = epoch_updates
                 running_metrics = self._collect_metrics(running_metrics)
                 if self._rank == 0:
@@ -665,11 +694,11 @@ class Trainer:
                     )
                 _reset()
 
-            if epoch_updates - last_checkpoint_update >= self._opts.checkpoint_every:
+            if epoch_updates - last_checkpoint_update >= self._conf.checkpoint_every:
                 last_checkpoint_update = epoch_updates
                 self._save_checkpoint(epoch)
 
-            if epoch_updates - last_eval_update >= self._opts.eval_every:
+            if epoch_updates - last_eval_update >= self._conf.eval_every:
                 last_eval_update = epoch_updates
                 self._eval_and_save(epoch, dev_iter)
 
@@ -682,8 +711,8 @@ class Trainer:
             dist.barrier(group=self._cpu_group)
 
     def _load_from_checkpoint(self):
-        logging.info("loading state from %s", self._opts.resume_snapshot)
-        state = torch.load(self._opts.resume_snapshot, map_location=self._device)
+        logging.info("loading state from %s", self._conf.resume_snapshot)
+        state = torch.load(self._conf.resume_snapshot, map_location=self._device)
         self._num_updates = state['num_updates']
         self._optimizer.load_state_dict(state['optimizer'])
         if self._scheduler is not None:
@@ -701,7 +730,7 @@ class Trainer:
         return state['epoch']
 
     def _save_checkpoint(self, epoch):
-        snapshot_path = Path(self._opts.save_path) / f'checkpoint_{epoch}_{self._num_updates}.pt'
+        snapshot_path = Path(self._conf.save_path) / f'checkpoint_{epoch}_{self._num_updates}.pt'
         if isinstance(self._optimizer, ZeRoOptim):
             self._optimizer.consolidate_state_dict(to=0)
         if self._rank == 0:
@@ -768,9 +797,9 @@ class Trainer:
             logging.info("best %s dev %s", self._best_metric, best_m)
             if best_m > self._best_metric:
                 self._best_metric = best_m
-                self._save_model(Path(self._opts.save_path) / 'model.pt')
+                self._save_model(Path(self._conf.save_path) / 'model.pt')
                 logging.info(
-                    "new best model was saved in %s", Path(self._opts.save_path) / 'model.pt'
+                    "new best model was saved in %s", Path(self._conf.save_path) / 'model.pt'
                 )
 
     def _save_model(self, out_path):
@@ -780,7 +809,7 @@ class Trainer:
             version = 0
         state_dict = {
             'version': version,
-            'trainer_conf': self._opts,
+            'trainer_conf': self._conf,
             'model_conf': self._model_conf,
             'tp_conf': self._tp_conf,
             'tp': self._tp.state_dict(),
@@ -796,11 +825,11 @@ class Trainer:
         epoch = self._init_epoch
 
         while True:
-            train_iter.init_epoch(epoch, self._opts.tasks)
+            train_iter.init_epoch(epoch, self._conf.tasks)
             logging.info("Start epoch %d", epoch)
             self._train_epoch(epoch, train_iter, dev_iter)
             train_iter.end_epoch()
             logging.info("End epoch %d", epoch)
             epoch += 1
-            if self._num_updates >= self._opts.max_updates:
+            if self._num_updates >= self._conf.max_updates:
                 break
