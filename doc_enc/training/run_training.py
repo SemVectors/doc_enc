@@ -178,7 +178,10 @@ def train_cli(conf: Config) -> None:
     if gpu_cnt <= 0:
         raise RuntimeError("No gpu was found")
     _preproc(conf)
-    mp_spawn(_run_train, args=(gpu_cnt, conf), nprocs=gpu_cnt, join=True)
+    try:
+        mp_spawn(_run_train, args=(gpu_cnt, conf), nprocs=gpu_cnt, join=True)
+    except Exception as e:
+        sys.exit(1)
 
 
 @hydra.main(config_path="conf", config_name="config")
