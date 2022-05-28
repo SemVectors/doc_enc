@@ -43,9 +43,11 @@ class DocModelConf:
     kind: ModelKind
 
     sent: SentModelConf
-    doc: EmbSeqEncoderConf
+    sent_for_doc: Optional[BaseEncoderConf] = None
     fragment: Optional[EmbSeqEncoderConf] = None
+    doc: EmbSeqEncoderConf = MISSING
 
+    freeze_base_sents_layer: bool = True
     split_sents: bool = True
     split_size: int = 512
 

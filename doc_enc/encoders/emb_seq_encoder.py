@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
-from typing import Optional
+from typing import Optional, List
 
 import torch
 import torch.utils.checkpoint
@@ -9,10 +9,11 @@ from torch import nn
 
 from doc_enc.encoders.enc_config import EmbSeqEncoderConf
 from doc_enc.embs.pos_emb import PositionalEmbedding
+from doc_enc.encoders.base_encoder import BaseEncoder
 
 
 class EmbSeqEncoder(nn.Module):
-    def __init__(self, conf: EmbSeqEncoderConf, encoder, prev_output_size):
+    def __init__(self, conf: EmbSeqEncoderConf, encoder: BaseEncoder, prev_output_size: int):
         super().__init__()
         self.conf = conf
         self.encoder = encoder
@@ -72,7 +73,13 @@ class EmbSeqEncoder(nn.Module):
             padded_seq[0 : padded_seq.size(0) : max_len] = self._beg_seq_param
         return padded_seq, max_len
 
-    def forward(self, embs, lengths, padded_seq_len: Optional[int] = None, **kwargs):
+    def forward(
+        self,
+        embs: torch.Tensor,
+        lengths: List[int],
+        padded_seq_len: Optional[int] = None,
+        **kwargs,
+    ):
         embs = self._prepare_input(embs)
 
         extra_len = int(self._beg_seq_param is not None)
@@ -95,6 +102,6 @@ class EmbSeqEncoder(nn.Module):
         if self.pos_emb is not None:
             seqs_tensor = self.pos_emb(seqs_tensor, len_tensor)
 
-        enc_result = self.encoder(seqs_tensor, len_tensor, **kwargs)
+        enc_result = self.encoder.forward(seqs_tensor, len_tensor, **kwargs)
 
         return enc_result

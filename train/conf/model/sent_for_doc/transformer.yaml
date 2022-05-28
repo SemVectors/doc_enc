@@ -1,0 +1,14 @@
+defaults:
+  - base_sent_for_doc_config
+
+
+pooler:
+  pooling_strategy: FIRST
+
+encoder_kind: TRANSFORMER
+hidden_size: 512
+num_layers: 1
+dropout: 0.1
+num_heads: 8
+intermediate_size: 2048
+intermediate_activation: gelu

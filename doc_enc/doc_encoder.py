@@ -8,14 +8,17 @@ from pathlib import Path
 import multiprocessing
 
 import torch
+from torch.cuda.amp.autocast_mode import autocast
 
 from doc_enc.text_processor import TextProcessor, TextProcessorConf
 
 from doc_enc.encoders.enc_factory import (
+    create_encoder,
     create_sent_encoder,
     create_emb_seq_encoder,
 )
-from doc_enc.encoders.sent_encoder import split_sents_and_embed
+from doc_enc.encoders.sent_encoder import SentEncoder, split_sents_and_embed, SentForDocEncoder
+from doc_enc.training.models.model_conf import DocModelConf
 
 
 @dataclasses.dataclass
@@ -165,9 +168,14 @@ class DocEncoder:
             logging.info("Computing on cpu")
             self._device = torch.device('cpu')
 
-        mc = state_dict['model_conf']
-        self._sent_layer = create_sent_encoder(mc.sent.encoder, self._tp.vocab())
-        self._sent_layer.load_state_dict(state_dict['sent_enc'])
+        mc: DocModelConf = state_dict['model_conf']
+        base_sent_enc = create_sent_encoder(mc.sent.encoder, self._tp.vocab())
+        base_sent_enc.load_state_dict(state_dict['sent_enc'])
+        sent_for_doc_layer = None
+        if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
+            sent_for_doc_layer = create_encoder(mc.sent_for_doc)
+            sent_for_doc_layer.load_state_dict(state_dict['sent_for_doc'])
+        self._sent_layer = SentForDocEncoder.from_base(base_sent_enc, sent_for_doc_layer)
         self._sent_layer = self._sent_layer.to(device=self._device).eval()
         logging.debug("sent layer\n%s", self._sent_layer)
 
@@ -194,7 +202,7 @@ class DocEncoder:
             sent_tensor[i, 0 : len(sent)] = torch.as_tensor(sent)
         return sent_tensor
 
-    def _encode_sents_impl(self, sents):
+    def _encode_sents_impl(self, sents, encoder: SentEncoder):
         cnt = len(sents)
         sent_lengths = [len(t) for t in sents]
         lengths_tensor = torch.as_tensor(sent_lengths, dtype=torch.int64, device=self._device)
@@ -203,13 +211,13 @@ class DocEncoder:
 
         if cnt > self._conf.max_sents:
             return split_sents_and_embed(
-                self._sent_layer,
+                encoder,
                 sent_tensor,
                 lengths_tensor,
                 self._conf.max_sents,
             )
 
-        res = self._sent_layer(sent_tensor, lengths_tensor, enforce_sorted=False)
+        res = encoder.forward(sent_tensor, lengths_tensor, enforce_sorted=False)
         sent_embs = res.pooled_out
         return sent_embs
 
@@ -217,7 +225,7 @@ class DocEncoder:
         """Each doc is a list of tokenized sentences."""
 
         all_sents = [s for d in docs for s in d]
-        sent_embs = self._encode_sents_impl(all_sents)
+        sent_embs = self._encode_sents_impl(all_sents, self._sent_layer)
 
         if self._fragment_layer is not None:
             frag_len = []
@@ -236,13 +244,14 @@ class DocEncoder:
 
     def _encode_docs(self, docs, doc_fragments):
         with torch.inference_mode():
-            with torch.cuda.amp.autocast():
+            with autocast():
                 return self._encode_docs_impl(docs, doc_fragments)
 
     def _encode_sents(self, sents):
         with torch.inference_mode():
-            with torch.cuda.amp.autocast():
-                return self._encode_sents_impl(sents)
+            with autocast():
+                encoder = self._sent_layer.cast_to_base()
+                return self._encode_sents_impl(sents, encoder)
 
     def encode_sents(self, sents):
         sent_ids = self._tp.prepare_sents(sents)

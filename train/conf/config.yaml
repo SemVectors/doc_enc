@@ -11,6 +11,7 @@ defaults:
   - model: default
   - model/sent: dual_enc
   - model/sent/encoder: lstm
+  - model/sent_for_doc: lstm
   - model/fragment: lstm
   - model/doc: lstm
   - _self_

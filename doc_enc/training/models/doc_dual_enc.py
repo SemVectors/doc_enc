@@ -4,28 +4,20 @@
 import logging
 
 import torch
-from torch import nn
 import torch.nn.functional as F
 
-from doc_enc.training.models.model_conf import DocModelConf
+from doc_enc.training.models.base_doc_model import BaseDocModel
 from doc_enc.training.types import DocsBatch
 from doc_enc.encoders.sent_encoder import split_sents_and_embed
 
 
-class DocDualEncoder(nn.Module):
-    def __init__(self, conf: DocModelConf, sent_model, doc_encoder, frag_encoder=None):
-        super().__init__()
-        self.conf = conf
-        self.sent_model = sent_model
-        self.doc_encoder = doc_encoder
-        self.frag_encoder = frag_encoder
-
+class DocDualEncoder(BaseDocModel):
     def _embed_sents(self, sents, sent_len):
         if not self.conf.split_sents or len(sents) <= self.conf.split_size:
-            res = self.sent_model.encoder(sents, sent_len, enforce_sorted=False)
+            res = self.sent_encoder.forward(sents, sent_len, enforce_sorted=False)
             return res.pooled_out
         return split_sents_and_embed(
-            self.sent_model.encoder,
+            self.sent_encoder,
             sents,
             sent_len,
             split_size=self.conf.split_size,

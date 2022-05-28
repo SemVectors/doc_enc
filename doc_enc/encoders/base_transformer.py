@@ -6,6 +6,7 @@ import torch
 from torch import nn
 
 from doc_enc.common_types import PoolingStrategy
+from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_config import BaseEncoderConf
 from doc_enc.encoders.enc_out import BaseEncoderOut
 from doc_enc.encoders.base_pooler import BasePoolerConf, BasePooler
@@ -114,7 +115,7 @@ class _FullLayer(nn.Module):
         return self._ff(x_attn, x)
 
 
-class BaseTransformerEncoder(nn.Module):
+class BaseTransformerEncoder(BaseEncoder):
     def __init__(self, conf: BaseEncoderConf, attention: nn.Module):
         super().__init__()
         self.conf = conf
@@ -139,7 +140,7 @@ class BaseTransformerEncoder(nn.Module):
 
         return mask
 
-    def forward(self, embs, lengths, **kwargs):
+    def forward(self, embs: torch.Tensor, lengths: torch.Tensor, **kwargs) -> BaseEncoderOut:
         # embs shape: batch_sz, seq_len, hidden_dim
         embs = embs.transpose(0, 1)
         mask = self._create_key_padding_mask(embs.size()[0], lengths, embs.device)

@@ -4,7 +4,7 @@ import os
 import datetime
 import contextlib
 from enum import Enum
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, NamedTuple
 import dataclasses
 import json
 from pathlib import Path
@@ -15,6 +15,7 @@ import pkg_resources  # part of setuptools
 from omegaconf import MISSING
 
 import torch
+from torch import nn
 import torch.distributed as dist
 import torch.utils.checkpoint
 
@@ -30,8 +31,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from doc_enc.training.batch_iterator import BatchIterator
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.training.types import DocRetrLossType, TaskType, SentRetrLossType
-from doc_enc.training.models.model_factory import create_model
+from doc_enc.training.models.model_factory import create_models
 from doc_enc.training.models.model_conf import DocModelConf
+from doc_enc.training.models.base_sent_model import BaseSentModel
+from doc_enc.training.models.base_doc_model import BaseDocModel
+
 from doc_enc.training.metrics import create_metrics
 
 
@@ -48,6 +52,11 @@ class OptimKind(Enum):
     ADAM = 2
 
 
+class Models(NamedTuple):
+    sent_model: BaseSentModel
+    doc_model: BaseDocModel
+
+
 @dataclasses.dataclass
 class OptimConf:
     optim_kind: OptimKind = OptimKind.ADAM
@@ -58,6 +67,7 @@ class OptimConf:
     # LR
     common_lr: float = MISSING
     sent_lr: Optional[float] = None
+    sent_for_doc_lr: Optional[float] = None
     fragment_lr: Optional[float] = None
     doc_lr: Optional[float] = None
 
@@ -65,6 +75,7 @@ class OptimConf:
     lr_scheduler_kwargs: Dict = dataclasses.field(default_factory=dict)
     final_common_lr: float = 0.0
     final_sent_lr: Optional[float] = None
+    final_sent_for_doc_lr: Optional[float] = None
     final_fragment_lr: Optional[float] = None
     final_doc_lr: Optional[float] = None
 
@@ -80,7 +91,7 @@ class TrainerConf:
     doc_retr_loss_type: DocRetrLossType = DocRetrLossType.CE
 
     save_path: str = ''
-    resume_snapshot: str = ''
+    resume_checkpoint: str = ''
 
     use_grad_checkpoint: bool = False
     emb_grad_scale: float = 0.0
@@ -102,8 +113,7 @@ def _create_lr_scheduler(conf: TrainerConf, optimizer):
     if optim_conf.lr_scheduler == LRSchedulerKind.NONE:
         return None
     approx_iters = conf.max_updates // conf.switch_tasks_every
-    gr_num = len(optimizer.param_groups)
-    max_lr, base_lr = _create_lr_lists(optim_conf, gr_num)
+    max_lr, base_lr = _create_lr_lists(optim_conf, optimizer.param_groups)
     if optim_conf.lr_scheduler == LRSchedulerKind.MULT:
         return torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=1, end_factor=1 / 3, total_iters=approx_iters
@@ -123,30 +133,42 @@ def _create_lr_scheduler(conf: TrainerConf, optimizer):
     raise RuntimeError(f"Unknown lr scheduler: {optim_conf.lr_scheduler}")
 
 
-def _create_optimizer(conf: OptimConf, model, world_size):
+def _create_optimizer(conf: OptimConf, models: Models, world_size):
     param_groups = [
         {
-            'params': model.sent_model.encoder.parameters(),
+            'name': 'sent',
+            'params': models.sent_model.encoder.parameters(),
             'lr': conf.common_lr if conf.sent_lr is None else conf.sent_lr,
         },
         {
-            'params': model.doc_encoder.parameters(),
+            'name': 'doc',
+            'params': models.doc_model.doc_encoder.parameters(),
             'lr': conf.common_lr if conf.doc_lr is None else conf.doc_lr,
         },
     ]
-    if model.frag_encoder is not None:
+    if models.doc_model.frag_encoder is not None:
         param_groups.append(
             {
-                'params': model.frag_encoder.parameters(),
+                'name': 'frag',
+                'params': models.doc_model.frag_encoder.parameters(),
                 'lr': conf.common_lr if conf.fragment_lr is None else conf.fragment_lr,
+            }
+        )
+    sent_for_doc = models.doc_model.sent_encoder.doc_mode_encoder
+    if sent_for_doc is not None:
+        param_groups.append(
+            {
+                'name': 'sent_for_doc',
+                'params': sent_for_doc.parameters(),
+                'lr': conf.common_lr if conf.sent_for_doc_lr is None else conf.sent_for_doc_lr,
             }
         )
 
     if conf.optim_kind == OptimKind.ADAM:
         # TODO ZeRoOptim does not support param_groups in 1.11
-        # Its fixed in 1.12
+        # Its fixed in 1.12 (no)
         if world_size > 1 and conf.use_zero_optim:
-            return ZeRoOptim(model.parameters(), torch.optim.Adam, lr=conf.common_lr)
+            return ZeRoOptim(models.doc_model.parameters(), torch.optim.Adam, lr=conf.common_lr)
         return torch.optim.Adam(param_groups, lr=conf.common_lr)
     if conf.optim_kind == OptimKind.SGD:
         return torch.optim.SGD(param_groups, lr=conf.common_lr, momentum=conf.momentum)
@@ -154,26 +176,38 @@ def _create_optimizer(conf: OptimConf, model, world_size):
     raise RuntimeError(f"Unsupported optim kind: {conf.optim_kind}")
 
 
-def _create_lr_lists(conf: OptimConf, optim_group_num):
+def _create_lr_lists(conf: OptimConf, param_groups):
     def _v(v, d):
         return v if v is not None else d
 
-    if optim_group_num == 1:
+    n = len(param_groups)
+
+    if n == 1:
         # its only common lr
         final_lr = [conf.final_common_lr]
         lr = [conf.common_lr]
-    elif 1 < optim_group_num < 4:
+    elif 1 < n < 5:
         final_lr = [
             _v(conf.final_sent_lr, conf.final_common_lr),
             _v(conf.final_doc_lr, conf.final_common_lr),
         ]
         lr = [_v(conf.sent_lr, conf.common_lr), _v(conf.doc_lr, conf.common_lr)]
-        if optim_group_num == 3:
-            final_lr.append(_v(conf.final_fragment_lr, conf.final_common_lr))
-            lr.append(_v(conf.fragment_lr, conf.common_lr))
+
+        other_n = n - 2
+        while other_n:
+            pg = param_groups[-other_n]
+            if pg['name'] == 'frag':
+                final_lr.append(_v(conf.final_fragment_lr, conf.final_common_lr))
+                lr.append(_v(conf.fragment_lr, conf.common_lr))
+            elif pg['name'] == 'sent_for_doc':
+                final_lr.append(_v(conf.final_sent_for_doc_lr, conf.final_common_lr))
+                lr.append(_v(conf.sent_for_doc_lr, conf.common_lr))
+            else:
+                raise RuntimeError(f"Unknown name of param group {pg['name']}")
+            other_n -= 1
 
     else:
-        raise RuntimeError(f"Unsupported # of param groups: {optim_group_num}")
+        raise RuntimeError(f"Unsupported # of param groups: {n}")
 
     return lr, final_lr
 
@@ -185,7 +219,7 @@ class LinearLRSchedule(torch.optim.lr_scheduler._LRScheduler):
         self._conf = opts
 
         b = self.base_lrs
-        _, self._final_lrs = _create_lr_lists(opts, len(b))
+        _, self._final_lrs = _create_lr_lists(opts, optimizer.param_groups())
         self._steps = [(l - f) / total_iters for l, f in zip(b, self._final_lrs)]
         logging.info("step lrs: %s", self._steps)
 
@@ -238,43 +272,43 @@ class Trainer:
 
         self._tp_conf = tp_conf
         self._tp = TextProcessor(tp_conf)
-        self._local_model = self._create_model(model_conf)
+        self._local_models = self._create_models(model_conf)
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
             timeout = _init_dist_default_group(rank, world_size)
             self._cpu_group = dist.new_group(
                 backend='gloo', timeout=datetime.timedelta(minutes=timeout)
             )
-            self._sent_model = DDP(
-                self._local_model.sent_model,
+            self._sent_model: nn.Module = DDP(
+                self._local_models.sent_model,
                 device_ids=[rank],
                 output_device=rank,
                 bucket_cap_mb=100,
                 gradient_as_bucket_view=True,
                 find_unused_parameters=False,
-                static_graph=False,
+                static_graph=True,
             )
-            self._doc_model = DDP(
-                self._local_model,
+            self._doc_model: nn.Module = DDP(
+                self._local_models.doc_model,
                 device_ids=[rank],
                 output_device=rank,
                 bucket_cap_mb=100,
                 gradient_as_bucket_view=True,
                 find_unused_parameters=False,
-                static_graph=False,
+                static_graph=True,
             )
             self._uneven_input_handling = Join
         else:
             logging.info("Skip creating DistributedDataParallel since world size == 1")
             self._cpu_group = None
-            self._doc_model = self._local_model
-            self._sent_model = self._local_model.sent_model
+            self._doc_model: nn.Module = self._local_models.doc_model
+            self._sent_model: nn.Module = self._local_models.sent_model
             self._uneven_input_handling = contextlib.nullcontext
 
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
         self._doc_retr_criterion = torch.nn.CrossEntropyLoss()
 
-        self._optimizer = _create_optimizer(opts.optim, self._local_model, world_size)
+        self._optimizer = _create_optimizer(opts.optim, self._local_models, world_size)
 
         self._scheduler = _create_lr_scheduler(opts, self._optimizer)
         self._scaler = GradScaler(enabled=amp)
@@ -282,7 +316,7 @@ class Trainer:
         self._best_metric = 0.0
 
         self._init_epoch = 1
-        if self._conf.resume_snapshot:
+        if self._conf.resume_checkpoint:
             self._init_epoch = self._load_from_checkpoint()
 
     def _log_current_mem_usage(self, prefix=''):
@@ -300,18 +334,20 @@ class Trainer:
         dn = os.path.dirname
         return f"{bn(dn(cwd))}_{bn(cwd)}"
 
-    def _create_model(self, model_conf: DocModelConf):
-        model = create_model(model_conf, self.vocab())
+    def _create_models(self, model_conf: DocModelConf) -> Models:
+        sent_model, doc_model = create_models(model_conf, self.vocab())
         self._log_current_mem_usage('start')
-        model = model.to(self._device)
+        model = doc_model.to(self._device)
         self._log_current_mem_usage('after loading')
         logging.info("created model %s", model)
         logging.info("model loaded to %s", self._device)
-        mem_params = sum([param.nelement() * param.element_size() for param in model.parameters()])
-        mem_bufs = sum([buf.nelement() * buf.element_size() for buf in model.buffers()])
+        mem_params = sum(
+            [param.nelement() * param.element_size() for param in doc_model.parameters()]
+        )
+        mem_bufs = sum([buf.nelement() * buf.element_size() for buf in doc_model.buffers()])
         logging.info("Model params mem usage %.3f Mb", mem_params / 1024 / 1024)
         logging.info("Model buf mem usage %.3f Kb", mem_bufs / 1024)
-        return model
+        return Models(sent_model=sent_model, doc_model=doc_model)
 
     def _calc_sent_retr_loss(self, output, labels, batch_size):
         if self._conf.sent_retr_loss_type == SentRetrLossType.CE:
@@ -520,15 +556,15 @@ class Trainer:
             self._scaler.unscale_(self._optimizer)
 
             if self._conf.emb_grad_scale:
-                wgrad = self._local_model.sent_model.encoder.embed.embed_tokens.weight.grad
+                wgrad = self._local_models.sent_model.encoder.embed.embed_tokens.weight.grad
                 if wgrad is not None:
                     wgrad *= self._conf.emb_grad_scale
 
             if self._conf.max_grad_norm:
                 if task == TaskType.SENT_RETR:
-                    params = self._sent_model.parameters()
+                    params = self._local_models.sent_model.parameters()
                 else:
-                    params = self._doc_model.parameters()
+                    params = self._local_models.doc_model.parameters()
                 clip_grad_norm_(params, self._conf.max_grad_norm)
 
         self._scaler.step(self._optimizer)
@@ -711,21 +747,24 @@ class Trainer:
             dist.barrier(group=self._cpu_group)
 
     def _load_from_checkpoint(self):
-        logging.info("loading state from %s", self._conf.resume_snapshot)
-        state = torch.load(self._conf.resume_snapshot, map_location=self._device)
+        logging.info("loading state from %s", self._conf.resume_checkpoint)
+        state = torch.load(self._conf.resume_checkpoint, map_location=self._device)
         self._num_updates = state['num_updates']
         self._optimizer.load_state_dict(state['optimizer'])
         if self._scheduler is not None:
             self._scheduler.load_state_dict(state['scheduler'])
         self._scaler.load_state_dict(state['scaler'])
         self._best_metric = state['best_metric']
-        self._doc_model.load_state_dict(state['model'])
+        self._local_models.doc_model.load_state_dict(state['model'])
+        self._local_models.sent_model.encoder = (
+            self._local_models.doc_model.sent_encoder.cast_to_base()
+        )
         if isinstance(self._doc_model, DDP):
-            self._local_model = self._doc_model.module
-            self._sent_model.module = self._local_model.sent_model
+            self._doc_model.module = self._local_models.doc_model
+            self._sent_model.module = self._local_models.sent_model
         else:
-            self._local_model = self._doc_model
-            self._sent_model = self._local_model.sent_model
+            self._doc_model = self._local_models.doc_model
+            self._sent_model = self._local_models.sent_model
 
         return state['epoch']
 
@@ -739,7 +778,7 @@ class Trainer:
             state_dict = {
                 'num_updates': self._num_updates,
                 'epoch': epoch,
-                'model': self._doc_model.state_dict(),
+                'model': self._local_models.doc_model.state_dict(),
                 'optimizer': self._optimizer.state_dict(),
                 'scaler': self._scaler.state_dict(),
                 'best_metric': self._best_metric,
@@ -751,7 +790,8 @@ class Trainer:
 
     def _eval_on_dev(self, epoch, dev_iter: BatchIterator):
         with torch.no_grad():
-            self._local_model.eval()
+            self._local_models.sent_model.eval()
+            self._local_models.doc_model.eval()
             all_tasks = dev_iter.supported_tasks()
 
             metrics_per_task = {}
@@ -760,9 +800,9 @@ class Trainer:
                 cum_metrics = create_metrics(task)
                 dev_iter.init_epoch(epoch, [task])
                 if task == TaskType.SENT_RETR:
-                    model = self._local_model.sent_model
+                    model = self._local_models.sent_model
                 else:
-                    model = self._local_model
+                    model = self._local_models.doc_model
 
                 for batch, labels in dev_iter.batches(batches_cnt=0):
                     output = model.calc_sim_matrix(batch)
@@ -813,11 +853,15 @@ class Trainer:
             'model_conf': self._model_conf,
             'tp_conf': self._tp_conf,
             'tp': self._tp.state_dict(),
-            'sent_enc': self._local_model.sent_model.encoder.state_dict(),
-            'doc_enc': self._local_model.doc_encoder.state_dict(),
+            'sent_enc': self._local_models.sent_model.encoder.state_dict(),
+            'doc_enc': self._local_models.doc_model.doc_encoder.state_dict(),
         }
-        if self._local_model.frag_encoder is not None:
-            state_dict['frag_enc'] = self._local_model.frag_encoder.state_dict()
+        if self._local_models.doc_model.frag_encoder is not None:
+            state_dict['frag_enc'] = self._local_models.doc_model.frag_encoder.state_dict()
+
+        sent_for_doc = self._local_models.doc_model.sent_encoder.doc_mode_encoder
+        if sent_for_doc is not None:
+            state_dict['sent_for_doc'] = sent_for_doc.state_dict()
 
         torch.save(state_dict, out_path)
 
@@ -830,6 +874,6 @@ class Trainer:
             self._train_epoch(epoch, train_iter, dev_iter)
             train_iter.end_epoch()
             logging.info("End epoch %d", epoch)
-            epoch += 1
             if self._num_updates >= self._conf.max_updates:
                 break
+            epoch += 1

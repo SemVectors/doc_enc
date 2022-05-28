@@ -3,24 +3,17 @@
 import logging
 
 import torch
-from torch import nn
 import torch.nn.functional as F
 
-from doc_enc.training.models.model_conf import SentModelConf
+from doc_enc.training.models.base_sent_model import BaseSentModel
 from doc_enc.encoders.sent_encoder import split_sents_and_embed
-import doc_enc.encoders.enc_out as enc_out
 
 
-class SentDualEncoder(nn.Module):
-    def __init__(self, conf: SentModelConf, encoder):
-        super().__init__()
-        self.conf = conf
-        self.encoder = encoder
-
+class SentDualEncoder(BaseSentModel):
     def _embed_target(self, batch):
         if not self.conf.split_target_sents:
             # We can't sort the target input since it is aligned to source, hence enforce_sorted=False
-            res = self.encoder(batch.tgt, batch.tgt_len, enforce_sorted=False)
+            res = self.encoder.forward(batch.tgt, batch.tgt_len, enforce_sorted=False)
             return res.pooled_out
         return split_sents_and_embed(
             self.encoder,

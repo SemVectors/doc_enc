@@ -6,6 +6,7 @@ import torch
 from torch import nn
 
 from doc_enc.common_types import PoolingStrategy
+from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_config import BaseEncoderConf
 from doc_enc.encoders.enc_out import BaseEncoderOut
 from doc_enc.encoders.base_pooler import BasePoolerConf, BasePooler
@@ -33,7 +34,7 @@ class LSTMPooler(BasePooler):
         return sentemb
 
 
-class BaseLSTMEncoder(nn.Module):
+class BaseLSTMEncoder(BaseEncoder):
     def __init__(self, conf: BaseEncoderConf):
         super().__init__()
 
@@ -64,7 +65,9 @@ class BaseLSTMEncoder(nn.Module):
     def out_embs_dim(self):
         return self.output_units
 
-    def forward(self, embs, lengths, enforce_sorted=True) -> BaseEncoderOut:
+    def forward(
+        self, embs: torch.Tensor, lengths: torch.Tensor, enforce_sorted=True, **kwargs
+    ) -> BaseEncoderOut:
 
         bsz, seqlen = embs.size()[:2]
         # BS x SeqLen x Dim -> SeqLen x BS x DIM

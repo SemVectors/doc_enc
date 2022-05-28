@@ -30,7 +30,7 @@ def create_encoder(conf: BaseEncoderConf):
     raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 
 
-def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer):
+def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer) -> SentEncoder:
     if conf.emb_conf is None:
         raise RuntimeError("Specify emb configuration for sent encoder!")
 
@@ -40,7 +40,7 @@ def create_sent_encoder(conf: SentEncoderConf, vocab: AbcTokenizer):
     return SentEncoder(conf, embed, encoder)
 
 
-def create_emb_seq_encoder(conf: EmbSeqEncoderConf, sent_layer_output_size):
+def create_emb_seq_encoder(conf: EmbSeqEncoderConf, sent_layer_output_size) -> EmbSeqEncoder:
     # conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
     encoder = create_encoder(conf)
 
