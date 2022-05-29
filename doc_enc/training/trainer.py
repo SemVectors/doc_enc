@@ -83,6 +83,7 @@ class OptimConf:
 @dataclasses.dataclass
 class TrainerConf:
     tasks: List[TaskType] = dataclasses.field(default_factory=list)
+    eval_tasks: List[TaskType] = dataclasses.field(default_factory=list)
 
     optim: OptimConf = MISSING
     max_updates: int = MISSING
@@ -792,7 +793,9 @@ class Trainer:
         with torch.no_grad():
             self._local_models.sent_model.eval()
             self._local_models.doc_model.eval()
-            all_tasks = dev_iter.supported_tasks()
+            all_tasks = self._conf.eval_tasks
+            if not all_tasks:
+                all_tasks = dev_iter.supported_tasks()
 
             metrics_per_task = {}
             for task in all_tasks:
