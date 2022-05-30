@@ -5,4 +5,3 @@ defaults:
 
 model_path: /eval/models/model.pt
 use_gpu: 0
-max_sents: 1548

@@ -28,8 +28,8 @@ class DocEncoderConf:
 
     async_batch_gen: int = 2
 
-    max_sents: int = 1024
-    max_tokens: int = 0
+    max_sents: int = 2048
+    max_tokens: int = 96_000
 
 
 class FromPathsBatchGenerator:
@@ -202,7 +202,7 @@ class DocEncoder:
             sent_tensor[i, 0 : len(sent)] = torch.as_tensor(sent)
         return sent_tensor
 
-    def _encode_sents_impl(self, sents, encoder: SentEncoder):
+    def _encode_sents_impl(self, sents, encoder: SentEncoder, collect_on_cpu=False):
         cnt = len(sents)
         sent_lengths = [len(t) for t in sents]
         lengths_tensor = torch.as_tensor(sent_lengths, dtype=torch.int64, device=self._device)
@@ -214,11 +214,15 @@ class DocEncoder:
                 encoder,
                 sent_tensor,
                 lengths_tensor,
-                self._conf.max_sents,
+                max_chunk_size=self._conf.max_sents,
+                max_tokens_in_chunk=self._conf.max_tokens,
+                collect_on_cpu=collect_on_cpu,
             )
 
         res = encoder.forward(sent_tensor, lengths_tensor, enforce_sorted=False)
         sent_embs = res.pooled_out
+        if collect_on_cpu:
+            sent_embs = sent_embs.cpu()
         return sent_embs
 
     def _encode_docs_impl(self, docs, doc_fragments):
@@ -251,11 +255,11 @@ class DocEncoder:
         with torch.inference_mode():
             with autocast():
                 encoder = self._sent_layer.cast_to_base()
-                return self._encode_sents_impl(sents, encoder)
+                return self._encode_sents_impl(sents, encoder, collect_on_cpu=True)
 
     def encode_sents(self, sents):
         sent_ids = self._tp.prepare_sents(sents)
-        return self._encode_sents(sent_ids).cpu().numpy()
+        return self._encode_sents(sent_ids).numpy()
 
     def encode_docs_from_path_list(self, path_list):
         embs = []

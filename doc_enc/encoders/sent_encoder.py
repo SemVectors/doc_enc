@@ -10,6 +10,7 @@ from torch import nn
 from doc_enc.encoders import enc_out
 from doc_enc.encoders.enc_config import SentEncoderConf
 from doc_enc.encoders.base_encoder import BaseEncoder
+from doc_enc.encoders.enc_out import BaseEncoderOut
 from doc_enc.embs.token_embed import TokenEmbedding
 
 
@@ -123,35 +124,73 @@ class SentForDocEncoder(SentEncoder):
         return enc_result
 
 
+def _encoder_res_finalize(res: BaseEncoderOut, collect_on_cpu=False):
+    if collect_on_cpu:
+        return res.pooled_out.cpu()
+    return res.pooled_out
+
+
 def split_sents_and_embed(
     encoder: SentEncoder,
     sents: torch.Tensor,
     sent_lengths: torch.Tensor,
-    split_size: int,
+    max_chunk_size: int,
+    max_tokens_in_chunk: int,
+    collect_on_cpu=False,
+    already_sorted=False,
 ) -> torch.Tensor:
-    sorted_lengths, sorted_indices = torch.sort(sent_lengths, descending=True)
-    sorted_indices = sorted_indices.to(sent_lengths.device)
-    sorted_sents = sents[sorted_indices]
+    if not sent_lengths.numel():
+        return torch.FloatTensor()
+
+    max_len = torch.max(sent_lengths).item()
+    sents_cnt = sents.size(0)
+    if sents_cnt < max_chunk_size and max_len * sents_cnt < max_tokens_in_chunk:
+        res = encoder(sents, sent_lengths, enforce_sorted=False)
+        return _encoder_res_finalize(res, collect_on_cpu)
+
+    if not already_sorted:
+        sorted_lengths, sorted_indices = torch.sort(sent_lengths, descending=True)
+        sorted_indices = sorted_indices.to(sent_lengths.device)
+        sorted_sents = sents[sorted_indices]
+    else:
+        sorted_sents = sents
+        sorted_lengths = sent_lengths
+        sorted_indices = None
 
     embs = []
-    for offs in range(0, len(sents), split_size):
-        cnt = min(len(sents) - offs, split_size)
-        max_len = sorted_lengths[offs].item()
-        chunk = sorted_sents[offs : offs + cnt, :max_len]
+    beg_offs = 0
 
-        res = encoder(chunk, sorted_lengths[offs : offs + cnt], enforce_sorted=True)
-        embs.append(res.pooled_out)
+    if sorted_lengths[0].item() > max_tokens_in_chunk:
+        raise RuntimeError(
+            f"max_tokens_in_chunk ({max_tokens_in_chunk}) is too low"
+            " or max sentence size is too big"
+        )
+
+    while beg_offs < sents_cnt:
+        max_len = sorted_lengths[beg_offs].item()
+
+        cnt_by_tokens = max_tokens_in_chunk // max_len
+        cnt = min(max_chunk_size, cnt_by_tokens, sents_cnt - beg_offs)
+        chunk = sorted_sents[beg_offs : beg_offs + cnt, :max_len]
+
+        res = encoder(chunk, sorted_lengths[beg_offs : beg_offs + cnt], enforce_sorted=True)
+        embs.append(_encoder_res_finalize(res, collect_on_cpu))
+
+        beg_offs += cnt
 
     embeddings = torch.vstack(embs)
 
-    unsorted_indices = torch.empty_like(
-        sorted_indices, memory_format=torch.legacy_contiguous_format
-    )
-    unsorted_indices.scatter_(
-        0, sorted_indices, torch.arange(0, sorted_indices.numel(), device=sorted_indices.device)
-    )
+    if sorted_indices is not None:
+        unsorted_indices = torch.empty_like(
+            sorted_indices, memory_format=torch.legacy_contiguous_format, device=embeddings.device
+        )
+        unsorted_indices.scatter_(
+            0,
+            sorted_indices.to(device=embeddings.device),
+            torch.arange(0, sorted_indices.numel(), device=embeddings.device),
+        )
 
-    embeddings = embeddings.index_select(0, unsorted_indices)
+        embeddings = embeddings.index_select(0, unsorted_indices)
 
     assert len(sents) == len(embeddings), "assert wrong size of tgt after concat"
     return embeddings

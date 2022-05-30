@@ -26,32 +26,21 @@ class BaseModelConf:
     scale: float = 20.0
     margin: float = 0.0
 
-    # encoders
-    encoder: BaseEncoderConf = MISSING
+    split_sents: bool = True
+    max_chunk_size: int = 512
+    max_tokens_in_chunk: int = 48_000
 
 
 @dataclasses.dataclass
 class SentModelConf(BaseModelConf):
     encoder: SentEncoderConf = MISSING
 
-    split_target_sents: bool = False
-    split_size: int = 512
-
 
 @dataclasses.dataclass
-class DocModelConf:
-    kind: ModelKind
-
-    sent: SentModelConf
+class DocModelConf(BaseModelConf):
+    sent: SentModelConf = MISSING
     sent_for_doc: Optional[BaseEncoderConf] = None
     fragment: Optional[EmbSeqEncoderConf] = None
     doc: EmbSeqEncoderConf = MISSING
 
     freeze_base_sents_layer: bool = True
-    split_sents: bool = True
-    split_size: int = 512
-
-    # dual enc model opts
-    normalize: bool = True
-    scale: float = 20.0
-    margin: float = 0.0

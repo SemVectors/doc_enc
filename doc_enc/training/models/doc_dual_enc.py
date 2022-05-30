@@ -13,14 +13,12 @@ from doc_enc.encoders.sent_encoder import split_sents_and_embed
 
 class DocDualEncoder(BaseDocModel):
     def _embed_sents(self, sents, sent_len):
-        if not self.conf.split_sents or len(sents) <= self.conf.split_size:
-            res = self.sent_encoder.forward(sents, sent_len, enforce_sorted=False)
-            return res.pooled_out
         return split_sents_and_embed(
             self.sent_encoder,
             sents,
             sent_len,
-            split_size=self.conf.split_size,
+            max_chunk_size=self.conf.max_chunk_size,
+            max_tokens_in_chunk=self.conf.max_tokens_in_chunk,
         )
 
     def _embed_fragments(self, sent_embs, frag_len, padded_seq_len):
