@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from typing import Optional
+import copy
 
 import torch
 from torch import nn
@@ -122,7 +123,13 @@ class BaseTransformerEncoder(BaseEncoder):
         layer_cls = _BasicLayer
         if conf.full_intermediate:
             layer_cls = _FullLayer
-        self.layers = nn.ModuleList([layer_cls(conf, attention) for _ in range(conf.num_layers)])
+
+        maybe_copy = lambda m: m
+        if not conf.share_attn:
+            maybe_copy = copy.deepcopy
+        self.layers = nn.ModuleList(
+            [layer_cls(conf, maybe_copy(attention)) for _ in range(conf.num_layers)]
+        )
 
         self.pooler = TransformerPooler(conf.hidden_size, conf.pooler)
         self.output_units = conf.hidden_size

@@ -26,6 +26,7 @@ class BaseEncoderConf:
     intermediate_size: Optional[int] = None
     intermediate_activation: Optional[str] = None
     full_intermediate: bool = False
+    share_attn: bool = True
 
 
 @dataclasses.dataclass
