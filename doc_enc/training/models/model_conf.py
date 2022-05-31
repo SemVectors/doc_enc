@@ -44,3 +44,6 @@ class DocModelConf(BaseModelConf):
     doc: EmbSeqEncoderConf = MISSING
 
     freeze_base_sents_layer: bool = True
+
+    grad_tgt_sents: bool = True
+    grad_src_senst: bool = True

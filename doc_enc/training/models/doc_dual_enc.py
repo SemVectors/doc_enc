@@ -1,17 +1,36 @@
 #!/usr/bin/env python3
 #!/usr/bin/env python3
 
+import contextlib
 import logging
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
 
+from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.models.base_doc_model import BaseDocModel
 from doc_enc.training.types import DocsBatch
-from doc_enc.encoders.sent_encoder import split_sents_and_embed
+from doc_enc.encoders.sent_encoder import split_sents_and_embed, SentForDocEncoder
+from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
 
 
 class DocDualEncoder(BaseDocModel):
+    def __init__(
+        self,
+        conf: DocModelConf,
+        sent_encoder: SentForDocEncoder,
+        doc_encoder: EmbSeqEncoder,
+        frag_encoder: Optional[EmbSeqEncoder] = None,
+    ):
+        super().__init__(conf, sent_encoder, doc_encoder, frag_encoder)
+        self._src_sents_ctx_mgr = contextlib.nullcontext
+        if not conf.grad_src_senst:
+            self._src_sents_ctx_mgr = torch.no_grad
+        self._tgt_sents_ctx_mgr = contextlib.nullcontext
+        if not conf.grad_tgt_sents:
+            self._tgt_sents_ctx_mgr = torch.no_grad
+
     def _embed_sents(self, sents, sent_len):
         return split_sents_and_embed(
             self.sent_encoder,
@@ -38,8 +57,12 @@ class DocDualEncoder(BaseDocModel):
         return doc_embs
 
     def calc_sim_matrix(self, batch: DocsBatch):
-        src_sent_embs = self._embed_sents(batch.src_sents, batch.src_sent_len)
-        tgt_sent_embs = self._embed_sents(batch.tgt_sents, batch.tgt_sent_len)
+
+        with self._src_sents_ctx_mgr():
+            src_sent_embs = self._embed_sents(batch.src_sents, batch.src_sent_len)
+
+        with self._tgt_sents_ctx_mgr():
+            tgt_sent_embs = self._embed_sents(batch.tgt_sents, batch.tgt_sent_len)
 
         if self.frag_encoder is not None:
 
