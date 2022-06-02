@@ -21,12 +21,14 @@ class SentEncoder(nn.Module):
         embed: TokenEmbedding,
         encoder: BaseEncoder,
         emb_to_hidden_mapping: Optional[nn.Linear] = None,
+        pad_to_multiple_of=0,
     ):
         super().__init__()
         self.conf = conf
 
         self.embed = embed
         self.encoder = encoder
+        self.pad_to_multiple_of = pad_to_multiple_of
 
         input_size = conf.input_size if conf.input_size is not None else conf.hidden_size
         self.emb_to_hidden_mapping = emb_to_hidden_mapping
@@ -44,6 +46,11 @@ class SentEncoder(nn.Module):
         enforce_sorted=False,
         token_types=None,
     ) -> enc_out.BaseEncoderOut:
+
+        if self.pad_to_multiple_of and tokens.size(1) % self.pad_to_multiple_of != 0:
+            raise RuntimeError(
+                f"Sents should be padded in batch generator to {self.pad_to_multiple_of}"
+            )
         # embed tokens
         x = self.embed(tokens.int(), lengths=lengths, token_types=token_types)
 
@@ -62,10 +69,17 @@ class SentForDocEncoder(SentEncoder):
         embed: TokenEmbedding,
         encoder: BaseEncoder,
         emb_to_hidden_mapping: Optional[nn.Linear] = None,
+        pad_to_multiple_of=0,
         doc_mode_encoder: Optional[BaseEncoder] = None,
         freeze_base_sents_layer=True,
     ):
-        super().__init__(conf, embed, encoder, emb_to_hidden_mapping)
+        super().__init__(
+            conf,
+            embed,
+            encoder,
+            emb_to_hidden_mapping=emb_to_hidden_mapping,
+            pad_to_multiple_of=pad_to_multiple_of,
+        )
         self.doc_mode_encoder = doc_mode_encoder
         self.dropout = None
         if self.doc_mode_encoder is not None:
@@ -87,12 +101,19 @@ class SentForDocEncoder(SentEncoder):
             base_inst.embed,
             base_inst.encoder,
             base_inst.emb_to_hidden_mapping,
+            base_inst.pad_to_multiple_of,
             doc_mode_encoder=doc_mode_encoder,
             freeze_base_sents_layer=freeze_base_sents_layer,
         )
 
     def cast_to_base(self):
-        return SentEncoder(self.conf, self.embed, self.encoder, self.emb_to_hidden_mapping)
+        return SentEncoder(
+            self.conf,
+            self.embed,
+            self.encoder,
+            emb_to_hidden_mapping=self.emb_to_hidden_mapping,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+        )
 
     def base_cls_forward(self, *args, **kwargs):
         return SentEncoder.forward(self, *args, **kwargs)
@@ -136,8 +157,8 @@ def split_sents_and_embed(
     sent_lengths: torch.Tensor,
     max_chunk_size: int,
     max_tokens_in_chunk: int,
-    collect_on_cpu=False,
-    already_sorted=False,
+    collect_on_cpu: bool = False,
+    already_sorted: bool = False,
 ) -> torch.Tensor:
     if not sent_lengths.numel():
         return torch.FloatTensor()
@@ -166,8 +187,14 @@ def split_sents_and_embed(
             " or max sentence size is too big"
         )
 
+    pad_to_multiple_of = encoder.pad_to_multiple_of
+    if pad_to_multiple_of and sents.size(1) % pad_to_multiple_of != 0:
+        raise RuntimeError(f"Sents should be padded in batch generator to {pad_to_multiple_of}")
+
     while beg_offs < sents_cnt:
         max_len = sorted_lengths[beg_offs].item()
+        if pad_to_multiple_of and max_len % pad_to_multiple_of != 0:
+            max_len = ((max_len // pad_to_multiple_of) + 1) * pad_to_multiple_of
 
         cnt_by_tokens = max_tokens_in_chunk // max_len
         cnt = min(max_chunk_size, cnt_by_tokens, sents_cnt - beg_offs)

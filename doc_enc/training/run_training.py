@@ -94,6 +94,9 @@ def _run_train(rank, world_size, conf: Config):
             conf.trainer, conf.model, conf.text_proc, world_size, rank, verbose=conf.verbose
         )
         include_fragments_level = conf.model.fragment is not None
+        pad_to_multiple_of = 0
+        if conf.model.sent.encoder.attention_window:
+            pad_to_multiple_of = max(conf.model.sent.encoder.attention_window)
 
         train_iter = BatchIterator(
             conf.batches,
@@ -104,6 +107,7 @@ def _run_train(rank, world_size, conf: Config):
             rank=rank,
             world_size=world_size,
             pad_idx=trainer.vocab().pad_idx(),
+            pad_to_multiple_of=pad_to_multiple_of,
         )
 
         dev_iter = BatchIterator(
@@ -115,6 +119,7 @@ def _run_train(rank, world_size, conf: Config):
             rank=rank,
             world_size=world_size,
             pad_idx=trainer.vocab().pad_idx(),
+            pad_to_multiple_of=pad_to_multiple_of,
         )
 
         trainer(train_iter, dev_iter)

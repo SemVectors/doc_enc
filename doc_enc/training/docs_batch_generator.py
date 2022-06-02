@@ -23,6 +23,7 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
+    create_padded_tensor,
 )
 from doc_enc.utils import find_file
 from doc_enc.training.types import DocsBatch
@@ -453,6 +454,7 @@ class DocsBatchIterator(BaseBatchIterator):
         rank=0,
         world_size=-1,
         pad_idx=0,
+        pad_to_multiple_of=0,
     ):
 
         super().__init__(
@@ -473,6 +475,7 @@ class DocsBatchIterator(BaseBatchIterator):
             self._device = torch.device('cpu')
 
         self._pad_idx = pad_idx
+        self._pad_to_multiple_of = pad_to_multiple_of
         self._epoch = 0
 
     def init_epoch(self, epoch, iter_no=1):
@@ -481,27 +484,17 @@ class DocsBatchIterator(BaseBatchIterator):
         fp = f"{opts.input_dir}/{opts.meta_prefix}_{self._split}.csv"
         self._start_workers(fp, seed=10_000 * epoch + iter_no)
 
-    def _make_tensor(self, cnt, max_len, sents):
-        sent_tensor = torch.full((cnt, max_len), self._pad_idx, dtype=torch.int32)
-        for i, sent in enumerate(sents):
-            sent_tensor[i, 0 : len(sent)] = torch.as_tensor(sent)
-        return sent_tensor
-
     def _make_batch_for_retr_task(self, batch: DocsBatch):
 
-        src_lengths = torch.as_tensor(
-            [len(t) for t in batch.src_sents], dtype=torch.int64, device=self._device
+        src_max_len = len(max(batch.src_sents, key=len))
+        src_tensor, src_lengths = create_padded_tensor(
+            batch.src_sents, src_max_len, self._pad_idx, self._device, self._pad_to_multiple_of
         )
-        src_max_len = src_lengths.max().item()
-        src_tensor = self._make_tensor(len(src_lengths), src_max_len, batch.src_sents)
-        src_tensor = src_tensor.to(device=self._device)
 
-        tgt_lengths = torch.as_tensor(
-            [len(t) for t in batch.tgt_sents], dtype=torch.int64, device=self._device
+        tgt_max_len = len(max(batch.tgt_sents, key=len))
+        tgt_tensor, tgt_lengths = create_padded_tensor(
+            batch.tgt_sents, tgt_max_len, self._pad_idx, self._device, self._pad_to_multiple_of
         )
-        tgt_max_len = tgt_lengths.max().item()
-        tgt_tensor = self._make_tensor(len(tgt_lengths), tgt_max_len, batch.tgt_sents)
-        tgt_tensor = tgt_tensor.to(device=self._device)
 
         src_cnt = batch.info['src_docs_cnt']
         labels = torch.full(

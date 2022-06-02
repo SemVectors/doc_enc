@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import Optional
+from typing import Optional, List
 import dataclasses
 
 from omegaconf import MISSING
@@ -27,6 +27,8 @@ class BaseEncoderConf:
     intermediate_activation: Optional[str] = None
     full_intermediate: bool = False
     share_attn: bool = True
+    # longformer
+    attention_window: List[int] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass

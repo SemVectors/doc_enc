@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
+import logging
 from typing import Optional
-import copy
 
 import torch
 from torch import nn
@@ -30,6 +30,7 @@ class TransformerPooler(BasePooler):
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
+        # hidden_states shape: seq_len, batch_sz, hidden_dim
         if self.conf.pooling_strategy == PoolingStrategy.FIRST:
             return hidden_states[0]
 
@@ -117,18 +118,20 @@ class _FullLayer(nn.Module):
 
 
 class BaseTransformerEncoder(BaseEncoder):
-    def __init__(self, conf: BaseEncoderConf, attention: nn.Module):
+    def __init__(self, conf: BaseEncoderConf, attention_cls):
         super().__init__()
         self.conf = conf
         layer_cls = _BasicLayer
         if conf.full_intermediate:
             layer_cls = _FullLayer
 
-        maybe_copy = lambda m: m
+        attention = attention_cls(conf)
+        get_attn_for_layer = lambda i: attention
         if not conf.share_attn:
-            maybe_copy = copy.deepcopy
+            get_attn_for_layer = lambda i: attention_cls(conf, i)
+
         self.layers = nn.ModuleList(
-            [layer_cls(conf, maybe_copy(attention)) for _ in range(conf.num_layers)]
+            [layer_cls(conf, get_attn_for_layer(i)) for i in range(conf.num_layers)]
         )
 
         self.pooler = TransformerPooler(conf.hidden_size, conf.pooler)
@@ -161,7 +164,7 @@ class BaseTransformerEncoder(BaseEncoder):
 
 
 class GlobalSelfAttention(nn.Module):
-    def __init__(self, conf: BaseEncoderConf):
+    def __init__(self, conf: BaseEncoderConf, layer_id=0):
         super().__init__()
         if conf.num_heads is None:
             raise RuntimeError("Should set num_heads in encoding config")
@@ -176,5 +179,4 @@ class GlobalSelfAttention(nn.Module):
 
 class TransformerEncoder(BaseTransformerEncoder):
     def __init__(self, conf: BaseEncoderConf):
-        self_attn = GlobalSelfAttention(conf)
-        super().__init__(conf, self_attn)
+        super().__init__(conf, GlobalSelfAttention)

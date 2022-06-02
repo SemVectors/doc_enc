@@ -8,6 +8,9 @@ from doc_enc.encoders.enc_config import BaseEncoderConf
 
 
 class FourierTransform(nn.Module):
+    def __init__(self, conf: BaseEncoderConf, layer_id=0):
+        super().__init__()
+
     def forward(self, x, key_padding_mask=None):
         if key_padding_mask is None:
             raise RuntimeError("key_padding_mask is None")
@@ -20,5 +23,4 @@ class FourierTransform(nn.Module):
 
 class FNetEncoder(BaseTransformerEncoder):
     def __init__(self, conf: BaseEncoderConf):
-        fourier = FourierTransform()
-        super().__init__(conf, fourier)
+        super().__init__(conf, FourierTransform)

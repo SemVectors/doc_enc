@@ -12,6 +12,7 @@ for d in "$inp_dir"/* ; do
     model_path="$d"/model.pt
     if [ ! -e "$model_path" ]; then
         echo "$model_path does not exits"
+        continue
     fi
 
     # - +experiments=micro_lstm_15

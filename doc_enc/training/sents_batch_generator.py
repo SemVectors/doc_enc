@@ -16,6 +16,7 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
+    create_padded_tensor,
 )
 from doc_enc.training.types import SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
@@ -379,7 +380,6 @@ class SentsBatchGenerator:
 @dataclass
 class SentsBatchIteratorConf(BaseBatchIteratorConf):
     batch_generator_conf: SentsBatchGeneratorConf = MISSING
-    pad_to_multiple_of: int = 0
 
 
 class SentsBatchIterator(BaseBatchIterator):
@@ -392,6 +392,7 @@ class SentsBatchIterator(BaseBatchIterator):
         rank=0,
         world_size=-1,
         pad_idx=0,
+        pad_to_multiple_of=0,
     ):
         super().__init__(
             opts,
@@ -412,6 +413,7 @@ class SentsBatchIterator(BaseBatchIterator):
             self._device = torch.device('cpu')
 
         self._pad_idx = pad_idx
+        self._pad_to_multiple_of = pad_to_multiple_of
 
         self._epoch = 0
 
@@ -420,28 +422,15 @@ class SentsBatchIterator(BaseBatchIterator):
         src_fp = _tgt_filepath(self._opts.batch_generator_conf.input_dir, self._split)
         self._start_workers(src_fp, seed=10_000 * epoch + iter_no)
 
-    def _create_padded_tensor(self, tokens, max_len):
-        # logging.debug('make batch with max len %s for %s', str(max_len), str(tokens))
-        bs = len(tokens)
-
-        if self._opts.pad_to_multiple_of and max_len % self._opts.pad_to_multiple_of != 0:
-            max_len = (
-                (max_len // self._opts.pad_to_multiple_of) + 1
-            ) * self._opts.pad_to_multiple_of
-
-        batch = torch.full((bs, max_len), self._pad_idx, dtype=torch.int32)
-        for i in range(bs):
-            batch[i, 0 : len(tokens[i])] = torch.as_tensor(tokens[i])
-
-        batch = batch.to(device=self._device)
-        lengths = torch.as_tensor([len(t) for t in tokens], dtype=torch.int64, device=self._device)
-        return batch, lengths
-
     def _make_batch_for_retr_task(self, batch):
-        src, src_len = self._create_padded_tensor(batch.src, len(batch.src[0]))
+        src, src_len = create_padded_tensor(
+            batch.src, len(batch.src[0]), self._pad_idx, self._device, self._pad_to_multiple_of
+        )
 
         tgt_max_len = len(max(batch.tgt, key=len))
-        tgt, tgt_len = self._create_padded_tensor(batch.tgt, tgt_max_len)
+        tgt, tgt_len = create_padded_tensor(
+            batch.tgt, tgt_max_len, self._pad_idx, self._device, self._pad_to_multiple_of
+        )
 
         labels = torch.arange(0, batch.info['bs'], device=self._device)
         b = batch._replace(src=src, src_len=src_len, tgt=tgt, tgt_len=tgt_len, hn_idxs=[])

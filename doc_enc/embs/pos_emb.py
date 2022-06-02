@@ -14,7 +14,7 @@ class PositionalEmbedding(torch.nn.Module):
 
     def forward(self, embs, seq_lengths):
         # embs shape: bsz, seq, emb_dim
-        max_len = seq_lengths.max().item()
+        max_len = embs.size(1)
         cnt = len(seq_lengths)
         position_ids = torch.arange(start=1, end=max_len + 1).expand((cnt, -1)).clone()
         for i, l in enumerate(seq_lengths):

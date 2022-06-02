@@ -313,7 +313,7 @@ class Trainer:
 
         self._scheduler = _create_lr_scheduler(opts, self._optimizer)
         self._scaler = GradScaler(enabled=amp)
-        self._num_updates = 1
+        self._num_updates = 0
         self._best_metric = 0.0
 
         self._init_epoch = 1
@@ -671,7 +671,7 @@ class Trainer:
         return f"[{lrstr}]"
 
     def _train_epoch(self, epoch, train_iter: BatchIterator, dev_iter: BatchIterator):
-        epoch_updates = 1
+        epoch_updates = 0
         running_metrics = {}
         last_log_update = 0
         last_eval_update = 0
@@ -743,6 +743,12 @@ class Trainer:
                 break
 
             train_iter.switch_task()
+
+        if self._num_updates % self._conf.switch_tasks_every != 0:
+            self._num_updates = (
+                self._num_updates // self._conf.switch_tasks_every + 1
+            ) * self._conf.switch_tasks_every
+            self._sync_epoch_updates(epoch_updates)
 
         if self._cpu_group is not None:
             dist.barrier(group=self._cpu_group)

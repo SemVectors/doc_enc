@@ -85,7 +85,8 @@ class BaseLSTMEncoder(BaseEncoder):
         if self.conf.pooler.pooling_strategy == PoolingStrategy.MAX:
             pad_value = float('-inf')
         x, out_lengths = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=pad_value)
-        assert list(x.size()) == [seqlen, bsz, self.lstm_output_units]
+        expected_shape = [seqlen, bsz, self.lstm_output_units]
+        assert list(x.size()) == expected_shape, f"Got {x.size()}, but expected: {expected_shape}"
 
         sentemb = self.pooler(x, out_lengths)
 

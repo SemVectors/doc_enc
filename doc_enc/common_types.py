@@ -14,6 +14,7 @@ class EncoderKind(Enum):
     LSTM = 1
     TRANSFORMER = 2
     FNET = 3
+    LONGFORMER = 4
 
 
 class PoolingStrategy(Enum):

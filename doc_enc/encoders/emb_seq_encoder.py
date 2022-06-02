@@ -13,10 +13,17 @@ from doc_enc.encoders.base_encoder import BaseEncoder
 
 
 class EmbSeqEncoder(nn.Module):
-    def __init__(self, conf: EmbSeqEncoderConf, encoder: BaseEncoder, prev_output_size: int):
+    def __init__(
+        self,
+        conf: EmbSeqEncoderConf,
+        encoder: BaseEncoder,
+        prev_output_size: int,
+        pad_to_multiple_of: int = 0,
+    ):
         super().__init__()
         self.conf = conf
         self.encoder = encoder
+        self.pad_to_multiple_of = pad_to_multiple_of
 
         input_size = conf.input_size if conf.input_size is not None else conf.hidden_size
 
@@ -57,6 +64,9 @@ class EmbSeqEncoder(nn.Module):
         emb_sz = embs.size(1)
         # pad sequence of embs
         max_len = max(lengths) + extra_len
+        if self.pad_to_multiple_of and max_len % self.pad_to_multiple_of != 0:
+            max_len = ((max_len // self.pad_to_multiple_of) + 1) * self.pad_to_multiple_of
+
         padded_seq = torch.zeros(
             (len(lengths) * max_len, emb_sz),
             device=embs.device,
@@ -86,9 +96,10 @@ class EmbSeqEncoder(nn.Module):
         if padded_seq_len is None:
             padded_seq, max_len = self._pad_embs_seq(embs, lengths, extra_len)
         else:
-            if self.conf.add_beg_seq_token:
+            if self.conf.add_beg_seq_token or self.pad_to_multiple_of:
                 raise RuntimeError(
-                    "Unsupported option add_beg_seq_token when batch  is preliminary padded"
+                    "Unsupported option add_beg_seq_token or pad_to_multiple_of"
+                    " when batch  is preliminary padded"
                 )
             padded_seq = embs
             max_len = padded_seq_len

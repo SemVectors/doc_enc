@@ -18,6 +18,15 @@
                 sha256 = "0bq0q196v45cdzh0z3dg8cfwpn627bq5bnnszry4ybxlr79rhjsb";
             };
           });
+          transformers = pyprev.transformers.overridePythonAttrs(_:{
+            version="4.19.2";
+            src= pkgs.fetchFromGitHub{
+              owner = "huggingface";
+              repo = "transformers";
+              rev = "v4.19.2";
+              sha256 = "1k4p59zfbpv1dacrfz187yam0yaf9zpcwp8c9dzgz1nidsyzbgzn";
+            };
+          });
           mlflow-skinny = pyfinal.callPackage ./nix/mlflow-skinny.nix {};
           faiss = pyfinal.callPackage ./nix/faiss.nix {swig=pkgs.swig4;};
           doc_enc = pyfinal.callPackage ./nix {

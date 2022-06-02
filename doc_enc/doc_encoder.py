@@ -11,6 +11,7 @@ import torch
 from torch.cuda.amp.autocast_mode import autocast
 
 from doc_enc.text_processor import TextProcessor, TextProcessorConf
+from doc_enc.training.base_batch_generator import create_padded_tensor
 
 from doc_enc.encoders.enc_factory import (
     create_encoder,
@@ -196,34 +197,24 @@ class DocEncoder:
 
         logging.debug("doc layer\n:%s", self._doc_layer)
 
-    def _make_sent_tensor(self, cnt, max_len, sents):
-        sent_tensor = torch.full((cnt, max_len), self._tp.vocab().pad_idx(), dtype=torch.int32)
-        for i, sent in enumerate(sents):
-            sent_tensor[i, 0 : len(sent)] = torch.as_tensor(sent)
-        return sent_tensor
-
     def _encode_sents_impl(self, sents, encoder: SentEncoder, collect_on_cpu=False):
-        cnt = len(sents)
-        sent_lengths = [len(t) for t in sents]
-        lengths_tensor = torch.as_tensor(sent_lengths, dtype=torch.int64, device=self._device)
-        sent_tensor = self._make_sent_tensor(cnt, max(sent_lengths), sents)
-        sent_tensor = sent_tensor.to(device=self._device)
+        max_len = len(max(sents, key=len))
+        sent_tensor, lengths_tensor = create_padded_tensor(
+            sents,
+            max_len,
+            pad_idx=self._tp.vocab().pad_idx(),
+            device=self._device,
+            pad_to_multiple_of=encoder.pad_to_multiple_of,
+        )
 
-        if cnt > self._conf.max_sents:
-            return split_sents_and_embed(
-                encoder,
-                sent_tensor,
-                lengths_tensor,
-                max_chunk_size=self._conf.max_sents,
-                max_tokens_in_chunk=self._conf.max_tokens,
-                collect_on_cpu=collect_on_cpu,
-            )
-
-        res = encoder.forward(sent_tensor, lengths_tensor, enforce_sorted=False)
-        sent_embs = res.pooled_out
-        if collect_on_cpu:
-            sent_embs = sent_embs.cpu()
-        return sent_embs
+        return split_sents_and_embed(
+            encoder,
+            sent_tensor,
+            lengths_tensor,
+            max_chunk_size=self._conf.max_sents,
+            max_tokens_in_chunk=self._conf.max_tokens,
+            collect_on_cpu=collect_on_cpu,
+        )
 
     def _encode_docs_impl(self, docs, doc_fragments):
         """Each doc is a list of tokenized sentences."""

@@ -37,6 +37,7 @@ class BatchIterator:
         rank=0,
         world_size=-1,
         pad_idx=0,
+        pad_to_multiple_of=0,
     ):
 
         self._sents_batch_iterator = SentsBatchIterator(
@@ -47,6 +48,7 @@ class BatchIterator:
             rank=rank,
             world_size=world_size,
             pad_idx=pad_idx,
+            pad_to_multiple_of=pad_to_multiple_of,
         )
 
         self._docs_batch_iterator = DocsBatchIterator(
@@ -58,6 +60,7 @@ class BatchIterator:
             rank=rank,
             world_size=world_size,
             pad_idx=pad_idx,
+            pad_to_multiple_of=pad_to_multiple_of,
         )
 
         self._opts = opts

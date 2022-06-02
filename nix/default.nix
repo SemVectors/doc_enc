@@ -7,6 +7,7 @@
   sentencepiece,
   pytorch-bin,
   hydra,
+  transformers,
   boto3,
   mlflow-skinny,
   faiss,
@@ -18,7 +19,7 @@
 
 buildPythonPackage {
   pname = "doc_enc";
-  version = "0.0.8";
+  version = "0.0.9";
   inherit src;
 
 
@@ -28,7 +29,8 @@ buildPythonPackage {
     numpy
     pytorch-bin
     sentencepiece
-    hydra ]
+    hydra
+    transformers ]
   ++ lib.optionals with-training [
     boto3
     mlflow-skinny ]

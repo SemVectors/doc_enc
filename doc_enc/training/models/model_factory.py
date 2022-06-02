@@ -31,6 +31,7 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer):
         e.embed,
         e.encoder,
         emb_to_hidden_mapping=e.emb_to_hidden_mapping,
+        pad_to_multiple_of=e.pad_to_multiple_of,
         doc_mode_encoder=sent_enc_for_doc,
         freeze_base_sents_layer=conf.freeze_base_sents_layer,
     )
