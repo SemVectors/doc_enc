@@ -15,7 +15,7 @@ from doc_enc.encoders.enc_config import (
 from doc_enc.embs.emb_factory import create_emb_layer
 from doc_enc.encoders.sent_encoder import SentEncoder
 from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
-from doc_enc.encoders.base_lstm import LSTMEncoder
+from doc_enc.encoders.base_lstm import LSTMEncoder, GRUEncoder
 from doc_enc.encoders.base_transformer import TransformerEncoder
 from doc_enc.encoders.base_fnet import FNetEncoder
 from doc_enc.encoders.base_longformer import LongformerEncoder
@@ -40,6 +40,9 @@ def create_encoder(conf: BaseEncoderConf):
 
     if conf.encoder_kind == EncoderKind.LONGFORMER:
         return LongformerEncoder(conf)
+
+    if conf.encoder_kind == EncoderKind.GRU:
+        return GRUEncoder(conf)
 
     raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 

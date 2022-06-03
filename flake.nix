@@ -14,8 +14,8 @@
             version="1.12.0-rc1";
             src= pkgs.fetchurl {
               name = "torch-1.12.0-cp39-cp39-linux_x86_64.whl";
-                url = "https://download.pytorch.org/whl/nightly/cu113/torch-1.12.0.dev20220520%2Bcu113-cp39-cp39-linux_x86_64.whl";
-                sha256 = "0bq0q196v45cdzh0z3dg8cfwpn627bq5bnnszry4ybxlr79rhjsb";
+              url = "https://download.pytorch.org/whl/nightly/cu113/torch-1.12.0.dev20220520%2Bcu113-cp39-cp39-linux_x86_64.whl";
+              sha256 = "0bq0q196v45cdzh0z3dg8cfwpn627bq5bnnszry4ybxlr79rhjsb";
             };
           });
           transformers = pyprev.transformers.overridePythonAttrs(_:{

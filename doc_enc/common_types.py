@@ -15,6 +15,7 @@ class EncoderKind(Enum):
     TRANSFORMER = 2
     FNET = 3
     LONGFORMER = 4
+    GRU = 5
 
 
 class PoolingStrategy(Enum):

@@ -59,16 +59,13 @@ class LocalSelfAttention(nn.Module):
         # enable global attention of the first tokens
         attn_mask[:, 0] = 2
 
-        # TODO why?
-        # extended_attention_mask = attn_mask[:, None, None, :]
-        extended_attention_mask = attn_mask
         """
         The *attention_mask* is changed  from 0, 1, 2 to:
             - -10000: no attention
             - 0: local attention
             - +10000: global attention
         """
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        extended_attention_mask = (1.0 - attn_mask) * -10000.0
         return extended_attention_mask
 
     def forward(self, x: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None, **kwargs):

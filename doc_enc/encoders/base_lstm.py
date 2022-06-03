@@ -5,14 +5,14 @@ import logging
 import torch
 from torch import nn
 
-from doc_enc.common_types import PoolingStrategy
+from doc_enc.common_types import EncoderKind, PoolingStrategy
 from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_config import BaseEncoderConf
 from doc_enc.encoders.enc_out import BaseEncoderOut
 from doc_enc.encoders.base_pooler import BasePoolerConf, BasePooler
 
 
-class LSTMPooler(BasePooler):
+class RNNPooler(BasePooler):
     def __init__(self, emb_dim, conf: BasePoolerConf):
         super().__init__(emb_dim, conf)
         if conf.pooling_strategy not in (PoolingStrategy.MAX, PoolingStrategy.MEAN):
@@ -29,36 +29,43 @@ class LSTMPooler(BasePooler):
             sum_embeddings = torch.sum(hidden_states, dim=0)
             sentemb = sum_embeddings / lengths.unsqueeze(-1).to(sum_embeddings.device)
         else:
-            raise RuntimeError("Logic error ps_lstm")
+            raise RuntimeError("Logic error rnn_pooler")
 
         return sentemb
 
 
-class BaseLSTMEncoder(BaseEncoder):
+class BaseRNNEncoder(BaseEncoder):
     def __init__(self, conf: BaseEncoderConf):
         super().__init__()
 
         self.conf = conf
 
-        self.lstm = nn.LSTM(
+        if conf.encoder_kind == EncoderKind.LSTM:
+            rnn_cls = nn.LSTM
+        elif conf.encoder_kind == EncoderKind.GRU:
+            rnn_cls = nn.GRU
+        else:
+            raise RuntimeError(f"Unsuppored rnn kind: {conf.encoder_kind}")
+
+        self.rnn = rnn_cls(
             input_size=conf.input_size,
             hidden_size=conf.hidden_size,
             num_layers=conf.num_layers,
             bidirectional=conf.bidirectional,
             dropout=conf.dropout,
         )
-        for name, param in self.lstm.named_parameters():
+        for name, param in self.rnn.named_parameters():
             if "weight" in name:
                 param.data.uniform_(-0.1, 0.1)
 
-        lstm_output_units = conf.hidden_size
+        rnn_output_units = conf.hidden_size
         if conf.bidirectional:
-            lstm_output_units *= 2
+            rnn_output_units *= 2
 
-        self.pooler = LSTMPooler(lstm_output_units, conf.pooler)
+        self.pooler = RNNPooler(rnn_output_units, conf.pooler)
 
-        self.lstm_output_units = lstm_output_units
-        self.output_units = lstm_output_units
+        self.rnn_output_units = rnn_output_units
+        self.output_units = rnn_output_units
         if self.conf.pooler.out_size is not None:
             self.output_units = self.conf.pooler.out_size
 
@@ -78,14 +85,14 @@ class BaseLSTMEncoder(BaseEncoder):
             x, lengths.cpu(), enforce_sorted=enforce_sorted
         )
 
-        packed_outs, _ = self.lstm(packed_x)
+        packed_outs, _ = self.rnn(packed_x)
 
         # unpack outputs and apply dropout
         pad_value = 0.0
         if self.conf.pooler.pooling_strategy == PoolingStrategy.MAX:
             pad_value = float('-inf')
         x, out_lengths = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=pad_value)
-        expected_shape = [seqlen, bsz, self.lstm_output_units]
+        expected_shape = [seqlen, bsz, self.rnn_output_units]
         assert list(x.size()) == expected_shape, f"Got {x.size()}, but expected: {expected_shape}"
 
         sentemb = self.pooler(x, out_lengths)
@@ -93,5 +100,9 @@ class BaseLSTMEncoder(BaseEncoder):
         return BaseEncoderOut(sentemb, x, out_lengths)
 
 
-class LSTMEncoder(BaseLSTMEncoder):
+class LSTMEncoder(BaseRNNEncoder):
+    pass
+
+
+class GRUEncoder(BaseRNNEncoder):
     pass
