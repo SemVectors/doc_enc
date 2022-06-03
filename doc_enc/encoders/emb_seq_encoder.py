@@ -2,6 +2,7 @@
 
 import logging
 from typing import Optional, List
+import math
 
 import torch
 import torch.utils.checkpoint
@@ -111,6 +112,7 @@ class EmbSeqEncoder(nn.Module):
         emb_sz = embs.size(1)
         seqs_tensor = padded_seq.reshape(len(lengths), max_len, emb_sz)
         if self.pos_emb is not None:
+            seqs_tensor = seqs_tensor * math.sqrt(self.conf.hidden_size)
             seqs_tensor = self.pos_emb(seqs_tensor, len_tensor)
 
         enc_result = self.encoder.forward(seqs_tensor, len_tensor, **kwargs)
