@@ -130,7 +130,7 @@ def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
 
     if conf.choose_threshold:
         results = []
-        for t in range(2, 9):
+        for t in range(2, 10):
             t = t / 10
             acc = _calc_metrics(t, gold, inv_idx, doc_embs)
             m = {'threshold': t, 'acc': acc}
