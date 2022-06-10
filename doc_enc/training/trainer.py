@@ -731,12 +731,12 @@ class Trainer:
                     )
                 _reset()
 
-            if epoch_updates - last_checkpoint_update >= self._conf.checkpoint_every:
-                last_checkpoint_update = epoch_updates
+            if self._num_updates - last_checkpoint_update >= self._conf.checkpoint_every:
+                last_checkpoint_update = self._num_updates
                 self._save_checkpoint(epoch)
 
-            if epoch_updates - last_eval_update >= self._conf.eval_every:
-                last_eval_update = epoch_updates
+            if self._num_updates - last_eval_update >= self._conf.eval_every:
+                last_eval_update = self._num_updates
                 self._eval_and_save(epoch, dev_iter)
 
             if self._sync_quiting(train_iter.empty()):
