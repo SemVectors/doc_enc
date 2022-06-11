@@ -314,6 +314,8 @@ class Trainer:
         self._scheduler = _create_lr_scheduler(opts, self._optimizer)
         self._scaler = GradScaler(enabled=amp)
         self._num_updates = 0
+        self._last_eval_update = 0
+        self._last_checkpoint_update = 0
         self._best_metric = 0.0
 
         self._init_epoch = 1
@@ -674,8 +676,6 @@ class Trainer:
         epoch_updates = 0
         running_metrics = {}
         last_log_update = 0
-        last_eval_update = 0
-        last_checkpoint_update = 0
 
         def _reset():
             nonlocal running_metrics
@@ -731,12 +731,12 @@ class Trainer:
                     )
                 _reset()
 
-            if self._num_updates - last_checkpoint_update >= self._conf.checkpoint_every:
-                last_checkpoint_update = self._num_updates
+            if self._num_updates - self._last_checkpoint_update >= self._conf.checkpoint_every:
+                self._last_checkpoint_update = self._num_updates
                 self._save_checkpoint(epoch)
 
-            if self._num_updates - last_eval_update >= self._conf.eval_every:
-                last_eval_update = self._num_updates
+            if self._num_updates - self._last_eval_update >= self._conf.eval_every:
+                self._last_eval_update = self._num_updates
                 self._eval_and_save(epoch, dev_iter)
 
             if self._sync_quiting(train_iter.empty()):
