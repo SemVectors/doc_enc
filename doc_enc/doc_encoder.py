@@ -182,20 +182,41 @@ class DocEncoder:
 
         self._fragment_layer = None
         sent_embs_out_size = self._sent_layer.out_embs_dim()
-        if 'frag_enc' in state_dict:
+        if 'frag_enc' in state_dict and mc.fragment is not None:
             self._fragment_layer = create_emb_seq_encoder(mc.fragment, sent_embs_out_size)
-            self._fragment_layer.load_state_dict(state_dict['frag_enc'])
-            self._fragment_layer = self._fragment_layer.to(device=self._device).eval()
+            self._fragment_layer = self._load_layer(self._fragment_layer, state_dict['frag_enc'])
             doc_input_size = self._fragment_layer.out_embs_dim()
             logging.debug("fragment layer\n:%s", self._fragment_layer)
         else:
             doc_input_size = sent_embs_out_size
 
         self._doc_layer = create_emb_seq_encoder(mc.doc, doc_input_size)
-        self._doc_layer.load_state_dict(state_dict['doc_enc'])
-        self._doc_layer = self._doc_layer.to(device=self._device).eval()
+        self._doc_layer = self._load_layer(self._doc_layer, state_dict['doc_enc'])
 
         logging.debug("doc layer\n:%s", self._doc_layer)
+
+    def _load_layer(self, module, state_dict):
+        module.load_state_dict(state_dict)
+        return module.to(device=self._device).eval()
+
+    def load_params_from_checkpoint(self, checkpoint_path):
+        state = torch.load(checkpoint_path)
+        sent_state_dict = {}
+        doc_state_dict = {}
+        frag_state_dict = {}
+        for k, v in state['model'].items():
+            if k.startswith('sent_encoder'):
+                sent_state_dict[k.removeprefix('sent_encoder.')] = v
+            elif k.startswith('doc_encoder'):
+                doc_state_dict[k.removeprefix('doc_encoder.')] = v
+            elif k.startswith('frag_encoder'):
+                frag_state_dict[k.removeprefix('frag_encoder.')] = v
+
+        self._load_layer(self._sent_layer, sent_state_dict)
+        self._load_layer(self._doc_layer, doc_state_dict)
+
+        if frag_state_dict:
+            self._load_layer(self._fragment_layer, frag_state_dict)
 
     def _encode_sents_impl(self, sents, encoder: SentEncoder, collect_on_cpu=False):
         max_len = len(max(sents, key=len))

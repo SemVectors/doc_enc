@@ -2,7 +2,8 @@
 
 import dataclasses
 import logging
-from typing import Optional
+from typing import Optional, List
+from pathlib import Path
 
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -32,6 +33,8 @@ class Config:
     cache_embeddings: bool = True
     model_id: Optional[str] = None
 
+    eval_checkpoints: List[str] = dataclasses.field(default_factory=list)
+
 
 cs = ConfigStore.instance()
 cs.store(name="base_config", node=Config)
@@ -41,18 +44,19 @@ cs.store(name="base_sent_retrieval", group="sent_retrieval", node=SentRetrievalC
 cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 
-def _print_row(ds, metrics_dict, model_id=None):
+def _print_row(ds, metrics_dict, model_id=None, **extra):
     values = list(metrics_dict.values())
     first_values = []
     if model_id is not None:
         first_values = [model_id]
+    first_values.extend(extra.values())
     first_values.append(ds)
 
     values = first_values + [f"{v:.3f}" if isinstance(v, float) else str(v) for v in values]
     print(*values, sep=',')
 
 
-def _print_results_as_csv(conf: Config, results):
+def _print_results_as_csv(conf: Config, results, **extra):
     if not results:
         return
 
@@ -67,21 +71,47 @@ def _print_results_as_csv(conf: Config, results):
     header_prefix = ""
     if conf.model_id is not None:
         header_prefix = "model,"
+    header_prefix += ','.join(extra.keys())
+    if header_prefix:
+        header_prefix += ','
 
     header = f"{header_prefix}ds,{','.join(metrics)}"
     print(header)
     for ds, maybe_list in results:
         if isinstance(maybe_list, list):
             for m in maybe_list:
-                _print_row(ds, m, model_id=conf.model_id)
+                _print_row(ds, m, model_id=conf.model_id, **extra)
         else:
-            _print_row(ds, maybe_list, model_id=conf.model_id)
+            _print_row(ds, maybe_list, model_id=conf.model_id, **extra)
 
 
-def _print_results(conf: Config, results):
+def _print_results(conf: Config, results, **extra):
     for ds, m in results:
         logging.info("Metrics for ds: %s", ds)
+        logging.info(extra)
         logging.info(m)
+
+
+def _eval(conf, doc_encoder, **extra):
+    if conf.print_as_csv:
+        printer = _print_results_as_csv
+    else:
+        printer = _print_results
+
+    if conf.eval_doc_retrieval:
+        results = doc_retrieval_eval(conf.doc_retrieval, doc_encoder)
+        logging.info("doc retrieval results")
+        printer(conf, results, **extra)
+
+    if conf.eval_doc_matching:
+        results = doc_matching_eval(conf.doc_matching, doc_encoder)
+        logging.info("doc matching results")
+        printer(conf, results, **extra)
+
+    if conf.eval_sent_retrieval:
+        results = sent_retrieval_eval(conf.sent_retrieval, doc_encoder)
+        logging.info("sent retrieval results")
+        printer(conf, results, **extra)
 
 
 @hydra.main(config_path="conf", config_name="config")
@@ -92,25 +122,17 @@ def eval_cli(conf: Config) -> None:
         doc_encoder = CachingDocEncoder(conf.doc_encoder, conf.model_id)
     else:
         doc_encoder = DocEncoder(conf.doc_encoder)
-    if conf.print_as_csv:
-        printer = _print_results_as_csv
-    else:
-        printer = _print_results
 
-    if conf.eval_doc_retrieval:
-        results = doc_retrieval_eval(conf.doc_retrieval, doc_encoder)
-        logging.info("doc retrieval results")
-        printer(conf, results)
+    if not conf.eval_checkpoints:
+        return _eval(conf, doc_encoder)
 
-    if conf.eval_doc_matching:
-        results = doc_matching_eval(conf.doc_matching, doc_encoder)
-        logging.info("doc matching results")
-        printer(conf, results)
-
-    if conf.eval_sent_retrieval:
-        results = sent_retrieval_eval(conf.sent_retrieval, doc_encoder)
-        logging.info("sent retrieval results")
-        printer(conf, results)
+    base_dir = Path(conf.doc_encoder.model_path).parent
+    for p in conf.eval_checkpoints:
+        checkpoints = base_dir.glob(p)
+        for cp in checkpoints:
+            logging.info("loading parameters from: %s", cp)
+            doc_encoder.load_params_from_checkpoint(cp)
+            _eval(conf, doc_encoder, checkpoint=cp.with_suffix('').name)
 
 
 if __name__ == "__main__":
