@@ -72,7 +72,7 @@ def _print_results_as_csv(conf: Config, results, **extra):
     if conf.model_id is not None:
         header_prefix = "model,"
     header_prefix += ','.join(extra.keys())
-    if header_prefix:
+    if header_prefix and extra:
         header_prefix += ','
 
     header = f"{header_prefix}ds,{','.join(metrics)}"

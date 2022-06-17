@@ -16,6 +16,7 @@ class EncoderKind(Enum):
     FNET = 3
     LONGFORMER = 4
     GRU = 5
+    LOCAL_ATTN_TRANSFORMER = 6
 
 
 class PoolingStrategy(Enum):

@@ -19,6 +19,7 @@ from doc_enc.encoders.base_lstm import LSTMEncoder, GRUEncoder
 from doc_enc.encoders.base_transformer import TransformerEncoder
 from doc_enc.encoders.base_fnet import FNetEncoder
 from doc_enc.encoders.base_longformer import LongformerEncoder
+from doc_enc.encoders.base_local_transformer import LocalAttnEncoder
 
 
 def _get_extra_padding(conf: BaseEncoderConf):
@@ -43,6 +44,9 @@ def create_encoder(conf: BaseEncoderConf):
 
     if conf.encoder_kind == EncoderKind.GRU:
         return GRUEncoder(conf)
+
+    if conf.encoder_kind == EncoderKind.LOCAL_ATTN_TRANSFORMER:
+        return LocalAttnEncoder(conf)
 
     raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 
