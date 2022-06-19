@@ -32,7 +32,7 @@ def adjust_mask_dims(tensor, dim, k):
     expand_shape = [-1] * len(tensor.shape)
     expand_shape[dim] = k
     tensor = tensor.expand(*expand_shape)
-    return tensor.reshape(-1, *tensor.shape[-3:])
+    return tensor.reshape(-1, *tensor.shape[2:])
 
 
 def max_neg_value(tensor):
@@ -63,6 +63,8 @@ class LocalAttention(nn.Module):
         self.value = nn.Linear(conf.hidden_size, conf.hidden_size)
         self.dropout = nn.Dropout(conf.dropout)
 
+        self.global_query = nn.Linear(conf.hidden_size, conf.hidden_size)
+
     def _split_input_into_heads(self, x):
         # x is transformed to shape (batch_size, attention_head_count, seq_length, attention_head_size)
         # and then batches is merged with heads: (batch_size * attention_head_size, seq_length, attention_head_size)
@@ -80,13 +82,11 @@ class LocalAttention(nn.Module):
         new_shape = x.shape[:-2] + (self.conf.hidden_size,)
         return x.reshape(new_shape)
 
-    def _attn(self, q, k, v, input_mask=None):
+    def _attn(self, q, k, v, input_mask):
         """
         input should be of shape (batch_size * attention_head_size, seq_length, attention_head_size)
         input_mask - positions with True are not allowed to attend. Shape is (bs x SeqLen)
         """
-        if input_mask is None:
-            raise RuntimeError("Input mask is None")
 
         bs_with_heads, seq_len, head_embs_dim = q.shape
         assert (
@@ -127,18 +127,71 @@ class LocalAttention(nn.Module):
 
         return out
 
+    def _global_attn(
+        self,
+        input_tensor: torch.Tensor,
+        attn_out: torch.Tensor,
+        key_padding_mask: torch.Tensor,
+        key_with_heads: torch.Tensor,
+        value_with_heads: torch.Tensor,
+    ):
+        """input and attn_out shapes: bs, seq_len, embs_dim"""
+        bs, seq_len, embs_dim = input_tensor.shape
+        query_tensor = input_tensor[:, 0, :].unsqueeze(1)
+        assert (bs, 1, embs_dim) == query_tensor.shape
+
+        query = self.global_query(query_tensor)
+
+        query_with_heads = self._split_input_into_heads(query)
+        bs_with_heads, seq_len, head_embs_dim = key_with_heads.shape
+
+        dots = torch.einsum('bie,bje->bij', query_with_heads, key_with_heads) * (
+            head_embs_dim**-0.5
+        )
+        assert (bs_with_heads, 1, seq_len) == dots.shape
+
+        mask = adjust_mask_dims(key_padding_mask, 1, self.num_heads)
+        # mask: bs_with_heads, seq_len
+        dots.masked_fill_(mask.unsqueeze(1), max_neg_value(dots))
+        del mask
+
+        attn = dots.softmax(dim=-1)
+        attn = self.dropout(attn)
+
+        out = torch.einsum('bij,bje->bie', attn, value_with_heads)
+        assert (bs_with_heads, 1, head_embs_dim) == out.shape
+        out = self._restore_input_shape(out)
+        assert (bs, 1, embs_dim) == out.shape
+
+        attn_out[:, 0:1, :] = out
+        return attn_out
+
     def forward(self, hidden_states: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None):
         """hidden_states shape: seq_len,bs,embs_dim"""
+
+        if key_padding_mask is None:
+            raise RuntimeError("Input mask is None")
+
         hidden_states = hidden_states.transpose(0, 1)
 
         query = self.query(hidden_states)
         key = self.key(hidden_states)
         value = self.value(hidden_states)
 
-        query, key, value = map(self._split_input_into_heads, (query, key, value))
+        query_with_heads, key_with_heads, value_with_heads = map(
+            self._split_input_into_heads, (query, key, value)
+        )
 
-        out = self._attn(query, key, value, key_padding_mask)
+        out = self._attn(query_with_heads, key_with_heads, value_with_heads, key_padding_mask)
+
         out = self._restore_input_shape(out)
+        out = self._global_attn(
+            hidden_states,
+            out,
+            key_padding_mask,
+            key_with_heads=key_with_heads,
+            value_with_heads=value_with_heads,
+        )
 
         return out.transpose(0, 1)
 
