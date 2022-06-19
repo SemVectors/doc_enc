@@ -7,19 +7,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from doc_enc.encoders.enc_config import BaseEncoderConf
+from doc_enc.encoders.enc_config import BaseEncoderConf, LookAroundMode
 from doc_enc.encoders.base_transformer import BaseTransformerEncoder
 
 # based on https://github.com/lucidrains/local-attention/blob/master/local_attention/local_attention.py
-def exists(val):
-    return val is not None
-
-
-def default(value, d):
-    return d if not exists(value) else value
-
-
 def look_around(x, backward=1, forward=1, pad_value=-1, dim=2):
+    if backward + forward == 0:
+        return x
     t = x.shape[1]
     dims = (len(x.shape) - dim) * (0, 0)
     padded_x = F.pad(x, (*dims, backward, forward), value=pad_value)
@@ -58,6 +52,25 @@ class LocalAttention(nn.Module):
                 "hidden_size should be divisible on num_heads"
             )
 
+        self.look_backward = 0
+        self.look_forward = 0
+        if self.conf.window_look_around_mode in (
+            LookAroundMode.BACK,
+            LookAroundMode.BACK_AND_FORWARD,
+        ):
+            self.look_backward = 1
+        if self.conf.window_look_around_mode in (
+            LookAroundMode.FORWARD,
+            LookAroundMode.BACK_AND_FORWARD,
+        ):
+            self.look_forward = 1
+        logging.info(
+            "LookAroundMode: %s, window_size: %s, extended_window_size: %s",
+            self.conf.window_look_around_mode,
+            self.window_size,
+            self._extended_window_size(),
+        )
+
         self.query = nn.Linear(conf.hidden_size, conf.hidden_size)
         self.key = nn.Linear(conf.hidden_size, conf.hidden_size)
         self.value = nn.Linear(conf.hidden_size, conf.hidden_size)
@@ -84,6 +97,12 @@ class LocalAttention(nn.Module):
             .view(seq_len, bs_with_heads // self.num_heads, head_embs_dim * self.num_heads)
         )
 
+    def _extended_window_size(self):
+        return self.window_size * (1 + self.look_forward + self.look_backward)
+
+    def _look_around(self, x: torch.Tensor, **kwargs):
+        return look_around(x, backward=self.look_backward, forward=self.look_forward, **kwargs)
+
     def _attn(self, q, k, v, input_mask):
         """
         input should be of shape (batch_size * attention_head_size, seq_length, attention_head_size)
@@ -95,25 +114,30 @@ class LocalAttention(nn.Module):
             seq_len % self.window_size
         ) == 0, f'sequence length {seq_len} must be divisible by window size {self.window_size} for local attention'
 
-        windows = seq_len // self.window_size
+        windows_cnt = seq_len // self.window_size
 
-        bucket_fn = lambda t: t.reshape(bs_with_heads, windows, self.window_size, -1)
+        bucket_fn = lambda t: t.reshape(bs_with_heads, windows_cnt, self.window_size, -1)
         bq, bk, bv = map(bucket_fn, (q, k, v))
 
-        bk = look_around(bk)
-        assert (bs_with_heads, windows, 3 * self.window_size, head_embs_dim) == bk.shape
-        bv = look_around(bv)
-        assert (bs_with_heads, windows, 3 * self.window_size, head_embs_dim) == bv.shape
+        bk = self._look_around(bk)
+        assert (bs_with_heads, windows_cnt, self._extended_window_size(), head_embs_dim) == bk.shape
+        bv = self._look_around(bv)
+        assert (bs_with_heads, windows_cnt, self._extended_window_size(), head_embs_dim) == bv.shape
 
         dots = torch.einsum('bhie,bhje->bhij', bq, bk) * (head_embs_dim**-0.5)
-        assert (bs_with_heads, windows, self.window_size, 3 * self.window_size) == dots.shape
+        assert (
+            bs_with_heads,
+            windows_cnt,
+            self.window_size,
+            self._extended_window_size(),
+        ) == dots.shape
 
         mask_value = max_neg_value(dots)
 
-        input_mask = input_mask.reshape(-1, windows, self.window_size)
-        key_mask = look_around(input_mask, pad_value=True)
+        input_mask = input_mask.reshape(-1, windows_cnt, self.window_size)
+        key_mask = self._look_around(input_mask, pad_value=True)
         # input_mask: bs, windows, window_size, 1
-        # key_mask: bs, windows, 1, 3 * window_size
+        # key_mask: bs, windows, 1, extended_window_size
         mask = input_mask[:, :, :, None] + key_mask[:, :, None, :]
         mask = adjust_mask_dims(mask, 1, self.num_heads)
         # mask: bs_with_heads, windows, window_size, 3 * window_size
@@ -124,7 +148,8 @@ class LocalAttention(nn.Module):
         attn = self.dropout(attn)
 
         out = torch.einsum('bhij,bhje->bhie', attn, bv)
-        assert (bs_with_heads, windows, self.window_size, head_embs_dim) == out.shape
+        assert (bs_with_heads, windows_cnt, self.window_size, head_embs_dim) == out.shape
+
         out = out.reshape(-1, seq_len, head_embs_dim)
 
         return out
