@@ -65,22 +65,24 @@ class LocalAttention(nn.Module):
 
         self.global_query = nn.Linear(conf.hidden_size, conf.hidden_size)
 
-    def _split_input_into_heads(self, x):
-        # x is transformed to shape (batch_size, attention_head_count, seq_length, attention_head_size)
-        # and then batches is merged with heads: (batch_size * attention_head_size, seq_length, attention_head_size)
-        new_x_shape = x.shape[:-1] + (
-            self.num_heads,
-            self.conf.hidden_size // self.num_heads,
-        )
-        x = x.view(*new_x_shape).permute(0, 2, 1, 3)
-        return x.reshape(-1, *x.shape[-2:])
+    def _split_input_into_heads(self, x: torch.Tensor):
+        """x should have shape: (seq_len,bs,embs_dim)
+        out has shape: (batch_size * attention_head_size, seq_length, attention_head_size)
+        """
+        l, bs, dim = x.shape
+        x = x.contiguous().view(l, bs * self.num_heads, dim // self.num_heads)
+        return x.transpose(0, 1)
 
-    def _restore_input_shape(self, x):
-        x = x.reshape((-1, self.num_heads, *x.shape[1:]))
-        # context_layer = x.permute(0, 2, 1, 3).contiguous()
-        x = x.permute(0, 2, 1, 3)
-        new_shape = x.shape[:-2] + (self.conf.hidden_size,)
-        return x.reshape(new_shape)
+    def _restore_input_shape(self, x: torch.Tensor):
+        """input shape: bs_with_heads, seq_len, head_embs_dim;
+        output shape: seq_len, bs, embs_dim
+        """
+        bs_with_heads, seq_len, head_embs_dim = x.shape
+        return (
+            x.transpose(0, 1)
+            .contiguous()
+            .view(seq_len, bs_with_heads // self.num_heads, head_embs_dim * self.num_heads)
+        )
 
     def _attn(self, q, k, v, input_mask):
         """
@@ -135,10 +137,10 @@ class LocalAttention(nn.Module):
         key_with_heads: torch.Tensor,
         value_with_heads: torch.Tensor,
     ):
-        """input and attn_out shapes: bs, seq_len, embs_dim"""
-        bs, seq_len, embs_dim = input_tensor.shape
-        query_tensor = input_tensor[:, 0, :].unsqueeze(1)
-        assert (bs, 1, embs_dim) == query_tensor.shape
+        """input and attn_out shapes: seq_len, bs, embs_dim"""
+        seq_len, bs, embs_dim = input_tensor.shape
+        query_tensor = input_tensor[0].unsqueeze(0)
+        assert (1, bs, embs_dim) == query_tensor.shape
 
         query = self.global_query(query_tensor)
 
@@ -161,9 +163,9 @@ class LocalAttention(nn.Module):
         out = torch.einsum('bij,bje->bie', attn, value_with_heads)
         assert (bs_with_heads, 1, head_embs_dim) == out.shape
         out = self._restore_input_shape(out)
-        assert (bs, 1, embs_dim) == out.shape
+        assert (1, bs, embs_dim) == out.shape
 
-        attn_out[:, 0:1, :] = out
+        attn_out[0] = out
         return attn_out
 
     def forward(self, hidden_states: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None):
@@ -171,8 +173,6 @@ class LocalAttention(nn.Module):
 
         if key_padding_mask is None:
             raise RuntimeError("Input mask is None")
-
-        hidden_states = hidden_states.transpose(0, 1)
 
         query = self.query(hidden_states)
         key = self.key(hidden_states)
@@ -193,7 +193,7 @@ class LocalAttention(nn.Module):
             value_with_heads=value_with_heads,
         )
 
-        return out.transpose(0, 1)
+        return out
 
 
 class LocalAttnEncoder(BaseTransformerEncoder):
