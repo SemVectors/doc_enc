@@ -5,8 +5,11 @@ defaults:
 
 optim_kind: SGD
 
+weight_decay: 0.001
 common_lr: 0.001
 
 lr_scheduler: ONE_CYCLE
 lr_scheduler_kwargs:
   cycle_momentum: true
+  div_factor: 10.0
+  final_div_factor: 10.0

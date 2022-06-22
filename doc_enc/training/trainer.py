@@ -50,6 +50,9 @@ class LRSchedulerKind(Enum):
 class OptimKind(Enum):
     SGD = 1
     ADAM = 2
+    RADAM = 3
+    NADAM = 4
+    ADAMW = 5
 
 
 class Models(NamedTuple):
@@ -60,6 +63,7 @@ class Models(NamedTuple):
 @dataclasses.dataclass
 class OptimConf:
     optim_kind: OptimKind = OptimKind.ADAM
+    weight_decay: float = 0.0
     # SGD opts
     momentum: float = 0.9
     use_zero_optim: bool = True
@@ -172,16 +176,26 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             }
         )
 
-    if conf.optim_kind == OptimKind.ADAM:
-        # TODO ZeRoOptim does not support param_groups in 1.11
-        # Its fixed in 1.12 (no)
-        if world_size > 1 and conf.use_zero_optim:
-            return ZeRoOptim(models.doc_model.parameters(), torch.optim.Adam, lr=conf.common_lr)
-        return torch.optim.Adam(param_groups, lr=conf.common_lr)
     if conf.optim_kind == OptimKind.SGD:
-        return torch.optim.SGD(param_groups, lr=conf.common_lr, momentum=conf.momentum)
+        return torch.optim.SGD(
+            param_groups, lr=conf.common_lr, momentum=conf.momentum, weight_decay=conf.weight_decay
+        )
 
-    raise RuntimeError(f"Unsupported optim kind: {conf.optim_kind}")
+    if conf.optim_kind == OptimKind.ADAM:
+        adam_cls = torch.optim.Adam
+    elif conf.optim_kind == OptimKind.RADAM:
+        adam_cls = torch.optim.RAdam
+    elif conf.optim_kind == OptimKind.NADAM:
+        adam_cls = torch.optim.NAdam
+    elif conf.optim_kind == OptimKind.ADAMW:
+        adam_cls = torch.optim.AdamW
+    else:
+        raise RuntimeError(f"Unknown optimizer kind: {conf.optim_kind}")
+    # TODO ZeRoOptim does not support param_groups in 1.11
+    # Its fixed in 1.12 (no)
+    if world_size > 1 and conf.use_zero_optim:
+        return ZeRoOptim(models.doc_model.parameters(), adam_cls, lr=conf.common_lr)
+    return adam_cls(param_groups, lr=conf.common_lr, weight_decay=conf.weight_decay)
 
 
 def _create_lr_lists(conf: OptimConf, param_groups):
