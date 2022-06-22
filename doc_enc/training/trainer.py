@@ -66,6 +66,7 @@ class OptimConf:
 
     # LR
     common_lr: float = MISSING
+    emb_lr: Optional[float] = None
     sent_lr: Optional[float] = None
     sent_for_doc_lr: Optional[float] = None
     fragment_lr: Optional[float] = None
@@ -74,6 +75,7 @@ class OptimConf:
     lr_scheduler: LRSchedulerKind = LRSchedulerKind.NONE
     lr_scheduler_kwargs: Dict = dataclasses.field(default_factory=dict)
     final_common_lr: float = 0.0
+    final_emb_lr: Optional[float] = None
     final_sent_lr: Optional[float] = None
     final_sent_for_doc_lr: Optional[float] = None
     final_fragment_lr: Optional[float] = None
@@ -137,8 +139,13 @@ def _create_lr_scheduler(conf: TrainerConf, optimizer):
 def _create_optimizer(conf: OptimConf, models: Models, world_size):
     param_groups = [
         {
+            'name': 'emb',
+            'params': models.sent_model.encoder.emb_params(),
+            'lr': conf.common_lr if conf.emb_lr is None else conf.emb_lr,
+        },
+        {
             'name': 'sent',
-            'params': models.sent_model.encoder.parameters(),
+            'params': models.sent_model.encoder.enc_params(),
             'lr': conf.common_lr if conf.sent_lr is None else conf.sent_lr,
         },
         {
@@ -187,14 +194,19 @@ def _create_lr_lists(conf: OptimConf, param_groups):
         # its only common lr
         final_lr = [conf.final_common_lr]
         lr = [conf.common_lr]
-    elif 1 < n < 5:
+    elif 1 < n < 6:
         final_lr = [
+            _v(conf.final_emb_lr, conf.final_common_lr),
             _v(conf.final_sent_lr, conf.final_common_lr),
             _v(conf.final_doc_lr, conf.final_common_lr),
         ]
-        lr = [_v(conf.sent_lr, conf.common_lr), _v(conf.doc_lr, conf.common_lr)]
+        lr = [
+            _v(conf.emb_lr, conf.common_lr),
+            _v(conf.sent_lr, conf.common_lr),
+            _v(conf.doc_lr, conf.common_lr),
+        ]
 
-        other_n = n - 2
+        other_n = n - len(lr)
         while other_n:
             pg = param_groups[-other_n]
             if pg['name'] == 'frag':

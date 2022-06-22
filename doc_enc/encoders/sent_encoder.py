@@ -35,6 +35,14 @@ class SentEncoder(nn.Module):
         if emb_to_hidden_mapping is None and conf.emb_conf.emb_dim != input_size:
             self.emb_to_hidden_mapping = nn.Linear(conf.emb_conf.emb_dim, input_size)
 
+    def emb_params(self):
+        yield from self.embed.parameters()
+        if self.emb_to_hidden_mapping is not None:
+            yield from self.emb_to_hidden_mapping.parameters()
+
+    def enc_params(self):
+        yield from self.encoder.parameters()
+
     def out_embs_dim(self):
         return self.encoder.out_embs_dim()
 
