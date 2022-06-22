@@ -4,13 +4,14 @@ import torch
 
 
 class PositionalEmbedding(torch.nn.Module):
-    def __init__(self, d_model, max_len=2048):
+    def __init__(self, d_model, max_len=2047):
         super().__init__()
         self.pad_idx = 0
 
         self.position_embeddings = torch.nn.Embedding(
             max_len + 1, d_model, padding_idx=self.pad_idx
         )
+        torch.nn.init.uniform_(self.position_embeddings.weight, -0.01, 0.01)
 
     def forward(self, embs, seq_lengths):
         # embs shape: bsz, seq, emb_dim
