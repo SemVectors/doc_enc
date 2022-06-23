@@ -67,9 +67,13 @@ class ParamGroupConf:
     weight_decay: Optional[float] = None
     momentum: Optional[float] = None
 
+    max_grad_norm: Optional[float] = None
+
 
 @dataclasses.dataclass
 class OptimConf:
+    max_grad_norm: float = 0.0
+
     optim_kind: OptimKind = OptimKind.ADAM
     weight_decay: float = 0.0
     # for SGD
@@ -105,7 +109,6 @@ class TrainerConf:
 
     use_grad_checkpoint: bool = False
     emb_grad_scale: float = 0.0
-    max_grad_norm: float = 0.0
 
     switch_tasks_every: int = 10
     log_every: int = 100
@@ -152,6 +155,9 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
                 if conf.weight_decay is None
                 else conf.weight_decay,
                 'momentum': default.momentum if conf.momentum is None else conf.momentum,
+                'max_grad_norm': default.max_grad_norm
+                if conf.max_grad_norm is None
+                else conf.max_grad_norm,
             }
         )
         return group
@@ -270,7 +276,7 @@ class LinearLRSchedule(torch.optim.lr_scheduler._LRScheduler):
         self._conf = opts
 
         b = self.base_lrs
-        _, self._final_lrs = _create_lr_lists(opts, optimizer.param_groups())
+        _, self._final_lrs = _create_lr_lists(opts, optimizer.param_groups)
         self._steps = [(l - f) / total_iters for l, f in zip(b, self._final_lrs)]
         logging.info("step lrs: %s", self._steps)
 
@@ -605,7 +611,9 @@ class Trainer:
             f.write('\n\n')
 
     def _make_update(self, task):
-        if self._conf.max_grad_norm or self._conf.emb_grad_scale:
+        any_max_grad_norm = any(g['max_grad_norm'] for g in self._optimizer.param_groups)
+
+        if any_max_grad_norm or self._conf.emb_grad_scale:
             self._scaler.unscale_(self._optimizer)
 
             if self._conf.emb_grad_scale:
@@ -613,12 +621,11 @@ class Trainer:
                 if wgrad is not None:
                     wgrad *= self._conf.emb_grad_scale
 
-            if self._conf.max_grad_norm:
-                if task == TaskType.SENT_RETR:
-                    params = self._local_models.sent_model.parameters()
-                else:
-                    params = self._local_models.doc_model.parameters()
-                clip_grad_norm_(params, self._conf.max_grad_norm)
+            if any_max_grad_norm:
+                for group in self._optimizer.param_groups:
+                    max_grad_norm = group['max_grad_norm']
+                    if max_grad_norm:
+                        clip_grad_norm_(group['params'], max_grad_norm)
 
         self._scaler.step(self._optimizer)
         self._scaler.update()
