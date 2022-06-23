@@ -11,7 +11,7 @@ text_proc:
 
 trainer:
   optim:
-    common_lr: 0.0006
+    lr: 0.0006
 
 
 model:

@@ -6,4 +6,4 @@ defaults:
 lr_scheduler: NONE
 optim_kind: ADAM
 
-common_lr: 0.001
+lr: 0.001

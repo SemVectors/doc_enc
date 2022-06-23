@@ -61,29 +61,32 @@ class Models(NamedTuple):
 
 
 @dataclasses.dataclass
+class ParamGroupConf:
+    lr: Optional[float] = None
+    final_lr: Optional[float] = None
+    weight_decay: Optional[float] = None
+    momentum: Optional[float] = None
+
+
+@dataclasses.dataclass
 class OptimConf:
     optim_kind: OptimKind = OptimKind.ADAM
     weight_decay: float = 0.0
-    # SGD opts
+    # for SGD
     momentum: float = 0.9
     use_zero_optim: bool = True
 
     # LR
-    common_lr: float = MISSING
-    emb_lr: Optional[float] = None
-    sent_lr: Optional[float] = None
-    sent_for_doc_lr: Optional[float] = None
-    fragment_lr: Optional[float] = None
-    doc_lr: Optional[float] = None
+    lr: float = MISSING
+    final_lr: float = 0.0
+    emb: ParamGroupConf = ParamGroupConf()
+    sent: ParamGroupConf = ParamGroupConf()
+    sent_for_doc: ParamGroupConf = ParamGroupConf()
+    fragment: ParamGroupConf = ParamGroupConf()
+    doc: ParamGroupConf = ParamGroupConf()
 
     lr_scheduler: LRSchedulerKind = LRSchedulerKind.NONE
     lr_scheduler_kwargs: Dict = dataclasses.field(default_factory=dict)
-    final_common_lr: float = 0.0
-    final_emb_lr: Optional[float] = None
-    final_sent_lr: Optional[float] = None
-    final_sent_for_doc_lr: Optional[float] = None
-    final_fragment_lr: Optional[float] = None
-    final_doc_lr: Optional[float] = None
 
 
 @dataclasses.dataclass
@@ -141,44 +144,65 @@ def _create_lr_scheduler(conf: TrainerConf, optimizer):
 
 
 def _create_optimizer(conf: OptimConf, models: Models, world_size):
+    def _init_gr(group, default, conf):
+        group.update(
+            {
+                'lr': default.lr if conf.lr is None else conf.lr,
+                'weight_decay': default.weight_decay
+                if conf.weight_decay is None
+                else conf.weight_decay,
+                'momentum': default.momentum if conf.momentum is None else conf.momentum,
+            }
+        )
+        return group
+
     param_groups = [
-        {
-            'name': 'emb',
-            'params': models.sent_model.encoder.emb_params(),
-            'lr': conf.common_lr if conf.emb_lr is None else conf.emb_lr,
-        },
-        {
-            'name': 'sent',
-            'params': models.sent_model.encoder.enc_params(),
-            'lr': conf.common_lr if conf.sent_lr is None else conf.sent_lr,
-        },
-        {
-            'name': 'doc',
-            'params': models.doc_model.doc_encoder.parameters(),
-            'lr': conf.common_lr if conf.doc_lr is None else conf.doc_lr,
-        },
+        _init_gr(
+            {
+                'name': 'emb',
+                'params': models.sent_model.encoder.emb_params(),
+            },
+            conf,
+            conf.emb,
+        ),
+        _init_gr(
+            {
+                'name': 'sent',
+                'params': models.sent_model.encoder.enc_params(),
+            },
+            conf,
+            conf.sent,
+        ),
+        _init_gr(
+            {
+                'name': 'doc',
+                'params': models.doc_model.doc_encoder.parameters(),
+            },
+            conf,
+            conf.doc,
+        ),
     ]
     if models.doc_model.frag_encoder is not None:
         param_groups.append(
-            {
-                'name': 'frag',
-                'params': models.doc_model.frag_encoder.parameters(),
-                'lr': conf.common_lr if conf.fragment_lr is None else conf.fragment_lr,
-            }
+            _init_gr(
+                {'name': 'frag', 'params': models.doc_model.frag_encoder.parameters()},
+                conf,
+                conf.fragment,
+            )
         )
     sent_for_doc = models.doc_model.sent_encoder.doc_mode_encoder
     if sent_for_doc is not None:
         param_groups.append(
-            {
-                'name': 'sent_for_doc',
-                'params': sent_for_doc.parameters(),
-                'lr': conf.common_lr if conf.sent_for_doc_lr is None else conf.sent_for_doc_lr,
-            }
+            _init_gr(
+                {'name': 'sent_for_doc', 'params': sent_for_doc.parameters()},
+                conf,
+                conf.sent_for_doc,
+            )
         )
 
     if conf.optim_kind == OptimKind.SGD:
         return torch.optim.SGD(
-            param_groups, lr=conf.common_lr, momentum=conf.momentum, weight_decay=conf.weight_decay
+            param_groups, lr=conf.lr, momentum=conf.momentum, weight_decay=conf.weight_decay
         )
 
     if conf.optim_kind == OptimKind.ADAM:
@@ -194,8 +218,8 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
     # TODO ZeRoOptim does not support param_groups in 1.11
     # Its fixed in 1.12 (no)
     if world_size > 1 and conf.use_zero_optim:
-        return ZeRoOptim(models.doc_model.parameters(), adam_cls, lr=conf.common_lr)
-    return adam_cls(param_groups, lr=conf.common_lr, weight_decay=conf.weight_decay)
+        return ZeRoOptim(models.doc_model.parameters(), adam_cls, lr=conf.lr)
+    return adam_cls(param_groups, lr=conf.lr, weight_decay=conf.weight_decay)
 
 
 def _create_lr_lists(conf: OptimConf, param_groups):
@@ -205,30 +229,30 @@ def _create_lr_lists(conf: OptimConf, param_groups):
     n = len(param_groups)
 
     if n == 1:
-        # its only common lr
-        final_lr = [conf.final_common_lr]
-        lr = [conf.common_lr]
+        # its only one lr
+        final_lr = [conf.final_lr]
+        lr = [conf.lr]
     elif 1 < n < 6:
         final_lr = [
-            _v(conf.final_emb_lr, conf.final_common_lr),
-            _v(conf.final_sent_lr, conf.final_common_lr),
-            _v(conf.final_doc_lr, conf.final_common_lr),
+            _v(conf.emb.final_lr, conf.final_lr),
+            _v(conf.sent.final_lr, conf.final_lr),
+            _v(conf.doc.final_lr, conf.final_lr),
         ]
         lr = [
-            _v(conf.emb_lr, conf.common_lr),
-            _v(conf.sent_lr, conf.common_lr),
-            _v(conf.doc_lr, conf.common_lr),
+            _v(conf.emb.lr, conf.lr),
+            _v(conf.sent.lr, conf.lr),
+            _v(conf.doc.lr, conf.lr),
         ]
 
         other_n = n - len(lr)
         while other_n:
             pg = param_groups[-other_n]
             if pg['name'] == 'frag':
-                final_lr.append(_v(conf.final_fragment_lr, conf.final_common_lr))
-                lr.append(_v(conf.fragment_lr, conf.common_lr))
+                final_lr.append(_v(conf.fragment.final_lr, conf.final_lr))
+                lr.append(_v(conf.fragment.lr, conf.lr))
             elif pg['name'] == 'sent_for_doc':
-                final_lr.append(_v(conf.final_sent_for_doc_lr, conf.final_common_lr))
-                lr.append(_v(conf.sent_for_doc_lr, conf.common_lr))
+                final_lr.append(_v(conf.sent_for_doc.final_lr, conf.final_lr))
+                lr.append(_v(conf.sent_for_doc.lr, conf.lr))
             else:
                 raise RuntimeError(f"Unknown name of param group {pg['name']}")
             other_n -= 1
