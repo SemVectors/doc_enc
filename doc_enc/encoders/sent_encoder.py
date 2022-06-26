@@ -173,7 +173,7 @@ def split_sents_and_embed(
 
     max_len = torch.max(sent_lengths).item()
     sents_cnt = sents.size(0)
-    if sents_cnt < max_chunk_size and max_len * sents_cnt < max_tokens_in_chunk:
+    if sents_cnt <= max_chunk_size and max_len * sents_cnt < max_tokens_in_chunk:
         res = encoder(sents, sent_lengths, enforce_sorted=False)
         return _encoder_res_finalize(res, collect_on_cpu)
 

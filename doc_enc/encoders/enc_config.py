@@ -29,6 +29,7 @@ class BaseEncoderConf:
     # lstm opts
     input_size: Optional[int] = None
     bidirectional: Optional[bool] = None
+    proj_size: Optional[int] = None
     # transformer opts
     num_heads: Optional[int] = None
     intermediate_size: Optional[int] = None

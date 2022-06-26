@@ -42,8 +42,10 @@ class BaseRNNEncoder(BaseEncoder):
 
         if conf.encoder_kind == EncoderKind.LSTM:
             rnn_cls = nn.LSTM
+            kwargs = {'proj_size': conf.proj_size if conf.proj_size is not None else 0}
         elif conf.encoder_kind == EncoderKind.GRU:
             rnn_cls = nn.GRU
+            kwargs = {}
         else:
             raise RuntimeError(f"Unsuppored rnn kind: {conf.encoder_kind}")
 
@@ -53,12 +55,13 @@ class BaseRNNEncoder(BaseEncoder):
             num_layers=conf.num_layers,
             bidirectional=conf.bidirectional,
             dropout=conf.dropout,
+            **kwargs,
         )
         for name, param in self.rnn.named_parameters():
             if "weight" in name:
                 param.data.uniform_(-0.1, 0.1)
 
-        rnn_output_units = conf.hidden_size
+        rnn_output_units = conf.hidden_size if conf.proj_size is None else conf.proj_size
         if conf.bidirectional:
             rnn_output_units *= 2
 
