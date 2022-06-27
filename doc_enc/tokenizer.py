@@ -19,6 +19,10 @@ class TokenizerConf:
     add_bos: bool = False
     add_eos: bool = False
 
+    enable_sampling: bool = False
+    alpha: float = 0.1
+    nbest_size: int = -1
+
 
 class AbcTokenizer:
     def get_idx(self, token):
@@ -67,11 +71,14 @@ class Pretokenized(AbcTokenizer):
 
 
 class SentencepieceTokenizer(AbcTokenizer):
-    def __init__(self, conf: TokenizerConf) -> None:
+    def __init__(self, conf: TokenizerConf, inference_mode=False) -> None:
         self._conf = conf
+        self._inference_mode = inference_mode
         self._vocab = spm.SentencePieceProcessor()
         if conf.vocab_path is not None:
             self._vocab.Load(conf.vocab_path)
+
+        spm.set_random_generator_seed(42 * 42 + 52)
 
     def get_idx(self, token):
         self._vocab.PieceToId(token)
@@ -101,7 +108,12 @@ class SentencepieceTokenizer(AbcTokenizer):
         return prefix + sent + suffix
 
     def __call__(self, sent: str) -> List[int]:
-        sent = self._vocab.EncodeAsIds(sent)
+        if not self._inference_mode and self._conf.enable_sampling:
+            sent = self._vocab.SampleEncodeAsIds(
+                sent, alpha=self._conf.alpha, nbest_size=self._conf.nbest_size
+            )
+        else:
+            sent = self._vocab.EncodeAsIds(sent)
         return self._modify_sent(sent)
 
     def state_dict(self):
@@ -113,10 +125,10 @@ class SentencepieceTokenizer(AbcTokenizer):
         self._vocab.Load(model_proto=d['spm'])
 
 
-def create_tokenizer(conf: TokenizerConf) -> AbcTokenizer:
+def create_tokenizer(conf: TokenizerConf, inference_mode=False) -> AbcTokenizer:
     if conf.tokenizer_type == TokenizerType.PRETOKENIZED:
         return Pretokenized(conf)
     if conf.tokenizer_type == TokenizerType.SENTENCEPIECE:
-        return SentencepieceTokenizer(conf)
+        return SentencepieceTokenizer(conf, inference_mode=inference_mode)
 
     raise RuntimeError(f"{conf.tokenizer_type} is not supported")

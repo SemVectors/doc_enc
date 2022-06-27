@@ -20,10 +20,10 @@ class TextProcessorConf:
 
 
 class TextProcessor:
-    def __init__(self, conf: TextProcessorConf):
+    def __init__(self, conf: TextProcessorConf, inference_mode=False):
         self._conf = conf
 
-        self._tokenizer = create_tokenizer(conf.tokenizer)
+        self._tokenizer = create_tokenizer(conf.tokenizer, inference_mode=inference_mode)
 
     def vocab(self):
         return self._tokenizer

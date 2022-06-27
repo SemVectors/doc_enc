@@ -36,7 +36,7 @@ class DocEncoderConf:
 class FromPathsBatchGenerator:
     def __init__(self, tp_conf: TextProcessorConf, conf: DocEncoderConf, tp_state_dict) -> None:
         self._conf = conf
-        self._tp = TextProcessor(tp_conf)
+        self._tp = TextProcessor(tp_conf, inference_mode=True)
         self._tp.load_state_dict(tp_state_dict)
 
     def _gen_idxs(self, offset, i, doc_len):
@@ -159,7 +159,7 @@ class DocEncoder:
         self._tp_conf: TextProcessorConf = state_dict['tp_conf']
         self._tp_conf.tokenizer.vocab_path = None
         self._tp_state_dict = state_dict['tp']
-        self._tp = TextProcessor(self._tp_conf)
+        self._tp = TextProcessor(self._tp_conf, inference_mode=True)
         self._tp.load_state_dict(self._tp_state_dict)
 
         if conf.use_gpu is not None and torch.cuda.is_available():
