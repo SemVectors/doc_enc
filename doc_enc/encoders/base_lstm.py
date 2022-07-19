@@ -39,10 +39,14 @@ class BaseRNNEncoder(BaseEncoder):
         super().__init__()
 
         self.conf = conf
+        proj_size = 0
+        if 'proj_size' in conf and conf.proj_size is not None:
+            proj_size = conf.proj_size
 
         if conf.encoder_kind == EncoderKind.LSTM:
             rnn_cls = nn.LSTM
-            kwargs = {'proj_size': conf.proj_size if conf.proj_size is not None else 0}
+            conf.get
+            kwargs = {'proj_size': proj_size}
         elif conf.encoder_kind == EncoderKind.GRU:
             rnn_cls = nn.GRU
             kwargs = {}
@@ -61,7 +65,7 @@ class BaseRNNEncoder(BaseEncoder):
             if "weight" in name:
                 param.data.uniform_(-0.1, 0.1)
 
-        rnn_output_units = conf.hidden_size if conf.proj_size is None else conf.proj_size
+        rnn_output_units = conf.hidden_size if not proj_size else proj_size
         if conf.bidirectional:
             rnn_output_units *= 2
 
