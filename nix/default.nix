@@ -6,20 +6,16 @@
   numpy,
   sentencepiece,
   pytorch-bin,
-  hydra,
+  hydra-core,
   transformers,
-  boto3,
-  mlflow-skinny,
   faiss,
   pytest,
-  with-training ? false,
-  with-eval ? false
-
+  with-eval ? false,
 }:
 
 buildPythonPackage {
   pname = "doc_enc";
-  version = "0.0.9";
+  version = "0.0.10";
   inherit src;
 
 
@@ -29,17 +25,15 @@ buildPythonPackage {
     numpy
     pytorch-bin
     sentencepiece
-    hydra
-    transformers ]
-  ++ lib.optionals with-training [
-    boto3
-    mlflow-skinny ]
-  ++ lib.optionals with-eval [
-    mlflow-skinny
-    faiss
-  ];
+    hydra-core
+    transformers
+  ]
+   ++ lib.optionals with-eval [
+     faiss
+   ]
+  ;
 
- checkInputs = [pytest];
+  checkInputs = [pytest];
 
- checkPhase = "pytest";
+  checkPhase = "pytest";
 }
