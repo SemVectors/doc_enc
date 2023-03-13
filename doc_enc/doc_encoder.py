@@ -135,7 +135,7 @@ class BatchIterator:
 
     def batches(self):
         if not self._processes:
-            raise RuntimeError("Sent batch Iterator is not initialized!")
+            raise RuntimeError("Batch Iterator is not initialized!")
 
         finished_processes = 0
         while finished_processes < self._async_generators:
@@ -272,6 +272,21 @@ class DocEncoder:
     def encode_sents(self, sents):
         sent_ids = self._tp.prepare_sents(sents)
         return self._encode_sents(sent_ids).numpy()
+
+    def encode_sents_stream(self, sents_generator, sents_batch_size=4096):
+        sents_batch = []
+        sents_misc = []
+        for sent, *misc in sents_generator:
+            sents_batch.append(sent)
+            sents_misc.append(misc)
+            if len(sents_batch) > sents_batch_size:
+                embs = self.encode_sents(sents_batch)
+                yield sents_batch, embs, sents_misc
+                sents_batch = []
+                sents_misc = []
+        if sents_batch:
+            embs = self.encode_sents(sents_batch)
+            yield sents_batch, embs, sents_misc
 
     def encode_docs_from_path_list(self, path_list):
         embs = []
