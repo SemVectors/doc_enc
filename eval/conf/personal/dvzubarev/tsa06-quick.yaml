@@ -12,11 +12,11 @@ doc_encoder:
   max_sents: 2048
 
 doc_matching:
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
 
 doc_retrieval:
   sim_kind: COS
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
 
 sent_retrieval:
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/sent
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent

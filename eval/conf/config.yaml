@@ -1,5 +1,8 @@
 ---
 
+hydra:
+  job:
+    chdir: true
 defaults:
   - base_config
   - doc_encoder: basic

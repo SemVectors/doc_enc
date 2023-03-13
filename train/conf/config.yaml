@@ -1,5 +1,9 @@
 ---
 
+hydra:
+  job:
+    chdir: true
+
 defaults:
   - base_config
   - job_logging: default

@@ -177,7 +177,7 @@ def _preproc(conf: Config):
     logging.info("done with dev")
 
 
-@hydra.main(config_path="conf", config_name="config")
+@hydra.main(config_path=None, config_name="config", version_base=None)
 def train_cli(conf: Config) -> None:
     gpu_cnt = torch.cuda.device_count()
     if gpu_cnt <= 0:
@@ -189,7 +189,7 @@ def train_cli(conf: Config) -> None:
         sys.exit(1)
 
 
-@hydra.main(config_path="conf", config_name="config")
+@hydra.main(config_path=None, config_name="config", version_base=None)
 def preproc_cli(conf: Config) -> None:
     _preproc(conf)
 

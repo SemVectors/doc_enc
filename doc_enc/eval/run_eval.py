@@ -114,7 +114,7 @@ def _eval(conf, doc_encoder, **extra):
         printer(conf, results, **extra)
 
 
-@hydra.main(config_path="conf", config_name="config")
+@hydra.main(config_path=None, config_name="config", version_base=None)
 def eval_cli(conf: Config) -> None:
     if conf.cache_embeddings:
         if conf.model_id is None:

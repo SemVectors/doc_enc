@@ -101,7 +101,7 @@ def sent_retrieval_eval(conf: SentRetrievalConf, doc_encoder: DocEncoder):
     for dataset in conf.datasets:
         if conf.enabled_ds and dataset.name not in conf.enabled_ds:
             continue
-        logging.info("Evaling doc retrieval on %s", dataset.name)
+        logging.info("Evaling sent retrieval on %s", dataset.name)
         m = _eval_impl(conf, dataset, doc_encoder)
         results.append((dataset.name, m))
     return results
