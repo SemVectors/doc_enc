@@ -6,7 +6,7 @@
   outputs = { self, nixpkgs }:
     let pkgs = import nixpkgs {
           system = "x86_64-linux";
-          overlays = [ self.overlay ];
+          overlays = [ self.overlays.default ];
           config = {allowUnfree = true;};
         };
         python-overlay = pyfinal: pyprev: {
@@ -26,17 +26,18 @@
               py-overlay;
           })
         );
+        pypkgs = pkgs.python.pkgs;
     in {
-      overlay = final: prev: {
+      overlays.default = final: prev: {
         python = overridePython python-overlay final prev;
       };
 
       packages.x86_64-linux = {
         inherit (pkgs)
           python;
+        default = pypkgs.doc_enc_full;
       };
 
-      defaultPackage.x86_64-linux = pkgs.python.pkgs.doc_enc_full;
       trainDockerImage = pkgs.dockerTools.streamLayeredImage {
         name = "tsa04.isa.ru:5050/semvectors/doc_enc/train";
         tag = pkgs.python.pkgs.doc_enc_full.version;
@@ -63,27 +64,25 @@
         };
       };
 
-      devShell.x86_64-linux =
-        let pypkgs = pkgs.python.pkgs;
-        in
-          pkgs.mkShell {
-            inputsFrom = [ pypkgs.doc_enc_full ];
-            buildInputs = [
-              pkgs.nodePackages.pyright
-              pkgs.nodePackages.bash-language-server
-              pkgs.shellcheck
-              pkgs.yamllint
-              pypkgs.pylint
-              pypkgs.black
-              pypkgs.debugpy
-              pypkgs.jupyter_server
-            ];
+      devShells.x86_64-linux.default =
+        pkgs.mkShell {
+          inputsFrom = [ pypkgs.doc_enc_full ];
+          buildInputs = [
+            pkgs.nodePackages.pyright
+            pkgs.nodePackages.bash-language-server
+            pkgs.shellcheck
+            pkgs.yamllint
+            pypkgs.pylint
+            pypkgs.black
+            pypkgs.debugpy
+            pypkgs.jupyter_server
+          ];
 
-            shellHook=''
+          shellHook=''
             #https://github.com/NixOS/nixpkgs/issues/11390
             export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
             '';
-          };
+        };
     };
 
 }

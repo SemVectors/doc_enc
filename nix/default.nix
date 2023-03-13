@@ -33,7 +33,7 @@ buildPythonPackage {
    ]
   ;
 
-  checkInputs = [pytest];
+  nativeCheckInputs = [pytest];
 
   checkPhase = "pytest";
 }
