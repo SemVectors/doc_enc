@@ -75,7 +75,7 @@
             pypkgs.pylint
             pypkgs.black
             pypkgs.debugpy
-            pypkgs.jupyter_server
+            pypkgs.ipykernel
           ];
 
           shellHook=''

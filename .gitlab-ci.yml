@@ -12,7 +12,7 @@ stages:
 build:
   stage: build
   script:
-    - nix run "$BUILD_FLAKE" -- -S -i . -a "$CI_PROJECT_NAME"
+    - nix run "$BUILD_FLAKE" -- -S -i .
   artifacts:
     reports:
       # build.env is created by BUILD_FLAKE when -S switch is presented

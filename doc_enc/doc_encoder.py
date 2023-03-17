@@ -154,20 +154,19 @@ class BatchIterator:
 class DocEncoder:
     def __init__(self, conf: DocEncoderConf) -> None:
         self._conf = conf
-
-        state_dict = torch.load(conf.model_path)
-        self._tp_conf: TextProcessorConf = state_dict['tp_conf']
-        self._tp_conf.tokenizer.vocab_path = None
-        self._tp_state_dict = state_dict['tp']
-        self._tp = TextProcessor(self._tp_conf, inference_mode=True)
-        self._tp.load_state_dict(self._tp_state_dict)
-
         if conf.use_gpu is not None and torch.cuda.is_available():
             logging.info("Computing on gpu:%s", conf.use_gpu)
             self._device = torch.device(f'cuda:{conf.use_gpu}')
         else:
             logging.info("Computing on cpu")
             self._device = torch.device('cpu')
+
+        state_dict = torch.load(conf.model_path, map_location=self._device)
+        self._tp_conf: TextProcessorConf = state_dict['tp_conf']
+        self._tp_conf.tokenizer.vocab_path = None
+        self._tp_state_dict = state_dict['tp']
+        self._tp = TextProcessor(self._tp_conf, inference_mode=True)
+        self._tp.load_state_dict(self._tp_state_dict)
 
         mc: DocModelConf = state_dict['model_conf']
         base_sent_enc = create_sent_encoder(mc.sent.encoder, self._tp.vocab())
