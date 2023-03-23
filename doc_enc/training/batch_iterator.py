@@ -36,6 +36,7 @@ class BatchIterator:
         include_fragments_level=True,
         rank=0,
         world_size=-1,
+        device=None,
         pad_idx=0,
         pad_to_multiple_of=0,
     ):
@@ -47,6 +48,7 @@ class BatchIterator:
             split=split,
             rank=rank,
             world_size=world_size,
+            device=device,
             pad_idx=pad_idx,
             pad_to_multiple_of=pad_to_multiple_of,
         )
@@ -59,6 +61,7 @@ class BatchIterator:
             include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
+            device=device,
             pad_idx=pad_idx,
             pad_to_multiple_of=pad_to_multiple_of,
         )

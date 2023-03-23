@@ -396,10 +396,12 @@ class SentsBatchIterator(BaseBatchIterator):
         split,
         rank=0,
         world_size=-1,
+        device=None,
         pad_idx=0,
         pad_to_multiple_of=0,
     ):
         super().__init__(
+            "SentsIter",
             opts,
             logging_conf,
             SentsBatchGenerator,
@@ -412,10 +414,9 @@ class SentsBatchIterator(BaseBatchIterator):
 
         self._split = split
 
-        if torch.cuda.is_available():
-            self._device = torch.device(f'cuda:{rank}')
-        else:
-            self._device = torch.device('cpu')
+        if device is None:
+            device = torch.device('cpu')
+        self._device = device
 
         self._pad_idx = pad_idx
         self._pad_to_multiple_of = pad_to_multiple_of

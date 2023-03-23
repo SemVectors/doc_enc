@@ -19,7 +19,7 @@ def _split_between_nproc(n, start_offs, line_cnt):
 
 
 def _generator_proc_wrapper(
-    queue: multiprocessing.Queue, logging_conf, rank, GenCls, *args, seed=None, **kwargs
+    queue: multiprocessing.Queue, logging_conf, is_master, GenCls, *args, seed=None, **kwargs
 ):
     if seed is None:
         seed = 42 * 42 + 51
@@ -27,7 +27,7 @@ def _generator_proc_wrapper(
 
     if logging_conf:
         configure_log(logging_conf, False)
-        if rank != 0:
+        if not is_master:
             logging.getLogger().setLevel(logging.WARNING)
     try:
         generator = GenCls(*args, **kwargs)
@@ -74,6 +74,7 @@ class BaseBatchIteratorConf:
 class BaseBatchIterator:
     def __init__(
         self,
+        name: str,
         opts: BaseBatchIteratorConf,
         logging_conf,
         generator_cls=None,
@@ -81,6 +82,7 @@ class BaseBatchIterator:
         rank=0,
         world_size=-1,
     ):
+        self._name = name
         self._opts = opts
         self._logging_conf = logging_conf
         self._generator_cls = generator_cls
@@ -120,6 +122,13 @@ class BaseBatchIterator:
 
     def _start_workers(self, filepath, seed=None):
         rank_offs, per_rank_lines = self._get_line_offs_for_rank(filepath)
+        logging.info(
+            "%s split for rank=%d: offs=%d; lines=%d",
+            self._name,
+            self._rank,
+            rank_offs,
+            per_rank_lines,
+        )
         r = _split_between_nproc(
             self._opts.async_generators, start_offs=rank_offs, line_cnt=per_rank_lines
         )
@@ -130,7 +139,7 @@ class BaseBatchIterator:
                 args=(
                     self._queue,
                     self._logging_conf,
-                    self._rank,
+                    self._rank == 0,
                     self._generator_cls,
                 )
                 + self._generator_args,
@@ -146,7 +155,7 @@ class BaseBatchIterator:
 
         finished_processes = 0
         while finished_processes < self._opts.async_generators:
-            logging.debug("queue len: %s", self._queue.qsize())
+            logging.debug("%s queue len: %s", self._name, self._queue.qsize())
             batch = self._queue.get()
             if batch is None:
                 finished_processes += 1

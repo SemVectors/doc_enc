@@ -1,0 +1,29 @@
+# @package _global_
+defaults:
+  - /base_config
+  - _self_
+
+trainer:
+  max_updates: 1100
+  eval_every: 300
+  checkpoint_every: 500
+  switch_tasks_every: 10
+
+text_proc:
+  min_sent_len: 3
+  tokenizer:
+    vocab_path: /srv/apps/doc-enc-work-dir/unigram_96k_from_100M.spm.model
+
+batches:
+  sents_batch_iterator_conf:
+    batch_generator_conf:
+      input_dir: /srv/apps/doc-enc-work-dir/sents-mini
+
+  docs_batch_iterator_conf:
+    async_generators: 1
+    include_datasets:
+      - mini
+    batch_generator_conf:
+      pad_src_sentences: false
+      batch_src_sents_cnt: 128
+      input_dir: /srv/apps/doc-enc-work-dir/docs-mini

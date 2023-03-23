@@ -296,17 +296,6 @@ class LinearLRSchedule(torch.optim.lr_scheduler._LRScheduler):
         return [group['lr'] - s for group, s in zip(self.optimizer.param_groups, self._steps)]
 
 
-def _init_dist_default_group(rank, world_size, port='29500'):
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = port
-    os.environ['NCCL_ASYNC_ERROR_HANDLING'] = '1'
-    timeout = int(os.environ.get("TORCH_DIST_TIMEOUT_MIN", "5"))
-    dist.init_process_group(
-        'nccl', rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=timeout)
-    )
-    return timeout
-
-
 class Trainer:
     def __init__(
         self,
@@ -314,7 +303,8 @@ class Trainer:
         model_conf: DocModelConf,
         tp_conf: TextProcessorConf,
         world_size,
-        rank,
+        is_master,
+        local_rank,
         amp=True,
         verbose=False,
     ):
@@ -323,9 +313,9 @@ class Trainer:
             self._conf.save_path = os.getcwd()
 
         self._model_conf = model_conf
-        self._rank = rank
+        self._is_master = is_master
         self._world_size = world_size
-        self._device = torch.device(f'cuda:{rank}')
+        self._device = torch.device(f'cuda:{local_rank}')
         self._amp_enabled = amp
         self._verbose = verbose
 
@@ -334,16 +324,14 @@ class Trainer:
         self._tp_conf = tp_conf
         self._tp = TextProcessor(tp_conf)
         self._local_models = self._create_models(model_conf)
+
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
-            timeout = _init_dist_default_group(rank, world_size)
-            self._sync_group = dist.new_group(
-                backend='gloo', timeout=datetime.timedelta(minutes=timeout)
-            )
+            self._sync_group = dist.new_group(backend='gloo', timeout=datetime.timedelta(minutes=1))
             self._sent_model: nn.Module = DDP(
                 self._local_models.sent_model,
-                device_ids=[rank],
-                output_device=rank,
+                device_ids=[local_rank],
+                output_device=local_rank,
                 bucket_cap_mb=100,
                 gradient_as_bucket_view=True,
                 find_unused_parameters=False,
@@ -351,8 +339,8 @@ class Trainer:
             )
             self._doc_model: nn.Module = DDP(
                 self._local_models.doc_model,
-                device_ids=[rank],
-                output_device=rank,
+                device_ids=[local_rank],
+                output_device=local_rank,
                 bucket_cap_mb=100,
                 gradient_as_bucket_view=True,
                 find_unused_parameters=False,
@@ -405,9 +393,9 @@ class Trainer:
         logging.info("created model %s", model)
         logging.info("model loaded to %s", self._device)
         mem_params = sum(
-            [param.nelement() * param.element_size() for param in doc_model.parameters()]
+            param.nelement() * param.element_size() for param in doc_model.parameters()
         )
-        mem_bufs = sum([buf.nelement() * buf.element_size() for buf in doc_model.buffers()])
+        mem_bufs = sum(buf.nelement() * buf.element_size() for buf in doc_model.buffers())
         logging.info("Model params mem usage %.3f Mb", mem_params / 1024 / 1024)
         logging.info("Model buf mem usage %.3f Kb", mem_bufs / 1024)
         return Models(sent_model=sent_model, doc_model=doc_model)
@@ -682,7 +670,7 @@ class Trainer:
             self._num_updates += 1
             logging.debug("update done")
 
-            if self._rank == 0 and self._conf.debug_iters:
+            if self._is_master and self._conf.debug_iters:
                 l = [self._num_updates % int(v) for v in self._conf.debug_iters]
                 if not all(l):
                     meta = {'task': task, 'loss': loss.item()}
@@ -776,7 +764,7 @@ class Trainer:
             if epoch_updates - last_log_update >= self._conf.log_every:
                 last_log_update = epoch_updates
                 running_metrics = self._collect_metrics(running_metrics)
-                if self._rank == 0:
+                if self._is_master:
                     sm = ''
                     for t, m in running_metrics.items():
                         tstr = "SR" if t == TaskType.SENT_RETR else "DR"
@@ -840,7 +828,7 @@ class Trainer:
         snapshot_path = Path(self._conf.save_path) / f'checkpoint_{epoch}_{self._num_updates}.pt'
         if isinstance(self._optimizer, ZeRoOptim):
             self._optimizer.consolidate_state_dict(to=0)
-        if self._rank == 0:
+        if self._is_master:
             logging.info("Saving new checkpoint")
 
             state_dict = {
@@ -887,7 +875,7 @@ class Trainer:
         logging.info("Evaling on dev...")
         m_per_task = self._eval_on_dev(epoch, dev_iter)
         m_per_task = self._collect_metrics(m_per_task)
-        if self._rank == 0:
+        if self._is_master:
             logging.info("Results on dev data")
             for task, m in m_per_task.items():
                 logging.info(

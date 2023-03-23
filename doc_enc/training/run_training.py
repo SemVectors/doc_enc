@@ -7,6 +7,7 @@ from typing import Dict, Any
 from dataclasses import dataclass
 from pathlib import Path
 import random
+import datetime
 
 import hydra
 from hydra.core.utils import configure_log
@@ -57,7 +58,33 @@ cs.store(name="base_frag_encoder_config", group="model/fragment", node=EmbSeqEnc
 cs.store(name="base_doc_encoder_config", group="model/doc", node=EmbSeqEncoderConf)
 
 
-def _init_proc(rank, world_size, conf: Config):
+def _init_dist_default_group(local_rank, local_world_size, port='29500'):
+    world_size = int(os.environ.get('TORCH_DIST_WORLD_SIZE', local_world_size))
+
+    if (rank := os.environ.get('TORCH_DIST_RANK')) is not None:
+        rank = int(rank)
+        rank += local_rank
+    else:
+        rank = local_rank
+
+    if 'MASTER_ADDR' not in os.environ:
+        if rank == 0:
+            os.environ['MASTER_ADDR'] = '0.0.0.0'
+        else:
+            os.environ['MASTER_ADDR'] = '127.0.0.1'
+    if 'MASTER_PORT' not in os.environ:
+        os.environ['MASTER_PORT'] = port
+
+    os.environ['NCCL_ASYNC_ERROR_HANDLING'] = '1'
+    timeout = int(os.environ.get("TORCH_DIST_TIMEOUT_MIN", "5"))
+    dist.init_process_group(
+        'nccl', rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=timeout)
+    )
+    return rank, world_size
+
+
+def _init_proc(local_rank, local_world_size, conf: Config):
+    rank, world_size = _init_dist_default_group(local_rank, local_world_size)
     configure_log(conf.job_logging, conf.verbose)
     if not conf.enable_log_for_all_procs and rank != 0:
         logging.getLogger().setLevel(logging.WARNING)
@@ -69,13 +96,14 @@ def _init_proc(rank, world_size, conf: Config):
             conf.batches.docs_batch_iterator_conf.async_generators > 1
             or conf.batches.sents_batch_iterator_conf.async_generators > 1
         ):
-            if rank == 0:
-                logging.error("set async_generators==1 in all batch_iterators")
+            logging.error("set async_generators==1 in all batch_iterators")
             raise RuntimeError("force_determinism is true but some async_generators > 1")
 
-    torch.cuda.set_device(rank)
     torch.manual_seed(2022 * 8)
     random.seed(2022 * 9)
+
+    logging.info("Inited proc with rank=%d (ws=%d), local_rank=%d", rank, world_size, local_rank)
+    return rank, world_size
 
 
 def _destroy_proc(world_size):
@@ -83,21 +111,29 @@ def _destroy_proc(world_size):
         dist.destroy_process_group()
 
 
-def _run_train(rank, world_size, conf: Config):
-    _init_proc(rank, world_size, conf)
+def _run_train(local_rank, local_world_size, conf: Config):
+    logging.info("lrank=%s", local_rank)
+    rank, world_size = _init_proc(local_rank, local_world_size, conf)
 
     train_iter = None
     dev_iter = None
     try:
 
         trainer = Trainer(
-            conf.trainer, conf.model, conf.text_proc, world_size, rank, verbose=conf.verbose
+            conf.trainer,
+            conf.model,
+            conf.text_proc,
+            world_size=world_size,
+            is_master=(rank == 0),
+            local_rank=local_rank,
+            verbose=conf.verbose,
         )
         include_fragments_level = conf.model.fragment is not None
         pad_to_multiple_of = 0
         if conf.model.sent.encoder.attention_window:
             pad_to_multiple_of = max(conf.model.sent.encoder.attention_window)
 
+        batch_device = torch.device(f'cuda:{local_rank}')
         train_iter = BatchIterator(
             conf.batches,
             conf.text_proc,
@@ -106,6 +142,7 @@ def _run_train(rank, world_size, conf: Config):
             include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
+            device=batch_device,
             pad_idx=trainer.vocab().pad_idx(),
             pad_to_multiple_of=pad_to_multiple_of,
         )
@@ -118,6 +155,7 @@ def _run_train(rank, world_size, conf: Config):
             include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
+            device=batch_device,
             pad_idx=trainer.vocab().pad_idx(),
             pad_to_multiple_of=pad_to_multiple_of,
         )
