@@ -102,10 +102,13 @@ class SentsBatchGenerator:
     def _init_files(self):
         if self._src_file is not None:
             skip_to_line(self._src_file, self._line_num)
+            logging.info("initialized sents src file")
         if self._tgt_file is not None:
             skip_to_line(self._tgt_file, self._line_num)
+            logging.info("initialized sents tgt file")
         if self._dup_file is not None:
             skip_to_line(self._dup_file, self._line_num)
+            logging.info("initialized sents dups file")
         else:
             self._dup_file = itertools.repeat(None)
 
@@ -130,6 +133,8 @@ class SentsBatchGenerator:
                     break
                 last_pos = self._hn_file.tell()
                 line = self._hn_file.readline()
+
+            logging.info("initialized sents hn file")
 
     def _sort_within_bucket(self, bucket):
         # sort by length of src in a decreasing order

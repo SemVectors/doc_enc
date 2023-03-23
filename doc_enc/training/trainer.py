@@ -78,7 +78,7 @@ class OptimConf:
     weight_decay: float = 0.0
     # for SGD
     momentum: float = 0.9
-    use_zero_optim: bool = True
+    use_zero_optim: bool = False
 
     # LR
     lr: float = MISSING
@@ -162,6 +162,7 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
         )
         return group
 
+    logging.info("create optimizer %s", conf.optim_kind)
     param_groups = [
         _init_gr(
             {
@@ -188,6 +189,7 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             conf.doc,
         ),
     ]
+
     if models.doc_model.frag_encoder is not None:
         param_groups.append(
             _init_gr(
@@ -224,7 +226,9 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
     # TODO ZeRoOptim does not support param_groups in 1.11
     # Its fixed in 1.12 (no)
     if world_size > 1 and conf.use_zero_optim:
-        return ZeRoOptim(models.doc_model.parameters(), adam_cls, lr=conf.lr)
+        logging.info("creating ZeRoOptim optimizer")
+        return ZeRoOptim(param_groups, adam_cls, lr=conf.lr)
+
     return adam_cls(param_groups, lr=conf.lr, weight_decay=conf.weight_decay)
 
 
@@ -333,7 +337,7 @@ class Trainer:
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
             timeout = _init_dist_default_group(rank, world_size)
-            self._cpu_group = dist.new_group(
+            self._sync_group = dist.new_group(
                 backend='gloo', timeout=datetime.timedelta(minutes=timeout)
             )
             self._sent_model: nn.Module = DDP(
@@ -357,7 +361,7 @@ class Trainer:
             self._uneven_input_handling = Join
         else:
             logging.info("Skip creating DistributedDataParallel since world size == 1")
-            self._cpu_group = None
+            self._sync_group = None
             self._doc_model: nn.Module = self._local_models.doc_model
             self._sent_model: nn.Module = self._local_models.sent_model
             self._uneven_input_handling = contextlib.nullcontext
@@ -695,23 +699,23 @@ class Trainer:
 
     def _sync_epoch_updates(self, n):
         # When data is unevenly split, processes may have done different number of updates
-        if self._cpu_group is None:
+        if self._sync_group is None:
             return n
         t = torch.tensor([n, self._num_updates])
-        dist.broadcast(t, 0, group=self._cpu_group, async_op=False)
+        dist.broadcast(t, 0, group=self._sync_group, async_op=False)
         self._num_updates = t[1].item()
         return t[0].item()
 
     def _sync_quiting(self, done):
         # Quit from epoch with all processes at once
-        if self._cpu_group is None:
+        if self._sync_group is None:
             return done
         t = torch.tensor([int(done)])
-        dist.all_reduce(t, op=dist.ReduceOp.SUM, group=self._cpu_group)
+        dist.all_reduce(t, op=dist.ReduceOp.SUM, group=self._sync_group)
         return t.item() == self._world_size
 
     def _collect_metrics(self, metrics_dict):
-        if self._cpu_group is None:
+        if self._sync_group is None:
             return metrics_dict
         tasks = []
         metrics_list = []
@@ -719,7 +723,7 @@ class Trainer:
             tasks.append(t)
             metrics_list.append(m.tolist())
         t = torch.tensor(metrics_list, dtype=torch.float32)
-        dist.reduce(t, 0, op=dist.ReduceOp.SUM, group=self._cpu_group)
+        dist.reduce(t, 0, op=dist.ReduceOp.SUM, group=self._sync_group)
         return {k: create_metrics(k, v) for k, v in zip(tasks, t.tolist())}
 
     def _format_lr(self):
@@ -807,8 +811,8 @@ class Trainer:
             ) * self._conf.switch_tasks_every
             self._sync_epoch_updates(epoch_updates)
 
-        if self._cpu_group is not None:
-            dist.barrier(group=self._cpu_group)
+        if self._sync_group is not None:
+            dist.barrier(group=self._sync_group)
 
     def _load_from_checkpoint(self):
         logging.info("loading state from %s", self._conf.resume_checkpoint)
