@@ -38,31 +38,11 @@
         default = pypkgs.doc_enc_full;
       };
 
-      trainDockerImage = pkgs.dockerTools.streamLayeredImage {
-        name = "tsa04.isa.ru:5050/semvectors/doc_enc/train";
-        tag = pkgs.python.pkgs.doc_enc_full.version;
-
-        contents = [
-          pkgs.bashInteractive pkgs.coreutils
-        ];
-        #paths should be relative in extraCommands
-        # extraCommands = '' ln -s lib lib/x86_64-linux-gnu '';
-        config = {
-
-          Entrypoint = [ "${pkgs.python.pkgs.doc_enc_full}/bin/run_training" ];
-
-          #LD_LIBRARY_PATH for debian11. Also you need to install libnvidia-container1 and libnvidia-container-tools > 1.9.0
-          Env = [
-            "TRAIN_CONFIG_PATH=/train/conf"
-            "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
-            "LD_LIBRARY_PATH=/usr/lib64"
-          ];
-
-
-          WorkingDir = "/train";
-          Volumes = { "/train" = { }; };
-        };
-      };
+      trainDockerImage =  import ./nix/docker.nix {inherit pkgs;
+                                                   doc-enc-pkg = pypkgs.doc_enc_full;
+                                                   name-suffix="_train";};
+      inferenceDockerImage = import ./nix/docker.nix {inherit pkgs;
+                                                      doc-enc-pkg = pypkgs.doc_enc;};
 
       devShells.x86_64-linux.default =
         pkgs.mkShell {
