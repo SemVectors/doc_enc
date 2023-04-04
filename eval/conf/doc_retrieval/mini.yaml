@@ -1,0 +1,8 @@
+---
+
+ds_base_dir: /train/data/docs
+datasets:
+  - name: mini
+    meta: docs-mini/dev.csv
+    texts: docs-mini/texts
+    search_over_all_texts: true

@@ -1,7 +1,7 @@
 ---
 
 sim_kind: COS
-ds_base_dir: /eval/datasets/sents
+ds_base_dir: /train/data/sents
 datasets:
   - name: essay1-dev
     meta: essay1/dev.gold

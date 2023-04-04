@@ -6,8 +6,8 @@ defaults:
 sents_batch_iterator_conf:
   async_generators: 1
   batch_generator_conf:
-    input_dir: /train/data/sents
-    batch_size: 128
+    input_dir: /train/data/sents/paral
+    batch_size: 256
 
 docs_batch_iterator_conf:
   async_generators: 2
@@ -15,6 +15,6 @@ docs_batch_iterator_conf:
     - gwiki
   batch_generator_conf:
     input_dir: /train/data/docs
-    batch_src_sents_cnt: 256
+    batch_src_sents_cnt: 4096
     max_sents_per_doc: 512
     min_tgt_docs_per_src_doc: 2

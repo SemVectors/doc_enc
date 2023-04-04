@@ -1,7 +1,7 @@
 ---
 
 sim_kind: COS
-ds_base_dir: /eval/datasets
+ds_base_dir: /train/data/docs
 datasets:
   - name: gwiki-test
     search_over_all_texts: true
@@ -10,28 +10,28 @@ datasets:
   - name: paral-wiki
     search_over_all_texts: true
     other_texts_limit: 50_000
-    meta: pw/test.csv
-    texts: pw/texts
+    meta: ParalWiki/test.csv
+    texts: ParalWiki/texts
     eval_for_len_groups: true
   - name: sew-mini
-    meta: sew/test_mini.csv
-    texts: sew/texts
+    meta: SimEnWiki/test_mini.csv
+    texts: SimEnWiki/texts
     search_over_all_texts: true
     other_texts_limit: 50_000
   - name: srw-mini
-    meta: srw/test_mini.csv
-    texts: srw/texts
+    meta: SimRuWiki/test_mini.csv
+    texts: SimRuWiki/texts
     search_over_all_texts: true
     other_texts_limit: 50_000
   - name: essay1
     meta: essay1/test.csv
     texts: essay1/texts
-    extra_other_dir: sew/texts
+    extra_other_dir: SimEnWiki/texts
     search_over_all_texts: true
     other_texts_limit: 50_000
   - name: essay2
     meta: essay2/test.csv
     texts: essay2/texts
-    extra_other_dir: sew/texts
+    extra_other_dir: SimEnWiki/texts
     search_over_all_texts: true
     other_texts_limit: 50_000

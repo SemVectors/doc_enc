@@ -11,8 +11,8 @@ datasets:
     meta: GWikiMatch/dev.csv
     texts: GWikiMatch/texts
   - name: srw-mini
-    meta: srw/test_mini.csv
-    texts: srw/texts
+    meta: SimRuWiki/test_mini.csv
+    texts: SimRuWiki/texts
   - name: sew-mini
-    meta: sew/test_mini.csv
-    texts: sew/texts
+    meta: SimEnWiki/test_mini.csv
+    texts: SimEnWiki/texts

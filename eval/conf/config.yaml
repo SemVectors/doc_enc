@@ -10,3 +10,5 @@ defaults:
   - doc_retrieval: full
   - sent_retrieval: full
   - _self_
+
+cache_embeddings: false

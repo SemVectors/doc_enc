@@ -1,0 +1,8 @@
+---
+
+sim_kind: COS
+ds_base_dir: /train/data/sents
+datasets:
+  - name: mini
+    meta: paral/test.gold
+    sents: paral/test

@@ -1,0 +1,9 @@
+---
+defaults:
+  - base_doc_matching
+
+ds_base_dir: /train/data/docs
+datasets:
+  - name: mini
+    meta: docs-mini/test.csv
+    texts: docs-mini/texts
