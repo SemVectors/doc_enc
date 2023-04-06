@@ -593,7 +593,7 @@ class Trainer:
                 logging.debug("labels: %s", labels)
 
     def _save_gpu_memory_stat(self):
-        summary = torch.cuda.memory_summary()
+        summary = torch.cuda.memory_summary(self._device)
         process_name = multiprocessing.current_process().name
         out_dir = Path(self._conf.save_path) / 'gpu_memory_stat'
         out_dir.mkdir(parents=True, exist_ok=True)
