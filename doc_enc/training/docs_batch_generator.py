@@ -483,7 +483,8 @@ class DocsBatchIterator(BaseBatchIterator):
         self._epoch = epoch - 1
         opts = self._opts.batch_generator_conf
         fp = f"{opts.input_dir}/{opts.meta_prefix}_{self._split}.csv"
-        self._start_workers(fp, seed=10_000 * epoch + iter_no)
+        if not self._start_workers(fp, seed=10_000 * epoch + iter_no):
+            raise RuntimeError("Failed to init docs batch generator, empty folder or config error")
 
     def _make_batch_for_retr_task(self, batch: DocsBatch):
 

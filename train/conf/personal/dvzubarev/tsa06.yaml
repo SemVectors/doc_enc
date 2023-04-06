@@ -22,7 +22,7 @@ batches:
   docs_batch_iterator_conf:
     async_generators: 1
     include_datasets:
-      - mini
+      - docs-mini
     batch_generator_conf:
       pad_src_sentences: false
       batch_src_sents_cnt: 128

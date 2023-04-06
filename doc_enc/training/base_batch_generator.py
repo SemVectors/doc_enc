@@ -108,7 +108,7 @@ class BaseBatchIterator:
     def _get_line_offs_for_rank(self, filepath):
         line_cnt = calc_line_cnt(filepath)
 
-        if self._world_size == -1:
+        if not line_cnt or self._world_size == -1:
             return 0, line_cnt
 
         r = _split_between_nproc(self._world_size, start_offs=0, line_cnt=line_cnt)
@@ -122,6 +122,8 @@ class BaseBatchIterator:
 
     def _start_workers(self, filepath, seed=None):
         rank_offs, per_rank_lines = self._get_line_offs_for_rank(filepath)
+        if not per_rank_lines:
+            return False
         logging.info(
             "%s split for rank=%d: offs=%d; lines=%d",
             self._name,
@@ -148,10 +150,11 @@ class BaseBatchIterator:
             p.start()
 
             self._processes.append(p)
+        return bool(self._processes)
 
     def batches(self):
         if not self._processes:
-            raise RuntimeError("Sent batch Iterator is not initialized!")
+            raise RuntimeError("Base batch Iterator is not initialized!")
 
         finished_processes = 0
         while finished_processes < self._opts.async_generators:

@@ -85,7 +85,10 @@ class SentsBatchGenerator:
 
         if not opts.dont_use_hns:
             hn_fp = find_file(f"{opts.input_dir}/{split}.hn")
-            self._hn_file = open_file(hn_fp)
+            if str(hn_fp).endswith('.gz'):
+                raise RuntimeError("gzipped hard negatives are not supported")
+            self._hn_file = open(hn_fp, 'rb')
+            self._hn_last_pos = 0
 
         self._init_files()
 
@@ -125,13 +128,12 @@ class SentsBatchGenerator:
         # skip hns file to the line_id
         if self._hn_file is not None:
             line = self._hn_file.readline()
-            last_pos = 0
             while line != '':
-                read_line_id = int(line.split('\t', 1)[0])
+                read_line_id = int(line.split(b'\t', 1)[0])
                 if read_line_id == line_id:
-                    self._hn_file.seek(last_pos)
+                    self._hn_file.seek(self._hn_last_pos)
                     break
-                last_pos = self._hn_file.tell()
+                self._hn_last_pos += len(line)
                 line = self._hn_file.readline()
 
             logging.info("initialized sents hn file")
@@ -302,23 +304,24 @@ class SentsBatchGenerator:
     def _read_hard_negatives(self, src_id):
         if self._hn_file is None:
             return [], []
-        last_pos = self._hn_file.tell()
+
         line = self._hn_file.readline()
         if not line:
             raise RuntimeError("Unexpected end of hard negatives file!")
 
         hn_sents = []
         hn_ids = []
-        while line != '':
-            t = line.rstrip().split('\t', 2)
+        while line:
+            t = line.rstrip().split(b'\t', 2)
 
             read_src_id = int(t[0])
             if read_src_id != src_id:
-                self._hn_file.seek(last_pos)
+                self._hn_file.seek(self._hn_last_pos)
                 return hn_sents, hn_ids
 
             if len(t) == 1:
                 # there is no hard negatives for src_id
+                self._hn_last_pos += len(line)
                 return [], []
 
             if len(t) == 2:
@@ -329,9 +332,9 @@ class SentsBatchGenerator:
                 _, hn_id, hns_str = t
                 hn_id = int(hn_id)
                 hn_ids.append(hn_id)
-                hn_sents.append(self._tokenizer(hns_str))
+                hn_sents.append(self._tokenizer(hns_str.decode('utf8')))
 
-            last_pos = self._hn_file.tell()
+            self._hn_last_pos += len(line)
             line = self._hn_file.readline()
         return hn_sents, hn_ids
 
@@ -426,7 +429,8 @@ class SentsBatchIterator(BaseBatchIterator):
     def init_epoch(self, epoch, iter_no=1):
         self._epoch = epoch - 1
         src_fp = _tgt_filepath(self._opts.batch_generator_conf.input_dir, self._split)
-        self._start_workers(src_fp, seed=10_000 * epoch + iter_no)
+        if not self._start_workers(src_fp, seed=10_000 * epoch + iter_no):
+            raise RuntimeError("Failed to init sents batch generator, empty folder or config error")
 
     def _make_batch_for_retr_task(self, batch):
         src, src_len = create_padded_tensor(
