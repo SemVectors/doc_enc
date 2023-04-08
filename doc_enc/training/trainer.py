@@ -327,6 +327,8 @@ class Trainer:
 
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
+            # https://discuss.pytorch.org/t/extra-10gb-memory-on-gpu-0-in-ddp-tutorial/118113/2
+            torch.cuda.set_device(local_rank)
             self._sync_group = dist.new_group(backend='gloo', timeout=datetime.timedelta(minutes=1))
             self._sent_model: nn.Module = DDP(
                 self._local_models.sent_model,
