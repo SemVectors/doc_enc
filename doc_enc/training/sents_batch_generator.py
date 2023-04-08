@@ -292,10 +292,13 @@ class SentsBatchGenerator:
 
         return batches, to_next_bucket
 
+    def _tokenize(self, text):
+        sent = self._tokenizer(text)
+        return sent[: self._opts.max_sent_size]
+
     def _parse_line(self, line):
         line_id, text = line.split('\t', 1)
-        sent = self._tokenizer(text)
-        return int(line_id), sent[: self._opts.max_sent_size]
+        return int(line_id), self._tokenize(text)
 
     def _parse_dups(self, line):
         line_id, dups_str = line.split('\t', 1)
@@ -332,7 +335,7 @@ class SentsBatchGenerator:
                 _, hn_id, hns_str = t
                 hn_id = int(hn_id)
                 hn_ids.append(hn_id)
-                hn_sents.append(self._tokenizer(hns_str.decode('utf8')))
+                hn_sents.append(self._tokenize(hns_str.decode('utf8')))
 
             self._hn_last_pos += len(line)
             line = self._hn_file.readline()
