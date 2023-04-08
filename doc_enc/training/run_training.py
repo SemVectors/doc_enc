@@ -137,7 +137,7 @@ def _run_train(local_rank, local_world_size, conf: Config):
         train_iter = BatchIterator(
             conf.batches,
             conf.text_proc,
-            conf.job_logging,
+            (conf.job_logging, conf.verbose),
             split="train",
             include_fragments_level=include_fragments_level,
             rank=rank,
@@ -150,7 +150,7 @@ def _run_train(local_rank, local_world_size, conf: Config):
         dev_iter = BatchIterator(
             conf.batches,
             conf.text_proc,
-            conf.job_logging,
+            (conf.job_logging, conf.verbose),
             split="dev",
             include_fragments_level=include_fragments_level,
             rank=rank,

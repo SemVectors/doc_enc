@@ -166,6 +166,7 @@ class SentsBatchGenerator:
                     excluded_ids.add(hn_id)
                     tgt_tokens.append(toks)
                     tgt_ids.append(hn_id)
+        logging.debug("batch was adjusted with %d tries", tries_cnt)
 
     def _make_batch(self, examples, excluded_ids, bucket: List[Example]):
         src_tokens = []
@@ -222,16 +223,16 @@ class SentsBatchGenerator:
             return
 
         if len(not_fitted) > self._opts.batch_size // 2:
-            logging.debug("not_fitted: move to the begining of the bucket")
+            # logging.debug("not_fitted: move to the begining of the bucket")
             bucket.extendleft(reversed(not_fitted))
             return
 
         for e in reversed(not_fitted):
             if len(e.src) - 2 <= len(bucket[0].src):
-                logging.debug("not_fitted: appendleft")
+                # logging.debug("not_fitted: appendleft")
                 bucket.appendleft(e)
             else:
-                logging.debug("not_fitted: to next bucket")
+                # logging.debug("not_fitted: to next bucket")
                 to_next_bucket.append(e)
 
     def _is_batch_ready(self, examples, max_len):
@@ -371,11 +372,15 @@ class SentsBatchGenerator:
             bucket.append(Example(src_id, src=st, tgt=tt, dups=dups, hns=hns))
 
             if len(bucket) >= bucket_size:
+                logging.debug("bucket is full, prepare and create batches")
                 self._sort_within_bucket(bucket)
                 batches, to_next_bucket = self._create_batches_from_bucket(bucket)
                 self._log_bucket_info(batches)
                 logging.debug("%d examples left for next bucket", len(to_next_bucket))
                 yield from batches
+                logging.debug(
+                    "start creating new bucket, with %d initial items", len(to_next_bucket)
+                )
                 bucket = to_next_bucket
 
         if bucket:
@@ -412,6 +417,7 @@ class SentsBatchIterator(BaseBatchIterator):
             logging_conf,
             SentsBatchGenerator,
             (opts.batch_generator_conf, tok_conf, split),
+            queue_size=4 * opts.async_generators * opts.batch_generator_conf.batch_per_bucket,
             rank=rank,
             world_size=world_size,
         )

@@ -4,6 +4,7 @@
 from dataclasses import dataclass
 import multiprocessing
 import math
+from multiprocessing import queues
 import random
 import logging
 
@@ -26,7 +27,7 @@ def _generator_proc_wrapper(
     random.seed(seed)
 
     if logging_conf:
-        configure_log(logging_conf, False)
+        configure_log(*logging_conf)
         if not is_master:
             logging.getLogger().setLevel(logging.WARNING)
     try:
@@ -79,6 +80,7 @@ class BaseBatchIterator:
         logging_conf,
         generator_cls=None,
         generator_args=(),
+        queue_size=0,
         rank=0,
         world_size=-1,
     ):
@@ -92,7 +94,9 @@ class BaseBatchIterator:
         self._world_size = world_size
 
         self._processes = []
-        self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
+        if queue_size == 0:
+            queue_size = 10 * opts.async_generators
+        self._queue = multiprocessing.Queue(queue_size)
 
     def destroy(self):
         self._terminate_workers()
