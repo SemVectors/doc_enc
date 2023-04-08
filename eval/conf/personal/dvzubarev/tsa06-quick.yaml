@@ -3,7 +3,7 @@ defaults:
   - /base_config
   - override /doc_matching: quick
   - override /doc_retrieval: quick
-  - override /sent_retrieval: full
+  - override /sent_retrieval: quick
   - _self_
 
 doc_encoder:

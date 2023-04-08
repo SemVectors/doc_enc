@@ -1,0 +1,14 @@
+---
+
+sim_kind: COS
+ds_base_dir: /train/data/sents
+thresholds:
+  - 0.4
+  - 0.5
+datasets:
+  - name: essay1-test
+    meta: essay1/test.gold
+    sents: essay1/test
+  - name: essay2-test
+    meta: essay2/test.gold
+    sents: essay2/test

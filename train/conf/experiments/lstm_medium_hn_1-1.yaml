@@ -1,0 +1,64 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /trainer: medium
+  - override /trainer/optim: adam_with_one_cycle
+  - override /model/fragment: null
+  - _self_
+
+text_proc:
+  tokenizer:
+    # add_bos: true
+    vocab_path: /train/bpe_96k_from_400M.spm.model
+    enable_sampling: true
+    alpha: 0.05
+
+trainer:
+  print_gpu_memory_stat_every: 1000
+  tasks:
+    - SENT_RETR
+  eval_tasks:
+    - SENT_RETR
+
+
+  optim:
+    weight_decay: 0.1
+    optim_kind: ADAMW
+    use_zero_optim: false
+    emb:
+      lr: 0.005
+      max_grad_norm: 1.0
+    sent:
+      lr: 0.001
+      max_grad_norm: 5.0
+
+
+model:
+  max_chunk_size: 1024
+  scale: 20
+  margin: 0.0
+  sent:
+    max_chunk_size: 1024
+    scale: 50
+    margin: 0.2
+
+batches:
+  sents_batch_iterator_conf:
+    async_generators: 1
+    batch_generator_conf:
+      max_sent_size: 128
+      batch_size: 2048
+
+  docs_batch_iterator_conf:
+    async_generators: 1
+    include_datasets:
+      - pw
+      - sew
+      - srw
+    batch_generator_conf:
+      pad_src_sentences: false
+      positives_per_doc: [1, 4]
+      batch_src_sents_cnt: 12384
+      batch_total_sents_cnt: 15384
+      batch_size: 256
+      max_sents_per_doc: 1024

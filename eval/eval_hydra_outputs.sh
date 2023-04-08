@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 inp_dir="$1"
+shift 1
 
 for d in "$inp_dir"/* ; do
     over_file="$d"/.hydra/overrides.yaml
@@ -19,7 +20,7 @@ for d in "$inp_dir"/* ; do
     model_id=$(grep -Po "(?<=- \+experiments=).*" "$over_file")
 
     time ./eval/run_eval.sh +personal/dvzubarev=tsa06-quick print_as_csv=true \
-        model_id="$model_id" doc_encoder.model_path="$model_path"
+        model_id="$model_id" doc_encoder.model_path="$model_path" "${@}"
 
     mv "$d" "$inp_dir"/"$model_id"
 done

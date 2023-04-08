@@ -1,0 +1,72 @@
+# @package _global_
+defaults:
+  - /base_config
+    #- override /trainer: quick
+  - override /trainer/optim: adam_with_one_cycle
+    #- override /model/fragment: transformer
+  - override /model/doc: transformer
+  - override /model/sent/encoder: transformer
+  - _self_
+
+text_proc:
+  tokenizer:
+    add_bos: true
+    vocab_path: /train/unigram_96k_from_100M.spm.model
+
+trainer:
+  switch_tasks_every: 10
+  max_updates: 35_100
+  eval_every: 5_000
+  checkpoint_every: 5_000
+  debug_iters:
+    - 3000
+  emb_grad_scale: 20
+  print_gpu_memory_stat_every: 1000
+  tasks:
+    - SENT_RETR
+  eval_tasks:
+    - SENT_RETR
+
+
+  optim:
+    max_grad_norm: 1.0
+    use_zero_optim: false
+    sent:
+      lr: 0.001
+model:
+  freeze_base_sents_layer: false
+  max_chunk_size: 1024
+  scale: 20
+  margin: 0.0
+  sent:
+    scale: 40
+    margin: 0.3
+    max_chunk_size: 1024
+    encoder:
+      full_intermediate: true
+      share_attn: false
+      hidden_size: 768
+  doc:
+    add_beg_seq_token: true
+    num_layers: 2
+
+batches:
+  sents_batch_iterator_conf:
+    async_generators: 1
+    batch_generator_conf:
+      max_sent_size: 128
+      batch_size: 1748
+
+  docs_batch_iterator_conf:
+    async_generators: 1
+    include_datasets:
+      - pw
+      - sew
+      - srw
+    batch_generator_conf:
+      pad_src_sentences: false
+      positives_per_doc: [1, 4]
+      batch_src_sents_cnt: 12384
+      batch_total_sents_cnt: 15384
+      batch_size: 256
+      max_sents_per_doc: 1024
