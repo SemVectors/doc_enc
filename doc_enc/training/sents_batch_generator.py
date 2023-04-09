@@ -88,7 +88,7 @@ class SentsBatchGenerator:
             if str(hn_fp).endswith('.gz'):
                 raise RuntimeError("gzipped hard negatives are not supported")
             self._hn_file = open(hn_fp, 'rb')
-            self._hn_last_pos = 0
+            self._hn_last_line = b''
 
         self._init_files()
 
@@ -131,9 +131,8 @@ class SentsBatchGenerator:
             while line != '':
                 read_line_id = int(line.split(b'\t', 1)[0])
                 if read_line_id == line_id:
-                    self._hn_file.seek(self._hn_last_pos)
+                    self._hn_last_line = line
                     break
-                self._hn_last_pos += len(line)
                 line = self._hn_file.readline()
 
             logging.info("initialized sents hn file")
@@ -309,7 +308,7 @@ class SentsBatchGenerator:
         if self._hn_file is None:
             return [], []
 
-        line = self._hn_file.readline()
+        line = self._hn_last_line
         if not line:
             raise RuntimeError("Unexpected end of hard negatives file!")
 
@@ -320,15 +319,12 @@ class SentsBatchGenerator:
 
             read_src_id = int(t[0])
             if read_src_id != src_id:
-                self._hn_file.seek(self._hn_last_pos)
+                self._hn_last_line = line
                 return hn_sents, hn_ids
 
-            if len(t) == 1:
+            if len(t) < 3:
                 # there is no hard negatives for src_id
-                self._hn_last_pos += len(line)
-                return [], []
-
-            if len(t) == 2:
+                # or
                 # no tokens were found for this hn
                 # nothing to do
                 pass
@@ -338,7 +334,6 @@ class SentsBatchGenerator:
                 hn_ids.append(hn_id)
                 hn_sents.append(self._tokenize(hns_str.decode('utf8')))
 
-            self._hn_last_pos += len(line)
             line = self._hn_file.readline()
         return hn_sents, hn_ids
 
