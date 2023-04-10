@@ -106,6 +106,7 @@ class TrainerConf:
 
     save_path: str = ''
     resume_checkpoint: str = ''
+    restore_lr_scheduler_state: bool = True
 
     use_grad_checkpoint: bool = False
     emb_grad_scale: float = 0.0
@@ -809,7 +810,7 @@ class Trainer:
         state = torch.load(self._conf.resume_checkpoint, map_location=self._device)
         self._num_updates = state['num_updates']
         self._optimizer.load_state_dict(state['optimizer'])
-        if self._scheduler is not None:
+        if self._scheduler is not None and self._conf.restore_lr_scheduler_state:
             self._scheduler.load_state_dict(state['scheduler'])
         self._scaler.load_state_dict(state['scaler'])
         self._best_metric = state['best_metric']
