@@ -52,6 +52,7 @@ class SentsBatchGeneratorConf:
     dont_use_dups: bool = False
     dont_use_hns: bool = False
     skip_large_hn: bool = False
+    min_hn_cnt: int = 0
 
 
 class SentsBatchGenerator:
@@ -312,15 +313,34 @@ class SentsBatchGenerator:
         if not line:
             raise RuntimeError("Unexpected end of hard negatives file!")
 
-        hn_sents = []
+        raw_hn_sents = []
         hn_ids = []
+
+        def _fin_hns():
+            if not raw_hn_sents:
+                return [], []
+            min_hn = min(self._opts.min_hn_cnt, len(raw_hn_sents))
+            if min_hn != len(raw_hn_sents):
+                hn_cnt = random.randint(min_hn, len(raw_hn_sents))
+                hn_indexes = random.sample(range(len(raw_hn_sents)), hn_cnt)
+            else:
+                hn_indexes = range(min_hn)
+
+            fin_hn_ids = []
+            fin_hn_sents = []
+            for hn_idx in hn_indexes:
+                fin_hn_ids.append(hn_ids[hn_idx])
+                fin_hn_sents.append(self._tokenize(raw_hn_sents[hn_idx].decode('utf8')))
+
+            return fin_hn_sents, fin_hn_ids
+
         while line:
             t = line.rstrip().split(b'\t', 2)
 
             read_src_id = int(t[0])
             if read_src_id != src_id:
                 self._hn_last_line = line
-                return hn_sents, hn_ids
+                return _fin_hns()
 
             if len(t) < 3:
                 # there is no hard negatives for src_id
@@ -332,10 +352,10 @@ class SentsBatchGenerator:
                 _, hn_id, hns_str = t
                 hn_id = int(hn_id)
                 hn_ids.append(hn_id)
-                hn_sents.append(self._tokenize(hns_str.decode('utf8')))
+                raw_hn_sents.append(hns_str)
 
             line = self._hn_file.readline()
-        return hn_sents, hn_ids
+        return _fin_hns()
 
     def _log_bucket_info(self, batches):
         n = len(batches)

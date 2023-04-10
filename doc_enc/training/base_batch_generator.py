@@ -4,7 +4,6 @@
 from dataclasses import dataclass
 import multiprocessing
 import math
-from multiprocessing import queues
 import random
 import logging
 

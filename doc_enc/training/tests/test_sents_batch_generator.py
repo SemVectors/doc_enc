@@ -76,6 +76,7 @@ def _create_gen_opts(input_dir):
     conf = SentsBatchGeneratorConf(
         input_dir=input_dir,
         adjust_batch_size=False,
+        min_hn_cnt=10,
     )
     tok_conf = TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED)
     return conf, tok_conf
