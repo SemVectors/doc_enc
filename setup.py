@@ -17,6 +17,7 @@ setup(
             'run_training = doc_enc.training.run_training:train_cli',
             'run_preproc = doc_enc.training.run_training:preproc_cli',
             'run_eval = doc_enc.eval.run_eval:eval_cli',
+            'docenccli = doc_enc.cli:main',
         ],
     },
 )

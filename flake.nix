@@ -61,6 +61,7 @@
           shellHook=''
             #https://github.com/NixOS/nixpkgs/issues/11390
             export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
+            [ -z "$PS1" ] || setuptoolsShellHook
             '';
         };
     };
