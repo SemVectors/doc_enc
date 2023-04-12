@@ -28,20 +28,19 @@ class TextProcessor:
     def vocab(self):
         return self._tokenizer
 
-    def prepare_text_from_file(self, path, split_into_fragments=True, return_strings=False):
-        with open_file(path) as f:
-            sents = []
-            sents_str = []
-            for l in f:
-                if not l.strip():
-                    continue
+    def prepare_text(self, text_sents: list[str], split_into_fragments=True, return_strings=False):
+        sents = []
+        sents_str = []
+        for sent in text_sents:
+            if not sent.strip():
+                continue
 
-                tokens = self._tokenizer(l.rstrip())
-                if len(tokens) >= self._conf.min_sent_len:
-                    tokens = tokens[: self._conf.max_sent_len]
-                    sents.append(tokens)
-                    if return_strings:
-                        sents_str.append(l.rstrip())
+            tokens = self._tokenizer(sent)
+            if len(tokens) >= self._conf.min_sent_len:
+                tokens = tokens[: self._conf.max_sent_len]
+                sents.append(tokens)
+                if return_strings:
+                    sents_str.append(sent)
 
         fragment_len_list = []
         if split_into_fragments:
@@ -50,6 +49,13 @@ class TextProcessor:
         if not return_strings:
             return sents, fragment_len_list
         return sents_str, fragment_len_list
+
+    def prepare_text_from_file(self, path, split_into_fragments=True, return_strings=False):
+        with open_file(path) as f:
+            sent_gen = (l.rstrip() for l in f)
+            return self.prepare_text(
+                sent_gen, split_into_fragments=split_into_fragments, return_strings=return_strings
+            )
 
     def prepare_sents(self, sent_strs):
         sent_ids = []
@@ -65,7 +71,8 @@ class TextProcessor:
         return {'tok': self._tokenizer.state_dict()}
 
     def load_state_dict(self, d):
-        self._tokenizer.load_state_dict(d['tok'])
+        if 'tok' in d:
+            self._tokenizer.load_state_dict(d['tok'])
 
 
 def pad_sent_sequences(sents: List[List[int]], lengths: List[int], vocab: AbcTokenizer):
