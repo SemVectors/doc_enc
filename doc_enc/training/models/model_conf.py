@@ -43,7 +43,7 @@ class DocModelConf(BaseModelConf):
     fragment: Optional[EmbSeqEncoderConf] = None
     doc: EmbSeqEncoderConf = MISSING
 
-    freeze_base_sents_layer: bool = True
+    freeze_base_sents_layer: bool = False
 
     grad_tgt_sents: bool = True
     grad_src_senst: bool = True

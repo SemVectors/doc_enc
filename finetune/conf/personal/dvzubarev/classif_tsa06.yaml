@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: /home/dvzubarev/Workspace/projects/semvectors/doc_enc/outputs/2023-04-12/17-00-40/model.pt
+use_gpu: 0
+train_meta_path: /tmp/classif/train.csv
+dev_meta_path: /tmp/classif/dev.csv
+data_dir: /tmp/classif/data/
+save_path: /tmp/classif/model.pt
+nlabels: 2

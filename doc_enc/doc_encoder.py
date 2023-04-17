@@ -2,6 +2,7 @@
 
 import logging
 import math
+import copy
 from typing import Optional, Any
 import dataclasses
 from pathlib import Path
@@ -37,9 +38,11 @@ class DocEncoderConf:
 
 
 class BaseBatchGenerator:
-    def __init__(self, tp_conf: TextProcessorConf, conf: DocEncoderConf, tp_state_dict) -> None:
+    def __init__(
+        self, tp_conf: TextProcessorConf, conf: DocEncoderConf, tp_state_dict, eval_mode=True
+    ) -> None:
         self._conf = conf
-        self._tp = TextProcessor(tp_conf, inference_mode=True)
+        self._tp = TextProcessor(tp_conf, inference_mode=eval_mode)
         self._tp.load_state_dict(tp_state_dict)
 
     def batches(self, items: list[Any], fetcher):
@@ -222,17 +225,10 @@ class BatchIterator:
             self._generator_thread.join()
 
 
-def file_path_fetcher(paths):
-    for idx, path in enumerate(paths):
-        with open(path, 'r', encoding='utf8') as fp:
-            sents = []
-            for s in fp:
-                sents.append(s.rstrip())
-            yield idx, sents
-
-
-class DocEncoder:
+class BaseEncodeModule(torch.nn.Module):
     def __init__(self, conf: DocEncoderConf) -> None:
+        super().__init__()
+
         self._conf = conf
         if conf.use_gpu is not None and torch.cuda.is_available():
             logging.info("Computing on gpu:%s", conf.use_gpu)
@@ -242,6 +238,7 @@ class DocEncoder:
             self._device = torch.device('cpu')
 
         state_dict = torch.load(conf.model_path, map_location=self._device)
+        self._state_dict = state_dict
         self._tp_conf: TextProcessorConf = state_dict['tp_conf']
         self._tp_conf.tokenizer.vocab_path = None
         self._tp_state_dict = state_dict['tp']
@@ -255,8 +252,10 @@ class DocEncoder:
         if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
             sent_for_doc_layer = create_encoder(mc.sent_for_doc)
             sent_for_doc_layer.load_state_dict(state_dict['sent_for_doc'])
-        self._sent_layer = SentForDocEncoder.from_base(base_sent_enc, sent_for_doc_layer)
-        self._sent_layer = self._sent_layer.to(device=self._device).eval()
+        self._sent_layer = SentForDocEncoder.from_base(
+            base_sent_enc, sent_for_doc_layer, freeze_base_sents_layer=False
+        )
+        self._sent_layer = self._sent_layer.to(device=self._device)
         logging.debug("sent layer\n%s", self._sent_layer)
 
         self._fragment_layer = None
@@ -276,7 +275,30 @@ class DocEncoder:
 
     def _load_layer(self, module, state_dict):
         module.load_state_dict(state_dict)
-        return module.to(device=self._device).eval()
+        return module.to(device=self._device)
+
+    def to_dict(self):
+        # module weights may have changed; update them
+        state_dict = copy.copy(self._state_dict)
+        state_dict['sent_enc'] = self._sent_layer.cast_to_base().state_dict()
+        state_dict['doc_enc'] = self._doc_layer.state_dict()
+
+        if 'frag_enc' in state_dict and self._fragment_layer is not None:
+            state_dict['frag_enc'] = self._fragment_layer.state_dict()
+
+        if 'sent_for_doc' in state_dict and self._sent_layer.doc_mode_encoder is not None:
+            state_dict['sent_for_doc'] = self._sent_layer.doc_mode_encoder.state_dict()
+
+        return state_dict
+
+    def device(self):
+        return self._device
+
+    def tp(self):
+        return self._tp
+
+    def doc_embs_dim(self):
+        return self._doc_layer.out_embs_dim()
 
     def load_params_from_checkpoint(self, checkpoint_path):
         state = torch.load(checkpoint_path)
@@ -297,6 +319,15 @@ class DocEncoder:
         if frag_state_dict:
             self._load_layer(self._fragment_layer, frag_state_dict)
 
+    def create_batch_generator(self, eval_mode=True):
+        return BaseBatchGenerator(self._tp_conf, self._conf, self._tp_state_dict, eval_mode)
+
+    def create_batch_iterator(self, eval_mode=True):
+        return BatchIterator(
+            (self._tp_conf, self._conf, self._tp_state_dict, eval_mode),
+            self._conf.async_batch_gen,
+        )
+
     def _encode_sents_impl(self, sents, encoder: SentEncoder, collect_on_cpu=False):
         max_len = len(max(sents, key=len))
         sent_tensor, lengths_tensor = create_padded_tensor(
@@ -316,7 +347,11 @@ class DocEncoder:
             collect_on_cpu=collect_on_cpu,
         )
 
-    def _encode_docs_impl(self, docs, doc_fragments):
+    def encode_sents(self, sents, collect_on_cpu=False):
+        encoder = self._sent_layer.cast_to_base()
+        return self._encode_sents_impl(sents, encoder, collect_on_cpu=collect_on_cpu)
+
+    def encode_docs(self, docs, doc_fragments):
         """Each doc is a list of tokenized sentences."""
 
         all_sents = [s for d in docs for s in d]
@@ -337,20 +372,38 @@ class DocEncoder:
         doc_embs = self._doc_layer(embs, len_list, enforce_sorted=False).pooled_out
         return doc_embs
 
+    def forward(self, docs, doc_fragments):
+        return self.encode_docs(docs, doc_fragments)
+
+
+def file_path_fetcher(paths):
+    for idx, path in enumerate(paths):
+        with open(path, 'r', encoding='utf8', errors='ignore') as fp:
+            sents = []
+            for s in fp:
+                sents.append(s.rstrip())
+            yield idx, sents
+
+
+class DocEncoder:
+    def __init__(self, conf: DocEncoderConf, eval_mode: bool = True) -> None:
+        self._enc_module = BaseEncodeModule(conf)
+        self._enc_module.train(not eval_mode)
+        self._eval_mode = eval_mode
+
     def _encode_docs(self, docs, doc_fragments):
-        with torch.inference_mode():
+        with torch.inference_mode(self._eval_mode):
             with autocast():
-                return self._encode_docs_impl(docs, doc_fragments)
+                return self._enc_module.encode_docs(docs, doc_fragments)
 
     def _encode_sents(self, sents):
-        with torch.inference_mode():
+        with torch.inference_mode(self._eval_mode):
             with autocast():
-                encoder = self._sent_layer.cast_to_base()
-                return self._encode_sents_impl(sents, encoder, collect_on_cpu=True)
+                return self._enc_module.encode_sents(sents, collect_on_cpu=True)
 
     def encode_sents(self, sents: list[str]) -> np.ndarray:
         """Encode bunch of sents to vectors."""
-        sent_ids = self._tp.prepare_sents(sents)
+        sent_ids = self._enc_module.tp().prepare_sents(sents)
         return self._encode_sents(sent_ids).numpy()
 
     def encode_sents_stream(
@@ -383,10 +436,8 @@ class DocEncoder:
         """
         embs = []
         embs_idxs = []
-        batch_iter = BatchIterator(
-            (self._tp_conf, self._conf, self._tp_state_dict),
-            self._conf.async_batch_gen,
-        )
+        batch_iter = self._enc_module.create_batch_iterator()
+
         batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
         for docs, doc_fragments, idxs in batch_iter.batches():
             doc_embs = self._encode_docs(docs, doc_fragments)
@@ -420,7 +471,8 @@ class DocEncoder:
             yield from enumerate(items)
 
         embs = []
-        batch_generator = BaseBatchGenerator(self._tp_conf, self._conf, self._tp_state_dict)
+
+        batch_generator = self._enc_module.create_batch_generator()
         for batch, doc_fragments, _ in batch_generator.batches(docs, fetcher=dummy_fetcher):
             doc_embs = self._encode_docs(batch, doc_fragments)
             embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
@@ -448,10 +500,7 @@ class DocEncoder:
         This method yields the tuple of doc id (that was returned by `doc_id_generator`) and doc vectors.
         """
 
-        batch_iter = BatchIterator(
-            (self._tp_conf, self._conf, self._tp_state_dict),
-            self._conf.async_batch_gen,
-        )
+        batch_iter = self._enc_module.create_batch_iterator()
         batch_iter.start_workers_for_stream(
             doc_id_generator, fetcher=fetcher, batch_size=batch_size
         )

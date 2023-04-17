@@ -1,0 +1,14 @@
+---
+
+hydra:
+  job:
+    chdir: true
+defaults:
+  - base_config
+  - _self_
+
+model_path: /train/models/model.pt
+use_gpu: 0
+train_meta_path: /train/classif/train.csv
+dev_meta_path: /train/classif/dev.csv
+data_dir: /train/classif/data/
