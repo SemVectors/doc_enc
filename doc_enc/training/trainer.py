@@ -148,13 +148,16 @@ def _create_lr_scheduler(conf: TrainerConf, optimizer):
 
 
 def _create_optimizer(conf: OptimConf, models: Models, world_size):
-    def _init_gr(group, default, conf):
+    def _init_gr(group, default, conf, no_decay=False):
+        if no_decay:
+            weight_decay = 0
+        else:
+            weight_decay = default.weight_decay if conf.weight_decay is None else conf.weight_decay
+
         group.update(
             {
                 'lr': default.lr if conf.lr is None else conf.lr,
-                'weight_decay': default.weight_decay
-                if conf.weight_decay is None
-                else conf.weight_decay,
+                'weight_decay': weight_decay,
                 'momentum': default.momentum if conf.momentum is None else conf.momentum,
                 'max_grad_norm': default.max_grad_norm
                 if conf.max_grad_norm is None
@@ -164,6 +167,18 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
         return group
 
     logging.info("create optimizer %s", conf.optim_kind)
+
+    # https://deci.ai/deep-learning-glossary/zero-weight-decay-on-batchnorm-and-bias/
+    no_decay = ['bias', 'norm.weight', 'LayerNorm.weight']
+
+    def _no_decay_params(named_params, inverse=False):
+        for k, p in named_params:
+            is_no_decay = any(nd in k for nd in no_decay)
+            if inverse:
+                is_no_decay = not is_no_decay
+            if is_no_decay:
+                yield p
+
     param_groups = [
         _init_gr(
             {
@@ -176,36 +191,84 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
         _init_gr(
             {
                 'name': 'sent',
-                'params': models.sent_model.encoder.enc_params(),
+                'params': _no_decay_params(models.sent_model.encoder.enc_named_params(), True),
             },
             conf,
             conf.sent,
         ),
         _init_gr(
             {
+                'name': 'sent.no_decay',
+                'params': _no_decay_params(models.sent_model.encoder.enc_named_params()),
+            },
+            conf,
+            conf.sent,
+            no_decay=True,
+        ),
+        _init_gr(
+            {
                 'name': 'doc',
-                'params': models.doc_model.doc_encoder.parameters(),
+                'params': _no_decay_params(models.doc_model.doc_encoder.named_parameters(), True),
             },
             conf,
             conf.doc,
+        ),
+        _init_gr(
+            {
+                'name': 'doc.no_decay',
+                'params': _no_decay_params(models.doc_model.doc_encoder.named_parameters()),
+            },
+            conf,
+            conf.doc,
+            no_decay=True,
         ),
     ]
 
     if models.doc_model.frag_encoder is not None:
         param_groups.append(
             _init_gr(
-                {'name': 'frag', 'params': models.doc_model.frag_encoder.parameters()},
+                {
+                    'name': 'frag',
+                    'params': _no_decay_params(
+                        models.doc_model.frag_encoder.named_parameters(), True
+                    ),
+                },
                 conf,
                 conf.fragment,
+            )
+        )
+        param_groups.append(
+            _init_gr(
+                {
+                    'name': 'frag.no_decay',
+                    'params': _no_decay_params(models.doc_model.frag_encoder.named_parameters()),
+                },
+                conf,
+                conf.fragment,
+                no_decay=True,
             )
         )
     sent_for_doc = models.doc_model.sent_encoder.doc_mode_encoder
     if sent_for_doc is not None:
         param_groups.append(
             _init_gr(
-                {'name': 'sent_for_doc', 'params': sent_for_doc.parameters()},
+                {
+                    'name': 'sent_for_doc',
+                    'params': _no_decay_params(sent_for_doc.named_parameters(), True),
+                },
                 conf,
                 conf.sent_for_doc,
+            )
+        )
+        param_groups.append(
+            _init_gr(
+                {
+                    'name': 'sent_for_doc.no_decay',
+                    'params': _no_decay_params(sent_for_doc.named_parameters()),
+                },
+                conf,
+                conf.sent_for_doc,
+                no_decay=True,
             )
         )
 
@@ -243,25 +306,29 @@ def _create_lr_lists(conf: OptimConf, param_groups):
         # its only one lr
         final_lr = [conf.final_lr]
         lr = [conf.lr]
-    elif 1 < n < 6:
+    elif 1 < n < 10:
         final_lr = [
             _v(conf.emb.final_lr, conf.final_lr),
             _v(conf.sent.final_lr, conf.final_lr),
+            _v(conf.sent.final_lr, conf.final_lr),
+            _v(conf.doc.final_lr, conf.final_lr),
             _v(conf.doc.final_lr, conf.final_lr),
         ]
         lr = [
             _v(conf.emb.lr, conf.lr),
             _v(conf.sent.lr, conf.lr),
+            _v(conf.sent.lr, conf.lr),
+            _v(conf.doc.lr, conf.lr),
             _v(conf.doc.lr, conf.lr),
         ]
 
         other_n = n - len(lr)
         while other_n:
             pg = param_groups[-other_n]
-            if pg['name'] == 'frag':
+            if pg['name'].startswith('frag'):
                 final_lr.append(_v(conf.fragment.final_lr, conf.final_lr))
                 lr.append(_v(conf.fragment.lr, conf.lr))
-            elif pg['name'] == 'sent_for_doc':
+            elif pg['name'].startswith('sent_for_doc'):
                 final_lr.append(_v(conf.sent_for_doc.final_lr, conf.final_lr))
                 lr.append(_v(conf.sent_for_doc.lr, conf.lr))
             else:
