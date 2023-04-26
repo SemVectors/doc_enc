@@ -20,6 +20,7 @@ class ModelKind(Enum):
 
 @dataclasses.dataclass
 class BaseModelConf:
+    load_params_from: str = ''
     kind: ModelKind = ModelKind.DUAL_ENC
     # dual enc model opts
     normalize: bool = True

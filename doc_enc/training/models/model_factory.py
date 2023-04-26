@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import torch
 
 from doc_enc.tokenizer import AbcTokenizer
 from doc_enc.training.models.model_conf import SentModelConf, DocModelConf, ModelKind
@@ -11,19 +12,31 @@ from doc_enc.training.models.sent_dual_enc import SentDualEncoder
 from doc_enc.training.models.doc_dual_enc import DocDualEncoder
 
 
-def _create_sent_model(conf: SentModelConf, vocab: AbcTokenizer):
+def _create_sent_model(conf: SentModelConf, vocab: AbcTokenizer, device, state_dict=None):
     if conf.kind == ModelKind.DUAL_ENC:
         encoder = create_sent_encoder(conf.encoder, vocab)
+        if conf.load_params_from:
+            state_dict = torch.load(conf.load_params_from, map_location=device)
+        if state_dict is not None:
+            encoder.load_state_dict(state_dict['sent_enc'])
+
         model = SentDualEncoder(conf, encoder)
+
         return model
     raise RuntimeError(f"Unknown model kind {conf.kind}")
 
 
-def create_models(conf: DocModelConf, vocab: AbcTokenizer):
-    sent_model = _create_sent_model(conf.sent, vocab)
+def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
+    state_dict = None
+    if conf.load_params_from:
+        state_dict = torch.load(conf.load_params_from, map_location=device)
+    sent_model = _create_sent_model(conf.sent, vocab, device, state_dict)
+
     sent_enc_for_doc = None
     if conf.sent_for_doc is not None:
         sent_enc_for_doc = create_encoder(conf.sent_for_doc)
+        if state_dict is not None:
+            sent_enc_for_doc.load_state_dict(state_dict['sent_for_doc'])
 
     e = sent_model.encoder
     sent_encoder = SentForDocEncoder(
@@ -41,11 +54,15 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer):
     frag_encoder = None
     if conf.fragment is not None:
         frag_encoder = create_emb_seq_encoder(conf.fragment, sent_embs_out_size)
+        if state_dict is not None:
+            frag_encoder.load_state_dict(state_dict['frag_enc'])
         doc_input_size = frag_encoder.out_embs_dim()
     else:
         doc_input_size = sent_embs_out_size
 
     doc_encoder = create_emb_seq_encoder(conf.doc, doc_input_size)
+    if state_dict is not None:
+        doc_encoder.load_state_dict(state_dict['doc_enc'])
 
     if conf.kind == ModelKind.DUAL_ENC:
         model = DocDualEncoder(

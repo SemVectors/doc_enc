@@ -456,7 +456,7 @@ class Trainer:
         return f"{bn(dn(cwd))}_{bn(cwd)}"
 
     def _create_models(self, model_conf: DocModelConf) -> Models:
-        sent_model, doc_model = create_models(model_conf, self.vocab())
+        sent_model, doc_model = create_models(model_conf, self.vocab(), self._device)
         self._log_current_mem_usage('start')
         model = doc_model.to(self._device)
         self._log_current_mem_usage('after loading')
