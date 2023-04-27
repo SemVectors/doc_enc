@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import itertools
 from typing import Union
 from gzip import GzipFile
 from io import TextIOWrapper
@@ -49,9 +50,13 @@ def find_file(fp: Union[Path, str], throw_if_not_exist=True):
     return fp
 
 
-def calc_line_cnt(fp):
+def calc_line_cnt(fp, limit):
     with open_bin_file(fp) as f:
+        if limit == 0:
+            filler = itertools.repeat(None)
+        else:
+            filler = range(limit)
         i = -1
-        for i, _ in enumerate(f):
+        for _, (i, _) in zip(filler, enumerate(f)):
             pass
     return i + 1

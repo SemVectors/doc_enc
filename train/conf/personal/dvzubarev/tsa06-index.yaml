@@ -1,0 +1,63 @@
+# @package _global_
+defaults:
+  - /base_config
+  # - override /trainer/optim: adam_with_one_cycle
+  # - override /model/doc: transformer
+  - _self_
+
+trainer:
+  max_updates: 6100
+  eval_every: 1000
+  checkpoint_every: 1000
+  switch_tasks_every: 10
+  tasks:
+    - SENT_RETR
+  eval_tasks:
+    - SENT_RETR
+  optim:
+    lr: 0.0005
+    sent_index:
+      lr: 0.001
+  debug_iters:
+    - 50
+
+
+model:
+  sent:
+    load_params_from: >-
+      /home/dvzubarev/Workspace/projects/semvectors/doc_enc/init_index/model.pt
+    index:
+      enable: true
+      init_index_file: >-
+        /home/dvzubarev/Workspace/projects/semvectors/doc_enc/init_index/IVF3500_PQ32x8.faiss
+      ivf_centers_num: 3500
+      subvector_num: 32
+      train_sample: 1.0
+      readd_vectors_while_training: true
+      ivf:
+        fixed: true
+        lr: 0.0001
+        weight: 0.5
+      pq:
+        loss_type: DISTIL
+
+
+text_proc:
+  min_sent_len: 3
+  tokenizer:
+    vocab_path: /home/dvzubarev/data/paral_data/data4/unigram_96k_from_100M.spm.model
+
+batches:
+  sents_batch_iterator_conf:
+    batch_generator_conf:
+      batch_size: 64
+      input_dir: /home/dvzubarev/data/paral_data/undata0/sents-mini
+
+  docs_batch_iterator_conf:
+    async_generators: 1
+    include_datasets:
+      - docs-mini
+    batch_generator_conf:
+      pad_src_sentences: false
+      batch_src_sents_cnt: 128
+      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/docs-mini

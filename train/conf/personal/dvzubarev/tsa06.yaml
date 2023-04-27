@@ -4,10 +4,16 @@ defaults:
   - _self_
 
 trainer:
-  max_updates: 1100
-  eval_every: 300
-  checkpoint_every: 500
+  max_updates: 3000
+  eval_every: 1500
+  checkpoint_every: 4000
   switch_tasks_every: 10
+  tasks:
+    - SENT_RETR
+  eval_tasks:
+    - SENT_RETR
+
+
 
 text_proc:
   min_sent_len: 3
@@ -17,6 +23,7 @@ text_proc:
 batches:
   sents_batch_iterator_conf:
     batch_generator_conf:
+      batch_size: 256
       input_dir: /home/dvzubarev/data/paral_data/undata0/sents-mini
 
   docs_batch_iterator_conf:

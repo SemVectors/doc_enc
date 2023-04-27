@@ -5,6 +5,7 @@ import itertools
 import torch
 
 from doc_enc.training.types import TaskType
+from doc_enc.training.models.base_model import DualEncModelOutput
 
 
 class BaseMetrics:
@@ -16,6 +17,9 @@ class BaseMetrics:
         self._total = 0
 
         self._loss = 0.0
+        self._dense_loss = 0.0
+        self._ivf_loss = 0.0
+        self._pq_loss = 0.0
 
         self._src_item_len_sum = 0
         self._src_item_cnt = 0
@@ -32,12 +36,15 @@ class BaseMetrics:
             self._tgt_item_len_sum,
             self._tgt_item_cnt,
             self._loss,
+            self._dense_loss,
+            self._ivf_loss,
+            self._pq_loss,
         ]
 
     @classmethod
     def fromlist(cls, l):
         m = cls()
-        assert len(l) == 8
+        assert len(l) == 11
         fields = (
             '_cnt',
             '_ncorrect',
@@ -50,15 +57,24 @@ class BaseMetrics:
         for f, v in zip(fields, l[:7]):
             m.__dict__[f] = int(v)
 
-        m._loss = l[7]
+        loss_fields = ('_loss', '_dense_loss', '_ivf_loss', '_pq_loss')
+        for f, v in zip(loss_fields, l[7:]):
+            m.__dict__[f] = v
+
         return m
 
-    def update_metrics(self, loss, output, labels, batch):
+    def update_metrics(self, loss, losses_tuple, output: DualEncModelOutput, labels, batch):
         self._cnt += 1
         self._loss += loss
+        self._dense_loss += losses_tuple[0].item()
+        if (ivf_loss := losses_tuple[1]) is not None:
+            self._ivf_loss += ivf_loss.item()
+        if (pq_loss := losses_tuple[2]) is not None:
+            self._pq_loss += pq_loss.item()
+
         self._update_metrics_impl(output, labels, batch)
 
-    def _update_metrics_impl(self, output, labels, batch):
+    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch):
         raise NotImplementedError("implement in subclass")
 
     def updates_num(self):
@@ -70,6 +86,9 @@ class BaseMetrics:
     def __iadd__(self, other):
         self._cnt += other._cnt
         self._loss += other._loss
+        self._dense_loss += other._dense_loss
+        self._ivf_loss += other._ivf_loss
+        self._pq_loss += other._pq_loss
         self._ncorrect += other._ncorrect
         self._total += other._total
         self._src_item_len_sum += other._src_item_len_sum
@@ -97,6 +116,10 @@ class BaseMetrics:
 
     def __str__(self):
         prefix = "; loss %.5f" % (self._loss / self._cnt if self._cnt else 0.0)
+        if self._ivf_loss and self._pq_loss:
+            prefix += "(dl: %.3f," % (self._dense_loss / self._cnt if self._cnt else 0.0)
+            prefix += "ivf: %.3f," % (self._ivf_loss / self._cnt if self._cnt else 0.0)
+            prefix += "pq: %.3f)" % (self._pq_loss / self._cnt if self._cnt else 0.0)
 
         m = self.metrics()
         s = self.stats()
@@ -107,10 +130,10 @@ class BaseMetrics:
 
 
 class SentRetrMetrics(BaseMetrics):
-    def _update_metrics_impl(self, output, labels, batch):
-        _, ypredicted = torch.max(output, 1)
+    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch):
+        _, ypredicted = torch.max(output.dense_score_matrix, 1)
         self._ncorrect += (ypredicted == labels).sum().item()
-        self._total += output.size(0)
+        self._total += output.dense_score_matrix.size(0)
 
         self._src_item_len_sum += batch.src_len.sum().item()
         self._src_item_cnt += len(batch.src_len)
@@ -120,12 +143,12 @@ class SentRetrMetrics(BaseMetrics):
 
 
 class DocRetrMetrics(BaseMetrics):
-    def _update_metrics_impl(self, output, labels, batch):
+    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch):
         k = batch.info['max_positives_per_doc']
 
         pidxs = batch.positive_idxs
         if k == 1:
-            _, ypredicted = torch.max(output, 1)
+            _, ypredicted = torch.max(output.dense_score_matrix, 1)
             ll = torch.tensor(pidxs, device=ypredicted.device).squeeze()
             self._ncorrect += (ypredicted == ll).sum().item()
         else:
@@ -134,10 +157,10 @@ class DocRetrMetrics(BaseMetrics):
                 if k == 0:
                     raise RuntimeError("Imposibru!")
                 if k == 1:
-                    idx = torch.max(output[i], 0)[1].item()
+                    idx = torch.max(output.dense_score_matrix[i], 0)[1].item()
                     self._ncorrect += idx == gold_idxs[0]
                 else:
-                    _, idxs = torch.topk(output[i], k, 0)
+                    _, idxs = torch.topk(output.dense_score_matrix[i], k, 0)
                     self._ncorrect += sum(1 for j in idxs if j in gold_idxs)
 
         self._total += labels.sum().item()

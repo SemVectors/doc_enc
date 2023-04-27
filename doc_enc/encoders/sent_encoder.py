@@ -40,8 +40,8 @@ class SentEncoder(nn.Module):
         if self.emb_to_hidden_mapping is not None:
             yield from self.emb_to_hidden_mapping.parameters()
 
-    def enc_params(self):
-        yield from self.encoder.parameters()
+    def enc_named_params(self):
+        yield from self.encoder.named_parameters()
 
     def out_embs_dim(self):
         return self.encoder.out_embs_dim()

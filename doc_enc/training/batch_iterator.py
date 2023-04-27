@@ -23,7 +23,7 @@ class BatchIteratorConf:
     docs_batch_iterator_conf: DocsBatchIteratorConf
 
     early_iter_end_policy: EarlyIterEndPolicy = EarlyIterEndPolicy.REITER
-    reinit_last_iter: bool = False
+    reinit_last_iter: bool = True
 
 
 class BatchIterator:
@@ -74,6 +74,9 @@ class BatchIterator:
         self._iterators: Optional[List[Optional[Generator]]] = None
         self._done = None
         self._early_end_policy = self._opts.early_iter_end_policy
+
+    def get_config(self) -> BatchIteratorConf:
+        return self._opts
 
     def init_epoch(self, epoch, tasks=None):
         self._epoch = epoch - 1

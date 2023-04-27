@@ -9,6 +9,10 @@ from doc_enc.training.types import DocsBatch
 from doc_enc.encoders.sent_encoder import SentForDocEncoder
 from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
 
+from doc_enc.training.models.base_model import DualEncModelOutput
+
+from doc_enc.training.index.ivf_pq_model import TrainableIvfPQ
+
 
 class BaseDocModel(nn.Module):
     def __init__(
@@ -24,8 +28,12 @@ class BaseDocModel(nn.Module):
         self.doc_encoder = doc_encoder
         self.frag_encoder = frag_encoder
 
-    def calc_sim_matrix(self, batch: DocsBatch):
+        self.index: TrainableIvfPQ | None = None
+        if conf.index.enable:
+            self.index = TrainableIvfPQ(conf.index)
+
+    def calc_sim_matrix(self, batch: DocsBatch) -> DualEncModelOutput:
         raise NotImplementedError("calc_sim_matrix is not implemented")
 
-    def forward(self, batch: DocsBatch, labels):
+    def forward(self, batch: DocsBatch, labels) -> DualEncModelOutput:
         raise NotImplementedError("forward is not implemented")

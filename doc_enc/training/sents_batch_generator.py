@@ -43,6 +43,7 @@ def _tgt_filepath(input_dir, split):
 @dataclass
 class SentsBatchGeneratorConf:
     input_dir: str
+    sents_limit: int = 0
     batch_size: int = 128
     batch_per_bucket: int = 100
     max_tokens: int = 0
@@ -453,7 +454,11 @@ class SentsBatchIterator(BaseBatchIterator):
     def init_epoch(self, epoch, iter_no=1):
         self._epoch = epoch - 1
         src_fp = _tgt_filepath(self._opts.batch_generator_conf.input_dir, self._split)
-        if not self._start_workers(src_fp, seed=10_000 * epoch + iter_no):
+        if not self._start_workers(
+            src_fp,
+            seed=10_000 * epoch + iter_no,
+            limit=self._opts.batch_generator_conf.sents_limit,
+        ):
             raise RuntimeError("Failed to init sents batch generator, empty folder or config error")
 
     def _make_batch_for_retr_task(self, batch):

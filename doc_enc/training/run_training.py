@@ -24,6 +24,7 @@ from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 from doc_enc.training.trainer import Trainer, TrainerConf, OptimConf
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
 from doc_enc.encoders.enc_config import SentEncoderConf, EmbSeqEncoderConf, BaseEncoderConf
+from doc_enc.training.index.prepare_index_util import prepare_sent_index
 
 from doc_enc.training.combine_docs_sources import combine_docs_datasets
 
@@ -215,12 +216,21 @@ def _preproc(conf: Config):
     logging.info("done with dev")
 
 
+def _prepare_indexes(conf: Config):
+    if conf.model.sent.index.enable:
+        prepare_sent_index(
+            conf.model.sent,
+            conf.batches.sents_batch_iterator_conf.batch_generator_conf,
+        )
+
+
 @hydra.main(config_path=None, config_name="config", version_base=None)
 def train_cli(conf: Config) -> None:
     gpu_cnt = torch.cuda.device_count()
     if gpu_cnt <= 0:
         raise RuntimeError("No gpu was found")
     _preproc(conf)
+    _prepare_indexes(conf)
     try:
         mp_spawn(_run_train, args=(gpu_cnt, conf), nprocs=gpu_cnt, join=True)
     except Exception as e:
@@ -230,6 +240,7 @@ def train_cli(conf: Config) -> None:
 @hydra.main(config_path=None, config_name="config", version_base=None)
 def preproc_cli(conf: Config) -> None:
     _preproc(conf)
+    _prepare_indexes(conf)
 
 
 if __name__ == "__main__":

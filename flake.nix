@@ -4,18 +4,21 @@
   inputs.nixpkgs.url = "nixpkgs";
 
   outputs = { self, nixpkgs }:
-    let pkgs = import nixpkgs {
+    let cuda-overlay = final: prev:{
+          faiss = prev.faiss.override{cudaSupport=true;};
+        } ;
+        pkgs = import nixpkgs {
           system = "x86_64-linux";
-          overlays = [ self.overlays.default ];
+          overlays = [ cuda-overlay self.overlays.default ];
           config = {allowUnfree = true;};
         };
         python-overlay = pyfinal: pyprev: {
           doc_enc = pyfinal.callPackage ./nix {
             src=self;
           };
-          doc_enc_full = pyfinal.callPackage ./nix {
+          doc_enc_train = pyfinal.callPackage ./nix {
             src=self;
-            with-eval=true;
+            with-training-pkgs=true;
           };
         };
         overridePython = py-overlay: final: prev: (
@@ -35,18 +38,18 @@
       packages.x86_64-linux = {
         inherit (pkgs)
           python;
-        default = pypkgs.doc_enc_full;
+        default = pypkgs.doc_enc_train;
       };
 
       trainDockerImage =  import ./nix/docker.nix {inherit pkgs;
-                                                   doc-enc-pkg = pypkgs.doc_enc_full;
+                                                   doc-enc-pkg = pypkgs.doc_enc_train;
                                                    name-suffix="_train";};
       inferenceDockerImage = import ./nix/docker.nix {inherit pkgs;
                                                       doc-enc-pkg = pypkgs.doc_enc;};
 
       devShells.x86_64-linux.default =
         pkgs.mkShell {
-          inputsFrom = [ pypkgs.doc_enc_full ];
+          inputsFrom = [ pypkgs.doc_enc_train ];
           buildInputs = [
             pkgs.nodePackages.pyright
             pkgs.nodePackages.bash-language-server

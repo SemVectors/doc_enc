@@ -297,6 +297,9 @@ class BaseEncodeModule(torch.nn.Module):
     def tp(self):
         return self._tp
 
+    def sent_embs_dim(self):
+        return self._sent_layer.out_embs_dim()
+
     def doc_embs_dim(self):
         return self._doc_layer.out_embs_dim()
 
@@ -390,6 +393,9 @@ class DocEncoder:
         self._enc_module = BaseEncodeModule(conf)
         self._enc_module.train(not eval_mode)
         self._eval_mode = eval_mode
+
+    def enc_module(self):
+        return self._enc_module
 
     def _encode_docs(self, docs, doc_fragments):
         with torch.inference_mode(self._eval_mode):

@@ -12,6 +12,8 @@ from doc_enc.encoders.enc_config import (
     EmbSeqEncoderConf,
 )
 
+from doc_enc.training.index.index_train_conf import IndexTrainConf
+
 
 class ModelKind(Enum):
     UNDEFINED = 0
@@ -31,6 +33,9 @@ class BaseModelConf:
     max_chunk_size: int = 512
     max_tokens_in_chunk: int = 48_000
 
+    # index training
+    index: IndexTrainConf = IndexTrainConf()
+
 
 @dataclasses.dataclass
 class SentModelConf(BaseModelConf):
@@ -48,3 +53,6 @@ class DocModelConf(BaseModelConf):
 
     grad_tgt_sents: bool = True
     grad_src_senst: bool = True
+
+    # index training
+    index: IndexTrainConf = IndexTrainConf()

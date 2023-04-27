@@ -108,8 +108,8 @@ class BaseBatchIterator:
         self.destroy()
         self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
 
-    def _get_line_offs_for_rank(self, filepath):
-        line_cnt = calc_line_cnt(filepath)
+    def _get_line_offs_for_rank(self, filepath, limit):
+        line_cnt = calc_line_cnt(filepath, limit)
 
         if not line_cnt or self._world_size == -1:
             return 0, line_cnt
@@ -123,8 +123,8 @@ class BaseBatchIterator:
             p.join()
         self._processes = []
 
-    def _start_workers(self, filepath, seed=None):
-        rank_offs, per_rank_lines = self._get_line_offs_for_rank(filepath)
+    def _start_workers(self, filepath, seed=None, limit=0):
+        rank_offs, per_rank_lines = self._get_line_offs_for_rank(filepath, limit)
         if not per_rank_lines:
             return False
         logging.info(

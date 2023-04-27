@@ -13,6 +13,7 @@ from doc_enc.training.models.base_doc_model import BaseDocModel
 from doc_enc.training.types import DocsBatch
 from doc_enc.encoders.sent_encoder import split_sents_and_embed, SentForDocEncoder
 from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
+from doc_enc.training.models.base_model import DualEncModelOutput
 
 
 class DocDualEncoder(BaseDocModel):
@@ -56,7 +57,7 @@ class DocDualEncoder(BaseDocModel):
         assert len(doc_embs) == len(len_list)
         return doc_embs
 
-    def calc_sim_matrix(self, batch: DocsBatch):
+    def calc_sim_matrix(self, batch: DocsBatch) -> DualEncModelOutput:
 
         with self._src_sents_ctx_mgr():
             src_sent_embs = self._embed_sents(batch.src_sents, batch.src_sent_len)
@@ -92,16 +93,42 @@ class DocDualEncoder(BaseDocModel):
             tgt_doc_embs = F.normalize(tgt_doc_embs, p=2, dim=1)
 
         m = torch.mm(src_doc_embs, tgt_doc_embs.t())  # bsz x target_bsz
-        return m
 
-    def _forward_doc_task(self, batch: DocsBatch, labels):
-        m = self.calc_sim_matrix(batch)
-        if self.conf.margin:
-            m[labels.to(dtype=torch.bool)] -= self.conf.margin
+        ivf_sm = None
+        pq_sm = None
+        if self.index is not None:
+            ivf_sm, pq_sm = self.index(
+                src_doc_embs, tgt_doc_embs, batch.tgt_ids, normalize=self.conf.normalize
+            )
+        return DualEncModelOutput(m, ivf_score_matrix=ivf_sm, pq_score_matrix=pq_sm)
 
-        if self.conf.scale:
-            return m * self.conf.scale
-        return m
+    def _finalize_sim_matrix(self, sm: torch.Tensor, labels, margin, scale):
+        if margin:
+            sm[labels.to(dtype=torch.bool)] -= margin
 
-    def forward(self, batch, labels):
+        if scale:
+            return sm * scale
+
+        return sm
+
+    def _forward_doc_task(self, batch: DocsBatch, labels) -> DualEncModelOutput:
+        output = self.calc_sim_matrix(batch)
+
+        output.dense_score_matrix = self._finalize_sim_matrix(
+            output.dense_score_matrix, labels, self.conf.margin, self.conf.scale
+        )
+        if output.ivf_score_matrix is not None:
+            output.ivf_score_matrix = self._finalize_sim_matrix(
+                output.ivf_score_matrix,
+                labels,
+                self.conf.index.ivf.margin,
+                self.conf.index.ivf.scale,
+            )
+        if output.pq_score_matrix is not None:
+            output.pq_score_matrix = self._finalize_sim_matrix(
+                output.pq_score_matrix, labels, self.conf.index.pq.margin, self.conf.index.pq.scale
+            )
+        return output
+
+    def forward(self, batch, labels) -> DualEncModelOutput:
         return self._forward_doc_task(batch, labels)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 import os
 import datetime
 import contextlib
@@ -35,6 +36,15 @@ from doc_enc.training.models.model_factory import create_models
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.models.base_sent_model import BaseSentModel
 from doc_enc.training.models.base_doc_model import BaseDocModel
+from doc_enc.training.models.base_model import DualEncModelOutput
+
+from doc_enc.training.index.train_util import (
+    calculate_ivf_pq_loss,
+    combine_dense_and_index_loss,
+    update_doc_index_model,
+    update_sent_index_model,
+)
+from doc_enc.training.index.prepare_index_util import re_add_sent_vectors
 
 from doc_enc.training.metrics import create_metrics
 
@@ -86,8 +96,10 @@ class OptimConf:
     emb: ParamGroupConf = ParamGroupConf()
     sent: ParamGroupConf = ParamGroupConf()
     sent_for_doc: ParamGroupConf = ParamGroupConf()
+    sent_index: ParamGroupConf = ParamGroupConf()
     fragment: ParamGroupConf = ParamGroupConf()
     doc: ParamGroupConf = ParamGroupConf()
+    doc_index: ParamGroupConf = ParamGroupConf()
 
     lr_scheduler: LRSchedulerKind = LRSchedulerKind.NONE
     lr_scheduler_kwargs: Dict = dataclasses.field(default_factory=dict)
@@ -272,6 +284,31 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             )
         )
 
+    if models.sent_model.index is not None:
+        param_groups.append(
+            _init_gr(
+                {
+                    'name': 'sent.index',
+                    'params': models.sent_model.index.parameters(),
+                },
+                conf,
+                conf.sent_index,
+                no_decay=True,
+            )
+        )
+    if models.doc_model.index is not None:
+        param_groups.append(
+            _init_gr(
+                {
+                    'name': 'doc.index',
+                    'params': models.doc_model.index.parameters(),
+                },
+                conf,
+                conf.doc_index,
+                no_decay=True,
+            )
+        )
+
     if conf.optim_kind == OptimKind.SGD:
         return torch.optim.SGD(
             param_groups, lr=conf.lr, momentum=conf.momentum, weight_decay=conf.weight_decay
@@ -306,7 +343,7 @@ def _create_lr_lists(conf: OptimConf, param_groups):
         # its only one lr
         final_lr = [conf.final_lr]
         lr = [conf.lr]
-    elif 1 < n < 10:
+    elif 1 < n < 12:
         final_lr = [
             _v(conf.emb.final_lr, conf.final_lr),
             _v(conf.sent.final_lr, conf.final_lr),
@@ -331,6 +368,12 @@ def _create_lr_lists(conf: OptimConf, param_groups):
             elif pg['name'].startswith('sent_for_doc'):
                 final_lr.append(_v(conf.sent_for_doc.final_lr, conf.final_lr))
                 lr.append(_v(conf.sent_for_doc.lr, conf.lr))
+            elif pg['name'] == 'sent.index':
+                final_lr.append(_v(conf.sent_index.final_lr, conf.final_lr))
+                lr.append(_v(conf.sent_index.lr, conf.lr))
+            elif pg['name'] == 'doc.index':
+                final_lr.append(_v(conf.doc_index.final_lr, conf.final_lr))
+                lr.append(_v(conf.doc_index.lr, conf.lr))
             else:
                 raise RuntimeError(f"Unknown name of param group {pg['name']}")
             other_n -= 1
@@ -402,7 +445,6 @@ class Trainer:
                 self._local_models.sent_model,
                 device_ids=[local_rank],
                 output_device=local_rank,
-                bucket_cap_mb=100,
                 gradient_as_bucket_view=True,
                 find_unused_parameters=False,
                 static_graph=True,
@@ -411,7 +453,6 @@ class Trainer:
                 self._local_models.doc_model,
                 device_ids=[local_rank],
                 output_device=local_rank,
-                bucket_cap_mb=100,
                 gradient_as_bucket_view=True,
                 find_unused_parameters=False,
                 static_graph=True,
@@ -458,9 +499,10 @@ class Trainer:
     def _create_models(self, model_conf: DocModelConf) -> Models:
         sent_model, doc_model = create_models(model_conf, self.vocab(), self._device)
         self._log_current_mem_usage('start')
-        model = doc_model.to(self._device)
+        sent_model = sent_model.to(self._device)
+        doc_model = doc_model.to(self._device)
         self._log_current_mem_usage('after loading')
-        logging.info("created model %s", model)
+        logging.info("created model %s", doc_model)
         logging.info("model loaded to %s", self._device)
         mem_params = sum(
             param.nelement() * param.element_size() for param in doc_model.parameters()
@@ -470,37 +512,57 @@ class Trainer:
         logging.info("Model buf mem usage %.3f Kb", mem_bufs / 1024)
         return Models(sent_model=sent_model, doc_model=doc_model)
 
-    def _calc_sent_retr_loss(self, output, labels, batch_size):
+    def _calc_sent_retr_loss(self, output: DualEncModelOutput, labels, batch_size):
+        sim_matrix = output.dense_score_matrix
         if self._conf.sent_retr_loss_type == SentRetrLossType.CE:
-            loss = self._sent_retr_criterion(output, labels)
+            dense_loss = self._sent_retr_criterion(sim_matrix, labels)
         elif self._conf.sent_retr_loss_type == SentRetrLossType.BICE:
-            loss_src = self._sent_retr_criterion(output, labels)
-            loss_tgt = self._sent_retr_criterion(output.t()[:batch_size], labels)
-            loss = loss_src + loss_tgt
+            loss_src = self._sent_retr_criterion(sim_matrix, labels)
+            loss_tgt = self._sent_retr_criterion(sim_matrix.t()[:batch_size], labels)
+            dense_loss = loss_src + loss_tgt
         else:
             raise RuntimeError("Logic error 987")
-        return loss
+
+        conf = self._local_models.sent_model.conf.index
+        ivf_loss, pq_loss = calculate_ivf_pq_loss(conf, output, labels)
+        if ivf_loss is not None:
+            loss = combine_dense_and_index_loss(
+                conf, dense_loss, ivf_loss, pq_loss, self._world_size
+            )
+        else:
+            loss = dense_loss
+
+        return loss, (dense_loss, ivf_loss, pq_loss)
 
     def _calc_doc_retr_loss(self, output, labels, batch_size):
         if self._conf.doc_retr_loss_type == DocRetrLossType.CE:
-            loss = self._doc_retr_criterion(output, labels)
+            dense_loss = self._doc_retr_criterion(output, labels)
         else:
             raise RuntimeError("Logic error 988")
-        return loss
 
-    def _calc_loss_and_metrics(self, task, output, labels, batch):
+        conf = self._local_models.doc_model.conf.index
+        ivf_loss, pq_loss = calculate_ivf_pq_loss(conf, output, labels)
+        if ivf_loss is not None:
+            loss = combine_dense_and_index_loss(
+                conf, dense_loss, ivf_loss, pq_loss, self._world_size
+            )
+        else:
+            loss = dense_loss
+        return loss, (dense_loss, ivf_loss, pq_loss)
+
+    def _calc_loss_and_metrics(self, task: TaskType, output: DualEncModelOutput, labels, batch):
         if task == TaskType.SENT_RETR:
-            loss = self._calc_sent_retr_loss(output, labels, batch.info['bs'])
+            loss, losses_tuple = self._calc_sent_retr_loss(output, labels, batch.info['bs'])
         elif task == TaskType.DOC_RETR:
-            loss = self._calc_doc_retr_loss(output, labels, batch.info['bs'])
+            loss, losses_tuple = self._calc_doc_retr_loss(output, labels, batch.info['bs'])
         else:
             raise RuntimeError(f"Unknown task in calc loss: {task}")
 
         m = create_metrics(task)
-        m.update_metrics(loss.item(), output, labels, batch)
+        m.update_metrics(loss.item(), losses_tuple, output, labels, batch)
         return loss, m
 
-    def _save_debug_info(self, batch, output, labels, meta):
+    def _save_debug_info(self, batch, output: DualEncModelOutput, labels, meta):
         if meta['task'] == TaskType.SENT_RETR:
             meta['task'] = "sent_retr"
             self._save_retr_debug_info(batch, output, labels, meta)
@@ -510,9 +572,10 @@ class Trainer:
         else:
             raise RuntimeError("Logic error 342")
 
-    def _save_doc_retr_debug_info(self, batch, output, labels, meta):
-        maxk = min(5, output.size(1))
-        values, indices = torch.topk(output, maxk, 1)
+    def _save_doc_retr_debug_info(self, batch, output: DualEncModelOutput, labels, meta):
+        score_matrix = output.dense_score_matrix
+        maxk = min(5, score_matrix.size(1))
+        values, indices = torch.topk(score_matrix, maxk, 1)
         meta['num_updates'] = self._num_updates
         meta['avg_src_len'] = meta['asl']
         del meta['asl']
@@ -536,13 +599,13 @@ class Trainer:
             gold = []
             for pidx in batch.positive_idxs[i]:
 
-                usim = output[i][pidx].item() * unscale_factor
+                usim = score_matrix[i][pidx].item() * unscale_factor
 
                 gold.append(
                     {
                         'tgt_batch_num': pidx,
                         'tgt_id': batch.tgt_ids[pidx],
-                        'sim': output[i][pidx].item(),
+                        'sim': score_matrix[i][pidx].item(),
                         'sim_unscaled': usim,
                         'sim_unscaled_wo_margin': usim + self._model_conf.margin,
                     }
@@ -555,8 +618,33 @@ class Trainer:
             f.write(json.dumps(meta))
             f.write('\n')
 
-    def _save_retr_debug_info(self, batch, output, _, meta):
-        values, indices = torch.topk(output, 3, 1)
+    def _save_retr_debug_info(self, batch, output: DualEncModelOutput, _, meta):
+        self._save_sent_retr_debug_info_impl(
+            self._model_conf.sent,
+            batch,
+            output.dense_score_matrix,
+            copy.copy(meta),
+            Path(self._conf.save_path) / 'sent_dense_retr_debug_batches.jsonl',
+        )
+        if output.ivf_score_matrix is not None:
+            self._save_sent_retr_debug_info_impl(
+                self._model_conf.sent.index.ivf,
+                batch,
+                output.ivf_score_matrix,
+                copy.copy(meta),
+                Path(self._conf.save_path) / 'sent_ivf_retr_debug_batches.jsonl',
+            )
+        if output.pq_score_matrix is not None:
+            self._save_sent_retr_debug_info_impl(
+                self._model_conf.sent.index.pq,
+                batch,
+                output.pq_score_matrix,
+                copy.copy(meta),
+                Path(self._conf.save_path) / 'sent_pq_retr_debug_batches.jsonl',
+            )
+
+    def _save_sent_retr_debug_info_impl(self, conf, batch, score_matrix, meta, outpath):
+        values, indices = torch.topk(score_matrix, 3, 1)
 
         meta['num_updates'] = self._num_updates
         meta['avg_src_len'] = meta['asl']
@@ -565,7 +653,7 @@ class Trainer:
         del meta['atl']
 
         examples = []
-        unscale_factor = 1 / self._model_conf.sent.scale if self._model_conf.sent.scale else 1.0
+        unscale_factor = 1 / conf.scale if conf.scale else 1.0
         for i in range(len(batch.src)):
             obj = {'src_batch_num': i, 'src_id': batch.src_id[i], 'found': []}
             for v, idx in zip(values[i], indices[i]):
@@ -580,23 +668,22 @@ class Trainer:
                     }
                 )
 
-            wo_margin = output[i][i].item()
+            wo_margin = score_matrix[i][i].item()
             wo_margin *= unscale_factor
-            wo_margin += self._model_conf.sent.margin
+            wo_margin += conf.margin
             wo_margin /= unscale_factor
 
             obj['gold'] = {
                 'tgt_batch_num': i,
                 'tgt_id': batch.tgt_id[i],
-                'sim': output[i][i].item(),
-                'sim_unscaled': output[i][i].item() * unscale_factor,
+                'sim': score_matrix[i][i].item(),
+                'sim_unscaled': score_matrix[i][i].item() * unscale_factor,
                 'sim_wo_margin': wo_margin,
             }
             examples.append(obj)
         meta['examples'] = examples
 
-        meta_path = Path(self._conf.save_path) / 'sent_retr_debug_batches.jsonl'
-        with open(meta_path, 'a', encoding='utf8') as f:
+        with open(outpath, 'a', encoding='utf8') as f:
             f.write(json.dumps(meta))
             f.write('\n')
 
@@ -691,10 +778,13 @@ class Trainer:
 
         self._scaler.step(self._optimizer)
         self._scaler.update()
+
+        update_sent_index_model(self._local_models.sent_model, self._world_size)
+        update_doc_index_model(self._local_models.doc_model, self._world_size)
+
         self._optimizer.zero_grad()
 
-    def _run_forward(self, task, batch, labels):
-
+    def _run_forward(self, task, batch, labels) -> DualEncModelOutput:
         if task == TaskType.SENT_RETR:
             output = self._sent_model(batch)
         elif task == TaskType.DOC_RETR:
@@ -723,7 +813,7 @@ class Trainer:
                 self._log_current_mem_usage('after forward')
 
                 # output = self._model(batch, labels)
-                logging.debug("output of model shape: %s", output.size())
+                logging.debug("output of model shape: %s", output.dense_score_matrix.size())
                 # output size is bsz x tgt_size for retrieval task
                 loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
                 logging.debug("loss: %s; metrics: %s", loss.item(), m)
@@ -850,13 +940,14 @@ class Trainer:
                     )
                 _reset()
 
-            if self._num_updates - self._last_checkpoint_update >= self._conf.checkpoint_every:
-                self._last_checkpoint_update = self._num_updates
-                self._save_checkpoint(epoch)
-
             if self._num_updates - self._last_eval_update >= self._conf.eval_every:
                 self._last_eval_update = self._num_updates
                 self._eval_and_save(epoch, dev_iter)
+
+            if self._num_updates - self._last_checkpoint_update >= self._conf.checkpoint_every:
+                self._last_checkpoint_update = self._num_updates
+                self._save_checkpoint(epoch)
+                self._save_indexes(train_iter)
 
             if self._sync_quiting(train_iter.empty()):
                 break
@@ -893,6 +984,41 @@ class Trainer:
             self._sent_model = self._local_models.sent_model
 
         return state['epoch']
+
+    def _save_indexes(self, train_iter: BatchIterator):
+        if self._local_models.sent_model.index is not None:
+            if self._is_master:
+                logging.info("Saving sent faiss index")
+                index_path = self._local_models.sent_model.index.save_as_faiss_index(
+                    self._conf.save_path, 'sent'
+                )
+            else:
+                index_path = self._local_models.sent_model.index.index_path(
+                    self._conf.save_path, 'sent'
+                )
+            index_conf = self._local_models.sent_model.conf.index
+            if index_conf.readd_vectors_while_training:
+                if self._is_master:
+                    re_add_sent_vectors(
+                        index_path,
+                        Path(self._conf.save_path) / 'model.pt',
+                        train_iter.get_config().sents_batch_iterator_conf.batch_generator_conf,
+                    )
+
+                if self._sync_group is not None:
+                    # FIXME torch 1.13.1 timeout in monitored barrier is ignored
+                    # dist.monitored_barrier(
+                    #     group=self._sync_group, timeout=datetime.timedelta(minutes=30)
+                    # )
+                    dist.barrier()
+
+                self._local_models.sent_model.index.ivf.reassign_id2center(index_path)
+        if self._local_models.doc_model.index is not None:
+            if self._is_master:
+                logging.info("saving doc faiss index")
+                index_path = self._local_models.doc_model.index.save_as_faiss_index(
+                    self._conf.save_path, 'doc'
+                )
 
     def _save_checkpoint(self, epoch):
         snapshot_path = Path(self._conf.save_path) / f'checkpoint_{epoch}_{self._num_updates}.pt'
@@ -1002,6 +1128,7 @@ class Trainer:
             self._train_epoch(epoch, train_iter, dev_iter)
             train_iter.end_epoch()
             logging.info("End epoch %d", epoch)
+            self._save_indexes(train_iter)
             if self._num_updates >= self._conf.max_updates:
                 break
             epoch += 1

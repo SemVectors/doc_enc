@@ -10,7 +10,7 @@
   transformers,
   faiss,
   pytest,
-  with-eval ? false,
+  with-training-pkgs ? false,
 }:
 
 buildPythonPackage {
@@ -28,8 +28,8 @@ buildPythonPackage {
     hydra-core
     transformers
   ]
-   ++ lib.optionals with-eval [
-     faiss
+  ++ lib.optionals with-training-pkgs [
+    faiss
    ]
   ;
 
