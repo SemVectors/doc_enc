@@ -14,6 +14,7 @@ from doc_enc.training.types import DocsBatch
 from doc_enc.encoders.sent_encoder import split_sents_and_embed, SentForDocEncoder
 from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
 from doc_enc.training.models.base_model import DualEncModelOutput
+from doc_enc.training.dist_util import dist_gather_target_embs
 
 
 class DocDualEncoder(BaseDocModel):
@@ -92,13 +93,22 @@ class DocDualEncoder(BaseDocModel):
             src_doc_embs = F.normalize(src_doc_embs, p=2, dim=1)
             tgt_doc_embs = F.normalize(tgt_doc_embs, p=2, dim=1)
 
-        m = torch.mm(src_doc_embs, tgt_doc_embs.t())  # bsz x target_bsz
+        if self.conf.cross_device_sample:
+            all_targets = dist_gather_target_embs(tgt_doc_embs)
+        else:
+            all_targets = tgt_doc_embs
+
+        m = torch.mm(src_doc_embs, all_targets.t())  # bsz x target_bsz
 
         ivf_sm = None
         pq_sm = None
         if self.index is not None:
             ivf_sm, pq_sm = self.index(
-                src_doc_embs, tgt_doc_embs, batch.tgt_ids, normalize=self.conf.normalize
+                src_doc_embs,
+                tgt_doc_embs,
+                batch.tgt_ids,
+                normalize=self.conf.normalize,
+                cross_device_sample=self.conf.cross_device_sample,
             )
         return DualEncModelOutput(m, ivf_score_matrix=ivf_sm, pq_score_matrix=pq_sm)
 

@@ -24,6 +24,7 @@ trainer:
 
 model:
   sent:
+    cross_device_sample: true
     load_params_from: >-
       /home/dvzubarev/Workspace/projects/semvectors/doc_enc/init_index/model.pt
     index:

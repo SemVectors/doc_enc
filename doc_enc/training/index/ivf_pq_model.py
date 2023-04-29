@@ -17,7 +17,11 @@ import faiss
 
 
 from doc_enc.training.index.index_train_conf import IndexTrainConf
-from doc_enc.training.dist_util import dist_gather_varsize_tensor, dist_gather_tensor
+from doc_enc.training.dist_util import (
+    dist_gather_varsize_tensor,
+    dist_gather_tensor,
+    dist_gather_target_embs,
+)
 
 # modified version from the LibVQ library
 class IVFCPU(nn.Module):
@@ -278,12 +282,23 @@ class TrainableIvfPQ(nn.Module):
         self.ivf: IVFCPU = IVFCPU.from_faiss_index(config.init_index_file)
         self.pq: Quantization = Quantization.from_faiss_index(config.init_index_file)
 
-    def compute_score(self, query_vecs: torch.Tensor, tgt_vecs: torch.Tensor, normalize: bool):
+    def compute_score(
+        self,
+        query_vecs: torch.Tensor,
+        tgt_vecs: torch.Tensor,
+        normalize: bool,
+        cross_device_sample: bool,
+    ):
         if normalize:
             query_vecs = F.normalize(query_vecs, p=2, dim=1)
             tgt_vecs = F.normalize(tgt_vecs, p=2, dim=1)
 
-        m = torch.mm(query_vecs, tgt_vecs.t())  # bsz x target_bsz
+        if cross_device_sample:
+            all_targets = dist_gather_target_embs(tgt_vecs)
+        else:
+            all_targets = tgt_vecs
+
+        m = torch.mm(query_vecs, all_targets.t())  # bsz x target_bsz
         return m
 
     def forward(
@@ -292,6 +307,7 @@ class TrainableIvfPQ(nn.Module):
         tgt_vecs: torch.FloatTensor,
         tgt_ids: torch.LongTensor,
         normalize=True,
+        cross_device_sample=False,
     ):
 
         dc_emb = self.ivf.select_centers(tgt_ids, query_vecs.device, world_size=self._world_size)
@@ -299,9 +315,13 @@ class TrainableIvfPQ(nn.Module):
         residual_tgt_vecs = tgt_vecs - dc_emb
         quantized_doc = self.pq(residual_tgt_vecs) + dc_emb
 
-        ivf_score_matrix = self.compute_score(query_vecs, dc_emb, normalize=normalize)
+        ivf_score_matrix = self.compute_score(
+            query_vecs, dc_emb, normalize=normalize, cross_device_sample=cross_device_sample
+        )
 
-        pq_score_matrix = self.compute_score(query_vecs, quantized_doc, normalize=normalize)
+        pq_score_matrix = self.compute_score(
+            query_vecs, quantized_doc, normalize=normalize, cross_device_sample=cross_device_sample
+        )
         return ivf_score_matrix, pq_score_matrix
 
     def update_faiss_index(self, index):

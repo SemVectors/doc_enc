@@ -9,6 +9,8 @@ from doc_enc.training.models.base_sent_model import BaseSentModel
 from doc_enc.encoders.sent_encoder import split_sents_and_embed
 from doc_enc.training.models.base_model import DualEncModelOutput
 
+from doc_enc.training.dist_util import dist_gather_target_embs
+
 
 class SentDualEncoder(BaseSentModel):
     def _embed_sents(self, sents: torch.Tensor, sent_lengths: torch.Tensor, already_sorted=False):
@@ -33,13 +35,22 @@ class SentDualEncoder(BaseSentModel):
             source_embeddings = F.normalize(source_embeddings, p=2, dim=1)
             target_embeddings = F.normalize(target_embeddings, p=2, dim=1)
 
-        m = torch.mm(source_embeddings, target_embeddings.t())  # bsz x target_bsz
+        if self.conf.cross_device_sample:
+            all_targets = dist_gather_target_embs(target_embeddings)
+        else:
+            all_targets = target_embeddings
+
+        m = torch.mm(source_embeddings, all_targets.t())  # bsz x target_bsz
 
         ivf_sm = None
         pq_sm = None
         if self.index is not None:
             ivf_sm, pq_sm = self.index(
-                source_embeddings, target_embeddings, batch.tgt_id, normalize=self.conf.normalize
+                source_embeddings,
+                target_embeddings,
+                batch.tgt_id,
+                normalize=self.conf.normalize,
+                cross_device_sample=self.conf.cross_device_sample,
             )
         return DualEncModelOutput(m, ivf_score_matrix=ivf_sm, pq_score_matrix=pq_sm)
 

@@ -12,7 +12,12 @@ trainer:
     - SENT_RETR
   eval_tasks:
     - SENT_RETR
+  debug_iters:
+    - 50
 
+model:
+  sent:
+    cross_device_sample: true
 
 
 text_proc:

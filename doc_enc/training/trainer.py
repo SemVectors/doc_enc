@@ -588,10 +588,16 @@ class Trainer:
             obj = {'src_batch_num': i, 'src_id': batch.src_ids[i], 'found': []}
 
             for v, idx in zip(values[i], indices[i]):
+                if idx >= len(batch.tgt_ids):
+                    # idx from other device
+                    tgt_id = -1
+                else:
+                    tgt_id = batch.tgt_ids[idx]
+
                 obj['found'].append(
                     {
                         'tgt_batch_num': idx.item(),
-                        'tgt_id': batch.tgt_ids[idx],
+                        'tgt_id': tgt_id,
                         'sim': v.item(),
                         'sim_unscaled': v.item() * unscale_factor,
                     }
@@ -657,12 +663,15 @@ class Trainer:
         for i in range(len(batch.src)):
             obj = {'src_batch_num': i, 'src_id': batch.src_id[i], 'found': []}
             for v, idx in zip(values[i], indices[i]):
-                if v < 0.7:
-                    continue
+                if idx >= len(batch.tgt_id):
+                    # idx from other device
+                    tgt_id = -1
+                else:
+                    tgt_id = batch.tgt_id[idx]
                 obj['found'].append(
                     {
                         'tgt_batch_num': idx.item(),
-                        'tgt_id': batch.tgt_id[idx],
+                        'tgt_id': tgt_id,
                         'sim': v.item(),
                         'sim_unscaled': v.item() * unscale_factor,
                     }
@@ -812,9 +821,8 @@ class Trainer:
                 output = self._run_forward(task, batch, labels)
                 self._log_current_mem_usage('after forward')
 
-                # output = self._model(batch, labels)
-                logging.debug("output of model shape: %s", output.dense_score_matrix.size())
-                # output size is bsz x tgt_size for retrieval task
+                logging.debug("dense output of model shape: %s", output.dense_score_matrix.size())
+                # output matrix size is bsz x tgt_size for retrieval task
                 loss, m = self._calc_loss_and_metrics(task, output, labels, batch)
                 logging.debug("loss: %s; metrics: %s", loss.item(), m)
 

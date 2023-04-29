@@ -33,6 +33,8 @@ class BaseModelConf:
     max_chunk_size: int = 512
     max_tokens_in_chunk: int = 48_000
 
+    cross_device_sample: bool = False
+
     # index training
     index: IndexTrainConf = IndexTrainConf()
 
