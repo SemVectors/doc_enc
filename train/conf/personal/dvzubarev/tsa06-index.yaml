@@ -15,9 +15,9 @@ trainer:
   eval_tasks:
     - SENT_RETR
   optim:
-    lr: 0.0005
+    lr: 0.0001
     sent_index:
-      lr: 0.001
+      lr: 0.0003
   debug_iters:
     - 50
 
@@ -35,7 +35,7 @@ model:
       train_sample: 1.0
       readd_vectors_while_training: true
       ivf:
-        fixed: true
+        fixed: false
         lr: 0.0001
         weight: 0.5
       pq:

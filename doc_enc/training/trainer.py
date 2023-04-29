@@ -913,12 +913,6 @@ class Trainer:
             epoch_updates += metrics.updates_num()
             epoch_updates = self._sync_epoch_updates(epoch_updates)
 
-            if self._num_updates >= self._conf.max_updates:
-                break
-
-            if self._scheduler is not None:
-                self._scheduler.step()
-
             running_metrics[task] += metrics
 
             if epoch_updates - last_log_update >= self._conf.log_every:
@@ -948,6 +942,12 @@ class Trainer:
                 self._last_checkpoint_update = self._num_updates
                 self._save_checkpoint(epoch)
                 self._save_indexes(train_iter)
+
+            if self._num_updates >= self._conf.max_updates:
+                break
+
+            if self._scheduler is not None:
+                self._scheduler.step()
 
             if self._sync_quiting(train_iter.empty()):
                 break
