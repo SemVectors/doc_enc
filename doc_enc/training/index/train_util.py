@@ -5,8 +5,7 @@ import logging
 import torch
 import torch.nn.functional as F
 
-from LibVQ.utils import dist_gather_tensor
-
+from doc_enc.training.dist_util import dist_gather_tensor
 from doc_enc.training.index.index_train_conf import IndexTrainConf, IndexLossType
 from doc_enc.training.index.ivf_pq_model import TrainableIvfPQ
 from doc_enc.training.models.base_model import DualEncModelOutput
