@@ -5,6 +5,8 @@
 
   outputs = { self, nixpkgs }:
     let cuda-overlay = final: prev:{
+          #enable cuda support
+          nvidia-thrust = prev.nvidia-thrust.override{deviceSystem="CUDA";};
           faiss = prev.faiss.override{cudaSupport=true;};
         } ;
         pkgs = import nixpkgs {
@@ -13,6 +15,12 @@
           config = {allowUnfree = true;};
         };
         python-overlay = pyfinal: pyprev: {
+          #pydevd is test dependency of omegaconf and it was marked as broken (WTF???)
+          #so remove it temporarily from deps
+          omegaconf = pyprev.omegaconf.overridePythonAttrs(_: {
+            nativeCheckInputs = [];
+            dontUseSetuptoolsCheck=true;
+          });
           doc_enc = pyfinal.callPackage ./nix {
             src=self;
           };
