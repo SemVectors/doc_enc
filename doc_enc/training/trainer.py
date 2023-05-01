@@ -195,10 +195,19 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
         _init_gr(
             {
                 'name': 'emb',
-                'params': models.sent_model.encoder.emb_params(),
+                'params': _no_decay_params(models.sent_model.encoder.emb_named_params(), True),
             },
             conf,
             conf.emb,
+        ),
+        _init_gr(
+            {
+                'name': 'emb.no_decay',
+                'params': _no_decay_params(models.sent_model.encoder.emb_named_params()),
+            },
+            conf,
+            conf.emb,
+            no_decay=True,
         ),
         _init_gr(
             {
@@ -343,8 +352,9 @@ def _create_lr_lists(conf: OptimConf, param_groups):
         # its only one lr
         final_lr = [conf.final_lr]
         lr = [conf.lr]
-    elif 1 < n < 12:
+    elif 1 < n < 13:
         final_lr = [
+            _v(conf.emb.final_lr, conf.final_lr),
             _v(conf.emb.final_lr, conf.final_lr),
             _v(conf.sent.final_lr, conf.final_lr),
             _v(conf.sent.final_lr, conf.final_lr),
@@ -352,6 +362,7 @@ def _create_lr_lists(conf: OptimConf, param_groups):
             _v(conf.doc.final_lr, conf.final_lr),
         ]
         lr = [
+            _v(conf.emb.lr, conf.lr),
             _v(conf.emb.lr, conf.lr),
             _v(conf.sent.lr, conf.lr),
             _v(conf.sent.lr, conf.lr),
@@ -604,7 +615,6 @@ class Trainer:
                 )
             gold = []
             for pidx in batch.positive_idxs[i]:
-
                 usim = score_matrix[i][pidx].item() * unscale_factor
 
                 gold.append(
@@ -816,7 +826,6 @@ class Trainer:
 
             # forward pass
             with autocast(enabled=self._amp_enabled):
-
                 self._log_current_mem_usage('before forward')
                 output = self._run_forward(task, batch, labels)
                 self._log_current_mem_usage('after forward')

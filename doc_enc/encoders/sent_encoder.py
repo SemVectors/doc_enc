@@ -35,10 +35,10 @@ class SentEncoder(nn.Module):
         if emb_to_hidden_mapping is None and conf.emb_conf.emb_dim != input_size:
             self.emb_to_hidden_mapping = nn.Linear(conf.emb_conf.emb_dim, input_size)
 
-    def emb_params(self):
-        yield from self.embed.parameters()
+    def emb_named_params(self):
+        yield from self.embed.named_parameters()
         if self.emb_to_hidden_mapping is not None:
-            yield from self.emb_to_hidden_mapping.parameters()
+            yield from self.emb_to_hidden_mapping.named_parameters()
 
     def enc_named_params(self):
         yield from self.encoder.named_parameters()
@@ -54,7 +54,6 @@ class SentEncoder(nn.Module):
         enforce_sorted=False,
         token_types=None,
     ) -> enc_out.BaseEncoderOut:
-
         if self.pad_to_multiple_of and tokens.size(1) % self.pad_to_multiple_of != 0:
             raise RuntimeError(
                 f"Sents should be padded in batch generator to {self.pad_to_multiple_of}"
@@ -134,7 +133,6 @@ class SentForDocEncoder(SentEncoder):
         enforce_sorted=False,
         token_types=None,
     ) -> enc_out.BaseEncoderOut:
-
         with self._maybe_no_grad():
             sent_enc_result = super().forward(
                 tokens, lengths, enforce_sorted=enforce_sorted, token_types=token_types
