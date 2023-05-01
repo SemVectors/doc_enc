@@ -58,8 +58,9 @@ class DocDualEncoder(BaseDocModel):
         assert len(doc_embs) == len(len_list)
         return doc_embs
 
-    def calc_sim_matrix(self, batch: DocsBatch) -> DualEncModelOutput:
-
+    def calc_sim_matrix(
+        self, batch: DocsBatch, dont_cross_device_sample=False
+    ) -> DualEncModelOutput:
         with self._src_sents_ctx_mgr():
             src_sent_embs = self._embed_sents(batch.src_sents, batch.src_sent_len)
 
@@ -67,7 +68,6 @@ class DocDualEncoder(BaseDocModel):
             tgt_sent_embs = self._embed_sents(batch.tgt_sents, batch.tgt_sent_len)
 
         if self.frag_encoder is not None:
-
             src_embs = self._embed_fragments(
                 src_sent_embs, batch.src_fragment_len, batch.info.get('src_fragment_len')
             )
@@ -93,7 +93,7 @@ class DocDualEncoder(BaseDocModel):
             src_doc_embs = F.normalize(src_doc_embs, p=2, dim=1)
             tgt_doc_embs = F.normalize(tgt_doc_embs, p=2, dim=1)
 
-        if self.conf.cross_device_sample:
+        if not dont_cross_device_sample and self.conf.cross_device_sample:
             all_targets = dist_gather_target_embs(tgt_doc_embs)
         else:
             all_targets = tgt_doc_embs

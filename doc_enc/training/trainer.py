@@ -1076,7 +1076,7 @@ class Trainer:
                     model = self._local_models.doc_model
 
                 for batch, labels in dev_iter.batches(batches_cnt=0):
-                    output = model.calc_sim_matrix(batch)
+                    output = model.calc_sim_matrix(batch, dont_cross_device_sample=True)
                     _, m = self._calc_loss_and_metrics(task, output, labels, batch)
                     cum_metrics += m
                     batches += 1

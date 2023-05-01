@@ -26,7 +26,7 @@ class SentDualEncoder(BaseSentModel):
             already_sorted=already_sorted,
         )
 
-    def calc_sim_matrix(self, batch) -> DualEncModelOutput:
+    def calc_sim_matrix(self, batch, dont_cross_device_sample=False) -> DualEncModelOutput:
         # bsz x hidden
         source_embeddings = self._embed_sents(batch.src, batch.src_len, already_sorted=True)
         # We can't sort the target input since it is aligned to source, hence enforce_sorted=False
@@ -35,7 +35,7 @@ class SentDualEncoder(BaseSentModel):
             source_embeddings = F.normalize(source_embeddings, p=2, dim=1)
             target_embeddings = F.normalize(target_embeddings, p=2, dim=1)
 
-        if self.conf.cross_device_sample:
+        if not dont_cross_device_sample and self.conf.cross_device_sample:
             all_targets = dist_gather_target_embs(target_embeddings)
         else:
             all_targets = target_embeddings

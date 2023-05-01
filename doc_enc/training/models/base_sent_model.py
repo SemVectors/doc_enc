@@ -18,7 +18,7 @@ class BaseSentModel(nn.Module):
         if conf.index.enable:
             self.index = TrainableIvfPQ(conf.index)
 
-    def calc_sim_matrix(self, batch) -> DualEncModelOutput:
+    def calc_sim_matrix(self, batch, dont_cross_device_sample=False) -> DualEncModelOutput:
         raise NotImplementedError("calc_sim_matrix is not implemented")
 
     def forward(self, batch) -> DualEncModelOutput:
