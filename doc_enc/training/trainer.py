@@ -1016,11 +1016,13 @@ class Trainer:
             index_conf = self._local_models.sent_model.conf.index
             if index_conf.readd_vectors_while_training:
                 if self._is_master:
-                    re_add_sent_vectors(
-                        index_path,
-                        Path(self._conf.save_path) / 'model.pt',
-                        train_iter.get_config().sents_batch_iterator_conf.batch_generator_conf,
-                    )
+                    model_path = Path(self._conf.save_path) / 'model.pt'
+                    if model_path.exists():
+                        re_add_sent_vectors(
+                            index_path,
+                            model_path,
+                            train_iter.get_config().sents_batch_iterator_conf.batch_generator_conf,
+                        )
 
                 if self._sync_group is not None:
                     # FIXME torch 1.13.1 timeout in monitored barrier is ignored
