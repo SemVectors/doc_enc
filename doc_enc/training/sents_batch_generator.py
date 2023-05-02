@@ -64,11 +64,13 @@ class SentsBatchGenerator:
         split,
         line_offset=0,
         line_cnt=-1,
+        limit=0,
     ):
         self._opts = opts
 
         self._line_num = line_offset
         self._line_cnt = line_cnt
+        self._limit = limit
 
         self._tokenizer = create_tokenizer(tok_conf)
         self._src_file = None
@@ -371,7 +373,7 @@ class SentsBatchGenerator:
         bucket = []
         cnt = 0
         for s, t, dups in zip(self._src_file, self._tgt_file, self._dup_file):
-            if cnt == self._line_cnt:
+            if cnt == self._line_cnt or (self._limit and self._line_num + cnt >= self._limit):
                 break
             cnt += 1
             src_id, st = self._parse_line(s)

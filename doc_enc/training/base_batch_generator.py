@@ -148,7 +148,12 @@ class BaseBatchIterator:
                     self._generator_cls,
                 )
                 + self._generator_args,
-                kwargs={'line_offset': offs, 'line_cnt': per_proc_lines, 'seed': seed},
+                kwargs={
+                    'line_offset': offs,
+                    'line_cnt': per_proc_lines,
+                    'limit': limit,
+                    'seed': seed,
+                },
             )
             p.start()
 

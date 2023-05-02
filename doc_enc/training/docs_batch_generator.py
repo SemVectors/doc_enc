@@ -76,6 +76,7 @@ class DocsBatchGenerator:
         include_fragments_level=True,
         line_offset=0,
         line_cnt=-1,
+        limit=0,
     ):
         self._opts = opts
         self._include_fragments_level = include_fragments_level
@@ -138,7 +139,6 @@ class DocsBatchGenerator:
             (t + (1,) for t in positive_targets),
             (t + (0,) for t in negative_targets),
         ):
-
             if tgt_hash in tgt_hashes:
                 if lbl == 1:
                     positive_idxs.append(tgt_hashes[tgt_hash])
@@ -183,7 +183,6 @@ class DocsBatchGenerator:
         tgt_hashes: dict,
         batch_dups: dict,
     ) -> _ProcSrcStatus:
-
         if not all_positive_targets:
             if not self._opts.allow_docs_without_positives:
                 return _ProcSrcStatus.NON_VALID_SRC
@@ -252,7 +251,6 @@ class DocsBatchGenerator:
     def _pad_batch_with_fragments(
         self, sents, fragment_lengths, doc_length_in_fragments, prefix, batch
     ):
-
         padded_sents, fragment_len = pad_sent_sequences(
             sents, fragment_lengths, self._text_proc.vocab()
         )
@@ -457,7 +455,6 @@ class DocsBatchIterator(BaseBatchIterator):
         pad_idx=0,
         pad_to_multiple_of=0,
     ):
-
         super().__init__(
             "DocsIter",
             opts,
@@ -487,7 +484,6 @@ class DocsBatchIterator(BaseBatchIterator):
             raise RuntimeError("Failed to init docs batch generator, empty folder or config error")
 
     def _make_batch_for_retr_task(self, batch: DocsBatch):
-
         src_max_len = len(max(batch.src_sents, key=len))
         src_tensor, src_lengths = create_padded_tensor(
             batch.src_sents, src_max_len, self._pad_idx, self._device, self._pad_to_multiple_of
