@@ -1,0 +1,75 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /trainer: full
+  - override /trainer/optim: adam_with_one_cycle
+  - override /model/fragment: null
+  #- override /model/doc: transformer
+  - override /model/sent/encoder: transformer
+  - _self_
+
+text_proc:
+  tokenizer:
+    add_bos: true
+    vocab_path: /train/bpe_256k_from_600M.spm.model
+
+trainer:
+  emb_grad_scale: 20
+  print_gpu_memory_stat_every: 1000
+  tasks:
+    - SENT_RETR
+  eval_tasks:
+    - SENT_RETR
+
+
+  optim:
+    optim_kind: ADAMW
+    max_grad_norm: 1.0
+    use_zero_optim: false
+    lr_scheduler_kwargs:
+      div_factor: 10
+      final_div_factor: 1
+    emb:
+      lr: 0.002
+    sent:
+      lr: 0.0005
+model:
+  freeze_base_sents_layer: false
+  max_chunk_size: 1024
+  scale: 20
+  margin: 0.0
+  sent:
+    scale: 30
+    margin: 0.3
+    max_chunk_size: 1024
+    encoder:
+      full_intermediate: true
+      share_attn: false
+      hidden_size: 768
+      emb_conf:
+        normalize_emb: true
+        scale_by_dim: false
+        emb_kind: TOKEN
+
+
+batches:
+  sents_batch_iterator_conf:
+    async_generators: 4
+    batch_generator_conf:
+      max_sent_size: 128
+      batch_size: 1600
+      dont_use_hns: true
+
+  docs_batch_iterator_conf:
+    async_generators: 1
+    include_datasets:
+      - pw
+      - sew
+      - srw
+    batch_generator_conf:
+      pad_src_sentences: false
+      positives_per_doc: [1, 4]
+      batch_src_sents_cnt: 12384
+      batch_total_sents_cnt: 15384
+      batch_size: 256
+      max_sents_per_doc: 1024
