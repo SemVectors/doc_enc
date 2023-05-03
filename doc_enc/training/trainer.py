@@ -545,9 +545,10 @@ class Trainer:
 
         return loss, (dense_loss, ivf_loss, pq_loss)
 
-    def _calc_doc_retr_loss(self, output, labels, batch_size):
+    def _calc_doc_retr_loss(self, output: DualEncModelOutput, labels, batch_size):
+        sim_matrix = output.dense_score_matrix
         if self._conf.doc_retr_loss_type == DocRetrLossType.CE:
-            dense_loss = self._doc_retr_criterion(output, labels)
+            dense_loss = self._doc_retr_criterion(sim_matrix, labels)
         else:
             raise RuntimeError("Logic error 988")
 

@@ -17,7 +17,7 @@ trainer:
   optim:
     lr: 0.0001
     sent_index:
-      lr: 0.0003
+      lr: 0.0001
   debug_iters:
     - 50
 
@@ -30,14 +30,14 @@ model:
     index:
       enable: true
       init_index_file: >-
-        /home/dvzubarev/Workspace/projects/semvectors/doc_enc/init_index/IVF3500_PQ32x8.faiss
+        /home/dvzubarev/Workspace/projects/semvectors/doc_enc/init_index/IVF3500_PQ64x8.faiss
       ivf_centers_num: 3500
-      subvector_num: 32
+      subvector_num: 64
       train_sample: 1.0
       readd_vectors_while_training: true
       ivf:
         fixed: false
-        lr: 0.0001
+        lr: 0.00005
         weight: 0.5
       pq:
         loss_type: DISTIL
@@ -50,9 +50,11 @@ text_proc:
 
 batches:
   sents_batch_iterator_conf:
+    async_generators: 6
     batch_generator_conf:
       batch_size: 64
       input_dir: /home/dvzubarev/data/paral_data/undata0/sents-mini
+      sents_limit: 100100
 
   docs_batch_iterator_conf:
     async_generators: 1
