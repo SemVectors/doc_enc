@@ -547,6 +547,10 @@ class Trainer:
 
     def _calc_doc_retr_loss(self, output: DualEncModelOutput, labels, batch_size):
         sim_matrix = output.dense_score_matrix
+        if self._local_models.doc_model.conf.cross_device_sample:
+            l = torch.zeros_like(sim_matrix)
+            l[:, : labels.shape[1]] = labels
+            labels = l
         if self._conf.doc_retr_loss_type == DocRetrLossType.CE:
             dense_loss = self._doc_retr_criterion(sim_matrix, labels)
         else:
