@@ -39,8 +39,8 @@ class DocsBatchGeneratorConf:
     max_sents_cnt_delta: int = 64
     batch_size: int = 96
 
-    positives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [1, 2])
-    negatives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [2, 4])
+    positives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [1, 3])
+    negatives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [0, 3])
 
     max_sents_per_doc: int = 1024
     min_sents_per_doc: int = 5
