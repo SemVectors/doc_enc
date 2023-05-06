@@ -4,9 +4,9 @@ defaults:
   - base_trainer_config
 
 
-switch_tasks_every: 50
-max_updates: 3_100
-eval_every: 3_000
+switch_tasks_every: 10
+max_updates: 3_000
+eval_every: 1_500
 debug_iters:
   - 1000
   - 1060

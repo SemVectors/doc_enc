@@ -4,7 +4,7 @@ defaults:
   - base_trainer_config
 
 
-switch_tasks_every: 50
+switch_tasks_every: 10
 max_updates: 50_000
 eval_every: 3_000
 checkpoint_every: 5_000
