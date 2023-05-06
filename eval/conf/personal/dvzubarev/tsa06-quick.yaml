@@ -6,6 +6,8 @@ defaults:
   - override /sent_retrieval: quick
   - _self_
 
+cache_embeddings: true
+
 doc_encoder:
   model_path: /home/dvzubarev/Workspace/projects/semvectors/models/last_model.pt
   use_gpu: 0

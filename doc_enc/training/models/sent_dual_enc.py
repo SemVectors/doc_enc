@@ -15,7 +15,7 @@ from doc_enc.training.dist_util import dist_gather_target_embs
 class SentDualEncoder(BaseSentModel):
     def _embed_sents(self, sents: torch.Tensor, sent_lengths: torch.Tensor, already_sorted=False):
         if not self.conf.split_sents:
-            res = self.encoder.forward(sents, sent_lengths, enforce_sorted=already_sorted)
+            res = self.encoder(sents, sent_lengths, enforce_sorted=already_sorted)
             return res.pooled_out
         return split_sents_and_embed(
             self.encoder,

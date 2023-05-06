@@ -118,7 +118,9 @@ class CachingDocEncoder(DocEncoder):
                 logging.info("simple case: return all cached embs")
                 return cache.get_embs()
 
-        embs_arr = np.empty((total_embs_cnt, self._doc_layer.out_embs_dim()), dtype=np.float16)
+        embs_arr = np.empty(
+            (total_embs_cnt, self._enc_module._doc_layer.out_embs_dim()), dtype=np.float16
+        )
         for cache_key, (required_idxs, cached_idxs) in cached_idxs_dict.items():
             logging.info("assign %d embs from %s", len(cached_idxs), cache_key)
             cache = self._caches[cache_key]

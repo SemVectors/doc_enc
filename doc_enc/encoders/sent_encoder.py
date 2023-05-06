@@ -64,7 +64,7 @@ class SentEncoder(nn.Module):
         if self.emb_to_hidden_mapping is not None:
             x = self.emb_to_hidden_mapping(x)
 
-        enc_result = self.encoder.forward(x, lengths, enforce_sorted=enforce_sorted)
+        enc_result = self.encoder(x, lengths, enforce_sorted=enforce_sorted)
 
         return enc_result
 
@@ -123,7 +123,7 @@ class SentForDocEncoder(SentEncoder):
         )
 
     def base_cls_forward(self, *args, **kwargs):
-        return SentEncoder.forward(self, *args, **kwargs)
+        return SentEncoder.__call__(self, *args, **kwargs)
 
     def forward(
         self,
@@ -143,7 +143,7 @@ class SentForDocEncoder(SentEncoder):
 
         hidden_states = sent_enc_result.encoder_out.transpose(0, 1)
         hidden_states = self.dropout(hidden_states)
-        enc_result = self.doc_mode_encoder.forward(
+        enc_result = self.doc_mode_encoder(
             hidden_states,
             sent_enc_result.out_lengths,
             enforce_sorted=enforce_sorted,

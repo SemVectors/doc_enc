@@ -115,6 +115,6 @@ class EmbSeqEncoder(nn.Module):
             seqs_tensor = seqs_tensor * math.sqrt(self.conf.hidden_size)
             seqs_tensor = self.pos_emb(seqs_tensor, len_tensor)
 
-        enc_result = self.encoder.forward(seqs_tensor, len_tensor, **kwargs)
+        enc_result = self.encoder(seqs_tensor, len_tensor, **kwargs)
 
         return enc_result
