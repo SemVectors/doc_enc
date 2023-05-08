@@ -6,8 +6,9 @@ let pypkgs = pkgs.python.pkgs;
 in
 pkgs.dockerTools.streamLayeredImage {
   name = "${private-repo}semvectors/doc_enc${name-suffix}";
-  tag = pypkgs.doc_enc_full.version;
+  tag = pypkgs.doc_enc_train.version;
 
+  maxLayers = 110;
   contents = [
     py-env
     pkgs.bashInteractive
