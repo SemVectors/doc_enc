@@ -65,7 +65,7 @@
             pkgs.yamllint
             pypkgs.pylint
             pypkgs.black
-            pypkgs.debugpy
+            # pypkgs.debugpy
             pypkgs.ipykernel
           ];
 
