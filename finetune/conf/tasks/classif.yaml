@@ -4,4 +4,4 @@ defaults:
   - _self_
 
 nlabels: 2
-model_path: /train/models/model22222.pt
+model_path: /train/models/model.pt

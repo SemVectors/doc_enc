@@ -407,6 +407,9 @@ class DocEncoder:
             with autocast():
                 return self._enc_module.encode_sents(sents, collect_on_cpu=True)
 
+    def load_params_from_checkpoint(self, checkpoint_path):
+        self._enc_module.load_params_from_checkpoint(checkpoint_path)
+
     def encode_sents(self, sents: list[str]) -> np.ndarray:
         """Encode bunch of sents to vectors."""
         sent_ids = self._enc_module.tp().prepare_sents(sents)

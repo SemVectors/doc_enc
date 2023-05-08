@@ -140,5 +140,5 @@ class DocDualEncoder(BaseDocModel):
             )
         return output
 
-    def forward(self, batch, labels) -> DualEncModelOutput:
+    def forward(self, batch: DocsBatch, labels) -> DualEncModelOutput:
         return self._forward_doc_task(batch, labels)
