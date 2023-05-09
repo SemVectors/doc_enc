@@ -21,7 +21,8 @@ from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.tokenizer import TokenizerConf
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 
-from doc_enc.training.trainer import Trainer, TrainerConf, OptimConf
+from doc_enc.training.train_conf import TrainerConf, OptimConf
+from doc_enc.training.trainer import Trainer
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
 from doc_enc.encoders.enc_config import SentEncoderConf, EmbSeqEncoderConf, BaseEncoderConf
 from doc_enc.training.index.prepare_index_util import prepare_sent_index
@@ -119,7 +120,6 @@ def _run_train(local_rank, local_world_size, conf: Config):
     train_iter = None
     dev_iter = None
     try:
-
         trainer = Trainer(
             conf.trainer,
             conf.model,

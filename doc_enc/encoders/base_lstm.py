@@ -40,12 +40,11 @@ class BaseRNNEncoder(BaseEncoder):
 
         self.conf = conf
         proj_size = 0
-        if 'proj_size' in conf and conf.proj_size is not None:
+        if conf.proj_size is not None:
             proj_size = conf.proj_size
 
         if conf.encoder_kind == EncoderKind.LSTM:
             rnn_cls = nn.LSTM
-            conf.get
             kwargs = {'proj_size': proj_size}
         elif conf.encoder_kind == EncoderKind.GRU:
             rnn_cls = nn.GRU
@@ -82,7 +81,6 @@ class BaseRNNEncoder(BaseEncoder):
     def forward(
         self, embs: torch.Tensor, lengths: torch.Tensor, enforce_sorted=True, **kwargs
     ) -> BaseEncoderOut:
-
         bsz, seqlen = embs.size()[:2]
         # BS x SeqLen x Dim -> SeqLen x BS x DIM
         x = embs.transpose(0, 1)

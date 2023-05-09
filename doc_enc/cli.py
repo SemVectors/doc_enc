@@ -60,6 +60,8 @@ def run_compute(args):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--verbose", "-v", action="store_true", help="")
+
     subparsers = parser.add_subparsers(help='sub-command help')
 
     doc_parser = subparsers.add_parser('docs', help='help of segment')
@@ -73,7 +75,6 @@ def main():
     doc_parser.add_argument("--max_sents_per_batch", "-l", default=2048)
     doc_parser.add_argument("--batch_size", "-b", default=1000)
     doc_parser.add_argument("--save_as_fp16", default=False, action='store_true')
-    doc_parser.add_argument("--verbose", "-v", action="store_true", help="")
     doc_parser.set_defaults(func=run_compute)
 
     args = parser.parse_args()
