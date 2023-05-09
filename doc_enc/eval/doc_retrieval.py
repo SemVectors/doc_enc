@@ -39,7 +39,6 @@ class DocRetrievalConf:
 
 
 def _load_gold_data(meta_path, query_dir, query_data, other_dir, other_data):
-
     _, query_inv_idx = query_data
     _, other_inv_idx = other_data
 
@@ -122,10 +121,11 @@ def _make_key(text_dir: Path, doc_id):
     return (text_dir, doc_id)
 
 
-def _make_keys_dict(text_dir: Path, paths):
+def _make_keys_dict(base_dir: Path, paths):
     id2idx = {}
     for i, p in enumerate(paths):
         doc_id = id_from_path(p)
+        text_dir = p.parent.relative_to(base_dir)
         id2idx[_make_key(text_dir, doc_id)] = i
 
     return id2idx
@@ -204,14 +204,14 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     other_doc_embs = doc_encoder.encode_docs_from_path_list(other_paths)
     assert len(other_doc_embs) == len(other_paths) == len(other_keys)
     logging.info("Shape of computed other embs: %s", other_doc_embs.shape)
-    other_inv_idx = _make_keys_dict(other_text_dir, other_paths)
+    other_inv_idx = _make_keys_dict(base_dir, other_paths)
     other_data = (other_keys, other_inv_idx)
 
     query_paths = paths_from_ids(abs_query_text_dir, query_ids)
     query_doc_embs = doc_encoder.encode_docs_from_path_list(query_paths)
     assert len(query_paths) == len(query_doc_embs) == len(query_ids)
     logging.info("Shape of computed query embs: %s", query_doc_embs.shape)
-    query_inv_idx = _make_keys_dict(query_text_dir, query_paths)
+    query_inv_idx = _make_keys_dict(base_dir, query_paths)
     query_data = ([_make_key(query_text_dir, i) for i in query_ids], query_inv_idx)
 
     max_k = max(conf.topk) + 1
