@@ -9,10 +9,10 @@ import json
 from pathlib import Path
 import multiprocessing
 import logging
-import omegaconf
 
 import pkg_resources  # part of setuptools
 
+import omegaconf
 from omegaconf import OmegaConf
 import torch
 from torch import nn
@@ -28,7 +28,13 @@ from torch.cuda.amp.autocast_mode import autocast
 from torch.distributed.algorithms.join import Join
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from doc_enc.training.train_conf import OptimConf, TrainerConf, LRSchedulerKind, OptimKind
+from doc_enc.training.train_conf import (
+    OptimConf,
+    TrainerConf,
+    LRSchedulerKind,
+    OptimKind,
+    ParamGroupConf,  # compat with older models
+)
 from doc_enc.training.batch_iterator import BatchIterator
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.training.types import DocRetrLossType, TaskType, SentRetrLossType
