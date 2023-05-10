@@ -5,17 +5,20 @@ defaults:
   - override /doc_retrieval: full
   - _self_
 
+cache_embeddings: true
+
 doc_encoder:
   model_path: /home/dvzubarev/Workspace/projects/semvectors/models/last_model.pt
   use_gpu: 0
   max_sents: 2048
+  async_batch_gen: 4
 
 doc_matching:
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
 
 doc_retrieval:
   sim_kind: COS
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/doc
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
 
 sent_retrieval:
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets/sent
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent

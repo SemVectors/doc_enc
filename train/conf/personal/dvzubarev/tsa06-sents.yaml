@@ -30,3 +30,9 @@ batches:
     batch_generator_conf:
       batch_size: 256
       input_dir: /home/dvzubarev/data/paral_data/undata0/sents-mini
+
+  docs_batch_iterator_conf:
+    use_existing_combined_meta: true
+    batch_generator_conf:
+      input_dir: >-
+        /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/
