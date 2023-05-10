@@ -13,8 +13,8 @@ class TokenWithPositionalEncoding(TokenEmbedding):
 
         self.pos_encoder = PositionalEncoding(conf.emb_dim)
 
-    def forward(self, tokens, lengths=None, token_types=None):
-        x = super()._embed(tokens, token_types=token_types)
+    def forward(self, tokens, lengths=None):
+        x = super()._embed(tokens)
         x = x.transpose(0, 1)
         x = self.pos_encoder(x)
         return super()._post_proc(x.transpose(0, 1))

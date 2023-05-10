@@ -11,7 +11,7 @@ class TokenEmbedding(nn.Module):
     def __init__(self, conf: BaseEmbConf, num_embeddings, padding_idx):
         super().__init__()
 
-        self.conf = conf
+        self.conf: BaseEmbConf = conf
 
         if num_embeddings % 8 != 0:
             num_embeddings = ((num_embeddings // 8) + 1) * 8
@@ -29,7 +29,7 @@ class TokenEmbedding(nn.Module):
         if conf.dropout > 0.0:
             self.dropout = nn.Dropout(conf.dropout)
 
-    def _embed(self, tokens, token_types=None):
+    def _embed(self, tokens):
         embs = self.embed_tokens(tokens)
         if self.conf.scale_by_dim:
             embs = embs * math.sqrt(self.conf.emb_dim)
@@ -42,6 +42,6 @@ class TokenEmbedding(nn.Module):
             embs = self.dropout(embs)
         return embs
 
-    def forward(self, tokens, lengths=None, token_types=None):
-        embs = self._embed(tokens, token_types=token_types)
+    def forward(self, tokens, lengths=None):
+        embs = self._embed(tokens)
         return self._post_proc(embs)

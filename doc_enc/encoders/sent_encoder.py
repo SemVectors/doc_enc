@@ -52,14 +52,13 @@ class SentEncoder(nn.Module):
         lengths: torch.Tensor,
         *,
         enforce_sorted=False,
-        token_types=None,
     ) -> enc_out.BaseEncoderOut:
         if self.pad_to_multiple_of and tokens.size(1) % self.pad_to_multiple_of != 0:
             raise RuntimeError(
                 f"Sents should be padded in batch generator to {self.pad_to_multiple_of}"
             )
         # embed tokens
-        x = self.embed(tokens.int(), lengths=lengths, token_types=token_types)
+        x = self.embed(tokens.int(), lengths=lengths)
 
         if self.emb_to_hidden_mapping is not None:
             x = self.emb_to_hidden_mapping(x)
@@ -130,13 +129,10 @@ class SentForDocEncoder(SentEncoder):
         tokens: torch.Tensor,
         lengths: torch.Tensor,
         *,
-        enforce_sorted=False,
-        token_types=None,
+        enforce_sorted: bool = False,
     ) -> enc_out.BaseEncoderOut:
         with self._maybe_no_grad():
-            sent_enc_result = super().forward(
-                tokens, lengths, enforce_sorted=enforce_sorted, token_types=token_types
-            )
+            sent_enc_result = super().forward(tokens, lengths, enforce_sorted=enforce_sorted)
 
         if self.doc_mode_encoder is None or self.dropout is None:
             return sent_enc_result

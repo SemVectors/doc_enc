@@ -13,7 +13,7 @@ class TokenWithPositionalEmbedding(TokenEmbedding):
 
         self.pos_emb = PositionalEmbedding(conf.emb_dim)
 
-    def forward(self, tokens, lengths, token_types=None):
-        x = super()._embed(tokens, token_types=token_types)
+    def forward(self, tokens, lengths):
+        x = super()._embed(tokens)
         x = self.pos_emb(x, lengths)
         return super()._post_proc(x)
