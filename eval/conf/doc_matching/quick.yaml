@@ -16,3 +16,9 @@ datasets:
   - name: sew-mini
     meta: SimEnWiki/test_mini.csv
     texts: SimEnWiki/texts
+  - name: srw-limited
+    meta: SimRuWiki/test_10k_doc1.csv
+    texts: SimRuWiki/texts
+  - name: sew-limited
+    meta: SimEnWiki/test_10k_doc1.csv
+    texts: SimEnWiki/texts
