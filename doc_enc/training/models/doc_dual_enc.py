@@ -114,6 +114,10 @@ class DocDualEncoder(BaseDocModel):
 
     def _finalize_sim_matrix(self, sm: torch.Tensor, labels, margin, scale):
         if margin:
+            if self.conf.cross_device_sample:
+                l = torch.zeros_like(sm)
+                l[:, : labels.shape[1]] = labels
+                labels = l
             sm[labels.to(dtype=torch.bool)] -= margin
 
         if scale:
