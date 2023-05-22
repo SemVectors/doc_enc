@@ -9,16 +9,12 @@ datasets:
     meta: ParalWiki/test.csv
     texts: ParalWiki/texts
     eval_for_len_groups: true
-  - name: sew-mini
-    meta: SimEnWiki/test_mini.csv
-    texts: SimEnWiki/texts
+  - name: ses
+    meta: SimEnSci/test.csv
+    texts: SimEnSci/texts
     search_over_all_texts: true
     other_texts_limit: 50_000
-  - name: srw-mini
-    meta: SimRuWiki/test_mini.csv
-    texts: SimRuWiki/texts
-    search_over_all_texts: true
-    other_texts_limit: 50_000
+
   - name: sew-limited
     meta: SimEnWiki/test_10k_doc1.csv
     texts: SimEnWiki/texts

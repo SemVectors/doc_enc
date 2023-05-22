@@ -173,6 +173,7 @@ def _create_gen_opts(
         min_sents_per_doc=min_sents_per_doc,
         pad_src_sentences=pad_sentences,
         pad_tgt_sentences=pad_sentences,
+        min_tgt_docs_per_src_doc=1,
         **kwargs,
     )
     tp_conf = TextProcessorConf(

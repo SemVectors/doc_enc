@@ -17,9 +17,10 @@ model:
 
 
 text_proc:
-  min_sent_len: 3
   tokenizer:
-    vocab_path: /home/dvzubarev/data/paral_data/data4/unigram_96k_from_100M.spm.model
+    vocab_path: /home/dvzubarev/data/paral_data/data4/bpe_256k_from_600M.spm.model
+
+combine_datasets_use_text_proc: true
 
 batches:
   sents_batch_iterator_conf:
@@ -36,6 +37,8 @@ batches:
       - SimEnSci
       - SimEnWiki
     batch_generator_conf:
+      # input_dir: >-
+      #   /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/
       pad_src_sentences: false
       batch_src_sents_cnt: 128
       input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc

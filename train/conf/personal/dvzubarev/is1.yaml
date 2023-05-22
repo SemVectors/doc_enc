@@ -10,9 +10,8 @@ trainer:
   switch_tasks_every: 10
 
 text_proc:
-  min_sent_len: 3
   tokenizer:
-    vocab_path: /srv/apps/doc-enc-work-dir/unigram_96k_from_100M.spm.model
+    vocab_path: /srv/apps/doc-enc-work-dir/bpe_256k_from_600M.spm.model
 
 batches:
   sents_batch_iterator_conf:

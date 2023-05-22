@@ -21,9 +21,8 @@ model:
 
 
 text_proc:
-  min_sent_len: 3
   tokenizer:
-    vocab_path: /home/dvzubarev/data/paral_data/data4/unigram_96k_from_100M.spm.model
+    vocab_path: /home/dvzubarev/data/paral_data/data4/bpe_256k_from_600M.spm.model
 
 batches:
   sents_batch_iterator_conf:

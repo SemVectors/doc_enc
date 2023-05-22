@@ -42,9 +42,9 @@ class DocsBatchGeneratorConf:
     positives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [1, 3])
     negatives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [0, 3])
 
-    max_sents_per_doc: int = 1024
+    max_sents_per_doc: int = 1280
     min_sents_per_doc: int = 5
-    min_tgt_docs_per_src_doc: int = 1
+    min_tgt_docs_per_src_doc: int = 2
     allow_docs_without_positives: bool = False
 
     pad_src_sentences: bool = True

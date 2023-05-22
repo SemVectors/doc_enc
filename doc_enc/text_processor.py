@@ -14,7 +14,7 @@ from doc_enc.passages import split_into_fragments_by_len
 @dataclasses.dataclass
 class TextProcessorConf:
     tokenizer: TokenizerConf
-    max_sent_len: int = 512
+    max_sent_len: int = 128
     min_sent_len: int = 4
     num_alpha_max_ratio: float = 0.5
 
