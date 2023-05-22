@@ -81,6 +81,9 @@ def _calc_metrics(threshold, gold, inv_idx, doc_embs):
     total = 0
     good = 0
     not_found = 0
+    tp = 0
+    fp = 0
+    fn = 0
 
     for src_id, tgt_id, label in gold:
         src_i = inv_idx.get(src_id)
@@ -97,11 +100,22 @@ def _calc_metrics(threshold, gold, inv_idx, doc_embs):
         if sim > threshold:
             computed_label = 1
 
+        if label == 1 and computed_label == 1:
+            tp += 1
+        if label == 1 and computed_label == 0:
+            fn += 1
+        if label == 0 and computed_label == 1:
+            fp += 1
+
         good += computed_label == label
         total += 1
     if not_found:
         logging.warning("%d text embeddings were missing!", not_found)
-    return good / total
+
+    rec = tp / (tp + fn)
+    prec = tp / (tp + fp)
+    f1 = 2 * rec * prec / (rec + prec)
+    return good / total, f1
 
 
 def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
@@ -132,12 +146,12 @@ def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
         results = []
         for t in range(2, 10):
             t = t / 10
-            acc = _calc_metrics(t, gold, inv_idx, doc_embs)
-            m = {'threshold': t, 'acc': acc}
+            acc, f1 = _calc_metrics(t, gold, inv_idx, doc_embs)
+            m = {'threshold': t, 'acc': acc, 'f1': f1}
             results.append(m)
         return results
-    acc = _calc_metrics(conf.threshold, meta_path, inv_idx, doc_embs)
-    return {"acc": acc}
+    acc, f1 = _calc_metrics(conf.threshold, meta_path, inv_idx, doc_embs)
+    return {"acc": acc, "f1": f1}
 
 
 def doc_matching_eval(conf: DocMatchingConf, doc_encoder: DocEncoder):
