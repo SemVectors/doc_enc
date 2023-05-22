@@ -166,7 +166,6 @@ def _create_gen_opts(
     min_sent_len=1,
     **kwargs,
 ):
-
     conf = DocsBatchGeneratorConf(
         input_dir=input_dir,
         positives_per_doc=positives_per_doc,
@@ -180,6 +179,7 @@ def _create_gen_opts(
         TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
         fragment_size=16,
         min_sent_len=min_sent_len,
+        num_alpha_max_ratio=0.0,
     )
     return conf, tp_conf
 

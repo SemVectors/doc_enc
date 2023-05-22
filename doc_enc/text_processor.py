@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
-from typing import List, Optional
+from typing import List
 import dataclasses
 import itertools
+import re
 
 from doc_enc.utils import open_file
 from doc_enc.tokenizer import TokenizerConf, AbcTokenizer, create_tokenizer
@@ -15,6 +16,7 @@ class TextProcessorConf:
     tokenizer: TokenizerConf
     max_sent_len: int = 512
     min_sent_len: int = 4
+    num_alpha_max_ratio: float = 0.5
 
     fragment_size: int = 24
 
@@ -24,9 +26,29 @@ class TextProcessor:
         self._conf = conf
 
         self._tokenizer = create_tokenizer(conf.tokenizer, inference_mode=inference_mode)
+        self._alpha_nums_regex = re.compile(r'(\d+[-–.]?\d*)|(\w+)')
 
     def vocab(self):
         return self._tokenizer
+
+    def _filter_sent(self, tokens, sent_str):
+        if len(tokens) < self._conf.min_sent_len:
+            return True
+
+        if self._conf.num_alpha_max_ratio:
+            nums = 0
+            alphas = 0
+            occ_list = self._alpha_nums_regex.finditer(sent_str)
+            for match in occ_list:
+                if match.group(1):
+                    nums += 1
+                if match.group(2):
+                    alphas += 1
+
+            if alphas == 0 or nums / alphas > self._conf.num_alpha_max_ratio:
+                return True
+
+        return False
 
     def prepare_text(self, text_sents: list[str], split_into_fragments=True, return_strings=False):
         sents = []
@@ -36,7 +58,7 @@ class TextProcessor:
                 continue
 
             tokens = self._tokenizer(sent)
-            if len(tokens) >= self._conf.min_sent_len:
+            if not self._filter_sent(tokens, sent):
                 tokens = tokens[: self._conf.max_sent_len]
                 sents.append(tokens)
                 if return_strings:

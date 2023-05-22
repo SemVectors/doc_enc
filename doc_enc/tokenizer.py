@@ -95,7 +95,7 @@ class SentencepieceTokenizer(AbcTokenizer):
     def vocab_size(self) -> int:
         return len(self._vocab)
 
-    def _modify_sent(self, sent):
+    def _modify_sent(self, sent: list[int]):
         prefix = []
         if self._conf.add_bos:
             prefix = [self.bos_idx()]

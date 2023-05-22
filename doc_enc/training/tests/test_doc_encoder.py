@@ -6,10 +6,10 @@ from doc_enc.doc_encoder import DocEncoderConf, BatchIterator
 
 
 def _create_tp_conf():
-
     tp_conf = TextProcessorConf(
         TokenizerConf(tokenizer_type=TokenizerType.PRETOKENIZED),
         min_sent_len=1,
+        num_alpha_max_ratio=0.0,
     )
     return tp_conf
 

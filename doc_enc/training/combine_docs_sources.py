@@ -136,12 +136,67 @@ def _calc_sentence_size_and_hash_in_dir(
             out_info_dict[doc_id] = (cnt, md5hash.hexdigest())
 
 
+class Stat:
+    def __init__(self) -> None:
+        self.total_src_docs = 0
+        self.total_src_doc_len = 0
+        self.max_src_doc_len = 0
+
+        self.total_tgt_docs = 0
+        self.total_tgt_doc_len = 0
+        self.max_tgt_doc_len = 0
+
+        self.unique_srcs = set()
+        self.unique_tgts = set()
+
+        self.filter_src_min_doc_len = 0
+        self.filter_tgt_min_doc_len = 0
+        self.filter_src_max_doc_len = 0
+        self.filter_tgt_max_doc_len = 0
+
+    def add_src_stat(self, src_id, src_len, max_doc_len, min_doc_len):
+        if src_id not in self.unique_srcs:
+            self.unique_srcs.add(src_id)
+            self.total_src_docs += 1
+            self.total_src_doc_len += src_len
+            self.max_src_doc_len = max(self.max_src_doc_len, src_len)
+        if src_len < min_doc_len:
+            self.filter_src_min_doc_len += 1
+        elif max_doc_len <= src_len:
+            self.filter_src_max_doc_len += 1
+
+    def add_tgt_stat(self, tgt_id, tgt_len, max_doc_len, min_doc_len):
+        if tgt_id not in self.unique_tgts:
+            self.unique_tgts.add(tgt_id)
+            self.total_tgt_docs += 1
+            self.total_tgt_doc_len += tgt_len
+            self.max_tgt_doc_len = max(self.max_tgt_doc_len, tgt_len)
+        if tgt_len < min_doc_len:
+            self.filter_tgt_min_doc_len += 1
+        elif max_doc_len <= tgt_len:
+            self.filter_tgt_max_doc_len += 1
+
+    def __str__(self) -> str:
+        return (
+            f'avg src doc len: {self.total_src_doc_len/self.total_src_docs}, '
+            f'max src doc len: {self.max_src_doc_len}, '
+            f'avg tgt doc len: {self.total_tgt_doc_len/self.total_tgt_docs}, '
+            f'max tgt doc len: {self.max_tgt_doc_len}\n'
+            f'filtered by: src_min_doc_len: {self.filter_src_min_doc_len}, '
+            f'tgt_min_doc_len: {self.filter_tgt_min_doc_len}, '
+            f'src_max_doc_len: {self.filter_src_max_doc_len}, '
+            f'tgt_max_doc_len: {self.filter_tgt_max_doc_len}'
+        )
+
+
 def _generate_examples_from_dataset(
     p: Path, split: str, dataset_id: int, src_info_dict, tgt_info_dict, min_doc_len, max_doc_len
 ):
     meta_path = find_file(p / f"{split}.csv")
     if not meta_path.exists():
         raise RuntimeError(f"Not found {split}.csv in {p}")
+
+    stat = Stat()
     with open_file(meta_path) as f:
         reader = csv.reader(f)
         try:
@@ -165,6 +220,9 @@ def _generate_examples_from_dataset(
             src_len = src_info[0]
             tgt_len = tgt_info[0]
 
+            stat.add_src_stat(src_id, src_len, max_doc_len=max_doc_len, min_doc_len=min_doc_len)
+            stat.add_tgt_stat(tgt_id, tgt_len, max_doc_len=max_doc_len, min_doc_len=min_doc_len)
+
             if min_doc_len <= src_len < max_doc_len and min_doc_len <= tgt_len < max_doc_len:
                 yield Example(
                     dataset_id,
@@ -176,3 +234,5 @@ def _generate_examples_from_dataset(
                     src_hash=src_info[1],
                     tgt_hash=tgt_info[1],
                 )
+    logging.info("stat for %s:", p)
+    logging.info(str(stat))
