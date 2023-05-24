@@ -153,12 +153,10 @@ def _proc_calc_sent_info_for_paths(paths: list[Path]):
         md5hash = hashlib.md5()
         cnt = 0
         if _PROC_TEXT_PROC is not None:
-            sent_strs, _ = _PROC_TEXT_PROC.prepare_text_from_file(
-                p, split_into_fragments=False, return_strings=True
-            )
-            cnt = len(sent_strs)
-            for l in sent_strs:
-                md5hash.update(l.encode('utf8'))
+            sent_tokens, _ = _PROC_TEXT_PROC.prepare_text_from_file(p, split_into_fragments=False)
+            cnt = len(sent_tokens)
+            for tokens in sent_tokens:
+                md5hash.update(b''.join(t.to_bytes(4, 'little') for t in tokens))
         else:
             with open_bin_file(p) as f:
                 for l in f:

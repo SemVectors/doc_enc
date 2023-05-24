@@ -50,9 +50,8 @@ class TextProcessor:
 
         return False
 
-    def prepare_text(self, text_sents: list[str], split_into_fragments=True, return_strings=False):
+    def prepare_text(self, text_sents: list[str], split_into_fragments=True):
         sents = []
-        sents_str = []
         for sent in text_sents:
             if not sent.strip():
                 continue
@@ -61,23 +60,17 @@ class TextProcessor:
             if not self._filter_sent(tokens, sent):
                 tokens = tokens[: self._conf.max_sent_len]
                 sents.append(tokens)
-                if return_strings:
-                    sents_str.append(sent)
 
         fragment_len_list = []
         if split_into_fragments:
             fragment_len_list = split_into_fragments_by_len(sents, self._conf.fragment_size)
 
-        if not return_strings:
-            return sents, fragment_len_list
-        return sents_str, fragment_len_list
+        return sents, fragment_len_list
 
-    def prepare_text_from_file(self, path, split_into_fragments=True, return_strings=False):
+    def prepare_text_from_file(self, path, split_into_fragments=True):
         with open_file(path) as f:
             sent_gen = (l.rstrip() for l in f)
-            return self.prepare_text(
-                sent_gen, split_into_fragments=split_into_fragments, return_strings=return_strings
-            )
+            return self.prepare_text(sent_gen, split_into_fragments=split_into_fragments)
 
     def prepare_sents(self, sent_strs):
         sent_ids = []
