@@ -16,7 +16,7 @@ class TextProcessorConf:
     tokenizer: TokenizerConf
     max_sent_len: int = 128
     min_sent_len: int = 4
-    num_alpha_max_ratio: float = 0.5
+    num_alpha_max_ratio: float = 1.0
 
     fragment_size: int = 24
 
