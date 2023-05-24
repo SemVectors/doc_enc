@@ -201,6 +201,7 @@ def _preproc(conf: Config):
         out_filename_prefix=prefix,
         min_doc_len=gen_conf.min_sents_per_doc,
         max_doc_len=gen_conf.max_sents_per_doc,
+        procs=iter_conf.combine_procs_cnt,
     )
     logging.info("done with train")
     combine_docs_datasets(
@@ -212,6 +213,7 @@ def _preproc(conf: Config):
         out_filename_prefix=prefix,
         min_doc_len=gen_conf.min_sents_per_doc,
         max_doc_len=gen_conf.max_sents_per_doc,
+        procs=iter_conf.combine_procs_cnt,
     )
     logging.info("done with dev")
 

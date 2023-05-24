@@ -5,7 +5,7 @@ from typing import NamedTuple, Optional
 from pathlib import Path
 import csv
 import hashlib
-
+import concurrent.futures
 
 from doc_enc.utils import find_file, open_bin_file, open_file
 from doc_enc.text_processor import TextProcessor
@@ -32,6 +32,7 @@ def combine_docs_datasets(
     min_doc_len=0,
     max_doc_len=float('inf'),
     sort_by_len=False,
+    procs=4,
 ):
     input_path = Path(input_dir)
     datasets = []
@@ -54,7 +55,7 @@ def combine_docs_datasets(
 
         all_examples = []
         for i, dsp in enumerate(datasets):
-            src_info_dict, tgt_info_dict = _calc_sentence_size_and_hash(dsp, text_proc)
+            src_info_dict, tgt_info_dict = _calc_sentence_size_and_hash(dsp, text_proc, procs=procs)
             all_examples.extend(
                 _generate_examples_from_dataset(
                     dsp, split, i, src_info_dict, tgt_info_dict, min_doc_len, max_doc_len
@@ -81,45 +82,78 @@ def combine_docs_datasets(
             )
 
 
-def _calc_sentence_size_and_hash(dataset_path: Path, text_proc: Optional[TextProcessor]):
+def _calc_sentence_size_and_hash(dataset_path: Path, text_proc: Optional[TextProcessor], procs=4):
     docs_path = dataset_path / "texts"
     if docs_path.exists():
         src_docs_path = docs_path
         info_dict = {}
-        _calc_sentence_size_and_hash_in_dir(docs_path, text_proc, info_dict)
+        _calc_sentence_size_and_hash_in_dir(docs_path, text_proc, info_dict, procs=procs)
         return info_dict, info_dict
 
     src_docs_path = dataset_path / "texts_1"
     tgt_docs_path = dataset_path / "texts_2"
     if src_docs_path.exists() and tgt_docs_path.exists():
         src_info_dict = {}
-        _calc_sentence_size_and_hash_in_dir(src_docs_path, text_proc, src_info_dict)
+        _calc_sentence_size_and_hash_in_dir(src_docs_path, text_proc, src_info_dict, procs=procs)
         tgt_info_dict = {}
-        _calc_sentence_size_and_hash_in_dir(tgt_docs_path, text_proc, tgt_info_dict)
+        _calc_sentence_size_and_hash_in_dir(tgt_docs_path, text_proc, tgt_info_dict, procs=procs)
         return src_info_dict, tgt_info_dict
 
     raise RuntimeError(f"Not found texts folder (or texts_1,texts_2 folders) in {dataset_path}")
 
 
-def _calc_sentence_size_and_hash_in_dir(
-    docs_path: Path, text_proc: Optional[TextProcessor], out_info_dict
-):
-    for p in docs_path.iterdir():
-        if not p.is_file() or not p.suffix in ('.gz', '.txt'):
-            continue
+def _process_in_pool(pool, func, args_generator, on_result=None):
+    futures = set()
 
-        doc_id = p
-        while doc_id.suffix:
-            doc_id = doc_id.with_suffix('')
+    processed = 0
 
-        doc_id = int(doc_id.name)
-        if doc_id in out_info_dict:
-            continue
+    def _wait_for_futures(f):
+        nonlocal processed
+        done, f = concurrent.futures.wait(f, return_when=concurrent.futures.FIRST_COMPLETED)
+        processed += len(done)
 
+        while done:
+            done_task = done.pop()
+            # TODO exception handling
+            res = done_task.result()
+            if on_result:
+                on_result(res)
+
+        return f
+
+    for args in args_generator:
+        if len(futures) >= pool._max_workers:
+            futures = _wait_for_futures(futures)
+
+        futures.add(pool.submit(func, *args))
+
+    while futures:
+        futures = _wait_for_futures(futures)
+
+
+_PROC_TEXT_PROC = None
+
+
+def _proc_init(text_proc):
+    global _PROC_TEXT_PROC
+    _PROC_TEXT_PROC = text_proc
+
+
+def _doc_id_from_path(p):
+    doc_id = p
+    while doc_id.suffix:
+        doc_id = doc_id.with_suffix('')
+    doc_id = int(doc_id.name)
+    return doc_id
+
+
+def _proc_calc_sent_info_for_paths(paths: list[Path]):
+    out_info_dict = {}
+    for p in paths:
         md5hash = hashlib.md5()
         cnt = 0
-        if text_proc is not None:
-            sent_strs, _ = text_proc.prepare_text_from_file(
+        if _PROC_TEXT_PROC is not None:
+            sent_strs, _ = _PROC_TEXT_PROC.prepare_text_from_file(
                 p, split_into_fragments=False, return_strings=True
             )
             cnt = len(sent_strs)
@@ -133,7 +167,50 @@ def _calc_sentence_size_and_hash_in_dir(
                         md5hash.update(l)
 
         if cnt > 0:
+            doc_id = _doc_id_from_path(p)
             out_info_dict[doc_id] = (cnt, md5hash.hexdigest())
+    return out_info_dict
+
+
+def _calc_sentence_size_and_hash_in_dir(
+    docs_path: Path,
+    text_proc: Optional[TextProcessor],
+    out_info_dict,
+    procs=4,
+    batch_size=100,
+):
+    def _batch_gen():
+        batch = []
+        cnt = 0
+        for p in docs_path.iterdir():
+            if not p.is_file() or not p.suffix in ('.gz', '.txt'):
+                continue
+
+            doc_id = _doc_id_from_path(p)
+            if doc_id in out_info_dict:
+                continue
+
+            batch.append(p)
+            cnt += 1
+            if cnt % 10_000 == 0:
+                logging.info("processed 10k docs")
+            if len(batch) > batch_size:
+                yield (batch,)
+                batch = []
+
+        if batch:
+            yield (batch,)
+
+    logging.info("precalculating doc lengths and hash in %s", docs_path)
+    pool = concurrent.futures.ProcessPoolExecutor(
+        procs, initializer=_proc_init, initargs=(text_proc,)
+    )
+    _process_in_pool(
+        pool,
+        _proc_calc_sent_info_for_paths,
+        _batch_gen(),
+        out_info_dict.update,
+    )
 
 
 class Stat:
