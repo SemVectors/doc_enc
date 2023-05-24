@@ -31,6 +31,7 @@ batches:
   docs_batch_iterator_conf:
     use_existing_combined_meta: true
     async_generators: 1
+    combine_procs_cnt: 7
     include_datasets:
       - ParalWiki
       - SimRuWiki
