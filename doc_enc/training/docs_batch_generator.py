@@ -83,6 +83,8 @@ class DocsBatchGenerator:
 
         self._text_proc = TextProcessor(tp_conf)
         self._doc_pair_metas = self._load_metas(split, line_offset, line_cnt)
+        if not self._doc_pair_metas:
+            raise RuntimeError("Empty docs dataset")
 
         self._text_dirs_dict = {}
         for p in Path(self._opts.input_dir).iterdir():
@@ -107,9 +109,6 @@ class DocsBatchGenerator:
                 t = (ds, int(src), int(tgt), int(label), int(slen), int(tlen), shash, thash)
                 all_metas.append(t)
 
-        all_metas.sort(
-            key=lambda t: (-t[EXMPL_SRC_LEN], t[EXMPL_SRC_HASH], -t[EXMPL_LABEL], t[EXMPL_TGT_LEN])
-        )
         return all_metas
 
     def _select_targets(self, targets, min_max_list):
@@ -345,6 +344,38 @@ class DocsBatchGenerator:
             or len(batch.src_ids) > self._opts.batch_size
         )
 
+    def _buckets_iter(self):
+        bucket = []
+        unique_docs_cnt = 0
+        cur_hash = self._doc_pair_metas[0][EXMPL_SRC_HASH]
+
+        def _fin_bucket():
+            bucket.sort(
+                key=lambda t: (
+                    -t[EXMPL_SRC_LEN],
+                    t[EXMPL_SRC_HASH],
+                    -t[EXMPL_LABEL],
+                    t[EXMPL_TGT_LEN],
+                )
+            )
+
+        for metas in self._doc_pair_metas:
+            if cur_hash != metas[EXMPL_SRC_HASH]:
+                unique_docs_cnt += 1
+
+                if unique_docs_cnt >= 1000:
+                    _fin_bucket()
+                    yield from bucket
+                    bucket = []
+                    unique_docs_cnt = 0
+                cur_hash = metas[EXMPL_SRC_HASH]
+
+            bucket.append(metas)
+
+        if bucket:
+            _fin_bucket()
+            yield from bucket
+
     def batches(self):
         positive_targets = []
         negative_targets = []
@@ -353,7 +384,7 @@ class DocsBatchGenerator:
 
         batch, tgt_hashes, batch_dups = self._empty_batch()
 
-        for metas in self._doc_pair_metas:
+        for metas in self._buckets_iter():
             src_texts, tgt_texts = self._text_dirs_dict[metas[EXMPL_DATASET]]
             if cur_hash != metas[EXMPL_SRC_HASH]:
                 status = self._process_src_doc(
