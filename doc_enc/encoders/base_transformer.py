@@ -29,7 +29,6 @@ class TransformerPooler(BasePooler):
         lengths: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-
         # hidden_states shape: seq_len, batch_sz, hidden_dim
         if self.conf.pooling_strategy == PoolingStrategy.FIRST:
             return hidden_states[0]
@@ -143,23 +142,30 @@ class BaseTransformerEncoder(BaseEncoder):
         return self.output_units
 
     def _create_key_padding_mask(self, max_len, src_lengths, device):
-        bs = len(src_lengths)
+        bs = src_lengths.shape[0]
         mask = torch.full((bs, max_len), True, dtype=torch.bool, device=device)
         for i, l in enumerate(src_lengths):
             mask[i, 0:l] = False
 
         return mask
 
-    def forward(self, embs: torch.Tensor, lengths: torch.Tensor, **kwargs) -> BaseEncoderOut:
+    def forward(
+        self,
+        embs: torch.Tensor,
+        lengths: torch.Tensor,
+        key_padding_mask: torch.Tensor | None = None,
+        **kwargs,
+    ) -> BaseEncoderOut:
         # embs shape: batch_sz, seq_len, hidden_dim
         embs = embs.transpose(0, 1)
-        mask = self._create_key_padding_mask(embs.size()[0], lengths, embs.device)
+        if key_padding_mask is None:
+            key_padding_mask = self._create_key_padding_mask(embs.size()[0], lengths, embs.device)
 
         output = embs
         for layer_module in self.layers:
-            output = layer_module(output, key_padding_mask=mask)
+            output = layer_module(output, key_padding_mask=key_padding_mask)
 
-        sentemb = self.pooler(output, lengths, mask=mask)
+        sentemb = self.pooler(output, lengths, mask=key_padding_mask)
         return BaseEncoderOut(sentemb, output, lengths)
 
 
