@@ -1,0 +1,84 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /trainer: full
+  - override /trainer/optim: adam_with_one_cycle
+  - override /model/fragment: transformer
+  - override /model/doc: transformer
+  - _self_
+
+text_proc:
+  tokenizer:
+    #add_bos: true
+    vocab_path: /train/bpe_256k_from_600M.spm.model
+
+trainer:
+  switch_tasks_every: 10
+  emb_grad_scale: 20
+  print_gpu_memory_stat_every: 1000
+  tasks:
+    - DOC_RETR
+    - SENT_RETR
+
+  optim:
+    max_grad_norm: 3.0
+    optim_kind: ADAMW
+    use_zero_optim: false
+    lr_scheduler_kwargs:
+      div_factor: 10
+      final_div_factor: 1
+    emb:
+      lr: 0.0005
+    sent:
+       lr: 0.0005
+    fragment:
+       lr: 0.0001
+    doc:
+       lr: 0.0002
+model:
+  freeze_base_sents_layer: false
+  max_chunk_size: 1024
+  max_tokens_in_chunk: 24000
+  scale: 40
+  margin: 0.2
+  sent:
+    load_params_from: /train/init_models/lstm_sf_n1-3.pt
+    scale: 30
+    margin: 0.3
+    max_chunk_size: 1024
+  fragment:
+    add_beg_seq_token: true
+    num_layers: 3
+    full_intermediate: true
+    hidden_size: 768
+    num_heads: 12
+    intermediate_size: 3072
+  doc:
+    add_beg_seq_token: true
+    num_layers: 5
+    full_intermediate: true
+    hidden_size: 768
+
+batches:
+  sents_batch_iterator_conf:
+    async_generators: 2
+    batch_generator_conf:
+      max_sent_size: 128
+      batch_size: 2000
+      dont_use_hns: true
+
+
+  docs_batch_iterator_conf:
+    async_generators: 4
+    include_datasets:
+      - ParalWiki
+      - SimEnSci
+      - SimEnWiki
+      - SimRuWiki
+    batch_generator_conf:
+      input_dir: /train/data/docs-wiki
+      pad_src_sentences: false
+      batch_src_sents_cnt: 24000
+      batch_total_sents_cnt: 36000
+      batch_size: 384
+      max_sents_per_doc: 1024
