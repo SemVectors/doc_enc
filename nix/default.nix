@@ -15,7 +15,7 @@
 
 buildPythonPackage {
   pname = "doc_enc";
-  version = "0.0.10";
+  version = "0.0.11";
   inherit src;
 
 
