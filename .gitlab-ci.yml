@@ -9,10 +9,14 @@ stages:
   - build
   - build-docker-image
 
+
 build:
   stage: build
+  rules:
+    - if: $CI_SERVER_HOST == "tsa04.isa.ru"
+
   script:
-    - nix run "$BUILD_FLAKE" -- -S -i .
+    - nix run "$BUILD_FLAKE" -- -S -i . -C semvectors-doc-enc
   artifacts:
     reports:
       # build.env is created by BUILD_FLAKE when -S switch is presented
