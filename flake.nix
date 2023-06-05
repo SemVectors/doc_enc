@@ -40,7 +40,8 @@
       packages.x86_64-linux = {
         inherit (pkgs)
           python;
-        default = pypkgs.doc_enc_train;
+        default = pypkgs.doc_enc;
+        train = pypkgs.doc_enc_train;
       };
 
       trainDockerImage =  import ./nix/docker.nix {inherit pkgs;

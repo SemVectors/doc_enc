@@ -17,6 +17,7 @@ build:
 
   script:
     - nix run "$BUILD_FLAKE" -- -S -i . -C semvectors-doc-enc
+    - nix run "$BUILD_FLAKE" -- -S -i .#train -C semvectors-doc-enc
   artifacts:
     reports:
       # build.env is created by BUILD_FLAKE when -S switch is presented
