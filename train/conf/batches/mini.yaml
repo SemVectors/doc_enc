@@ -7,7 +7,7 @@ sents_batch_iterator_conf:
   async_generators: 1
   batch_generator_conf:
     input_dir: /train/data/sents/paral
-    batch_size: 256
+    batch_size: 64
 
 docs_batch_iterator_conf:
   async_generators: 2
