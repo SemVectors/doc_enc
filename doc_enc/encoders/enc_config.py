@@ -40,6 +40,11 @@ class BaseEncoderConf:
     attention_window: List[int] = dataclasses.field(default_factory=list)
     window_look_around_mode: LookAroundMode = LookAroundMode.BACK
 
+    # transformers
+    transformers_auto_name: str = ''
+    transformers_cache_dir: str | None = None
+    transformers_fix_pretrained_params: bool = False
+
 
 @dataclasses.dataclass
 class SentEncoderConf(BaseEncoderConf):
@@ -47,7 +52,7 @@ class SentEncoderConf(BaseEncoderConf):
 
 
 @dataclasses.dataclass
-class EmbSeqEncoderConf(BaseEncoderConf):
+class SeqEncoderConf(BaseEncoderConf):
     add_beg_seq_token: bool = False
     input_dropout: float = 0.0
     add_pos_emb: bool = False

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
-from typing import List
 
-
-def split_into_fragments_by_len(sents: List, fragment_size: int):
+def split_into_fragments_by_len(sents: list, fragment_size: int):
     l = len(sents)
     fragment_len_list = []
 

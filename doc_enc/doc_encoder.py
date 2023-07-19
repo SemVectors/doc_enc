@@ -20,7 +20,7 @@ from doc_enc.training.base_batch_generator import create_padded_tensor
 from doc_enc.encoders.enc_factory import (
     create_encoder,
     create_sent_encoder,
-    create_emb_seq_encoder,
+    create_seq_encoder,
 )
 from doc_enc.encoders.sent_encoder import SentEncoder, split_sents_and_embed, SentForDocEncoder
 from doc_enc.training.models.model_conf import DocModelConf
@@ -49,23 +49,23 @@ class BaseBatchGenerator:
         docs = []
         doc_fragments = []
         cur_token_cnt = 0
-        cur_sent_cnt = 0
+        cur_segments_cnt = 0
         batch_idx_list = []
 
         for idx, doc in fetcher(items):
             if isinstance(doc, str):
                 doc = doc.split('\n')
 
-            sents, fragment_len_list = self._tp.prepare_text(doc)
-            token_cnt = sum(len(s) for s in sents)
+            segmented_text, fragment_len_list = self._tp.prepare_text(doc)
+            token_cnt = sum(len(s) for s in segmented_text)
             if not token_cnt:
-                sents = [[self._tp.vocab().pad_idx()]]
+                segmented_text = [[self._tp.vocab().pad_idx()]]
                 fragment_len_list = [1]
 
             if (
                 docs
                 and self._conf.max_sents
-                and cur_sent_cnt + len(sents) > self._conf.max_sents
+                and cur_segments_cnt + len(segmented_text) > self._conf.max_sents
                 or self._conf.max_tokens
                 and cur_token_cnt + token_cnt > self._conf.max_tokens
             ):
@@ -73,13 +73,13 @@ class BaseBatchGenerator:
                 docs = []
                 doc_fragments = []
                 batch_idx_list = []
-                cur_sent_cnt = 0
+                cur_segments_cnt = 0
                 cur_token_cnt = 0
 
-            docs.append(sents)
+            docs.append(segmented_text)
             doc_fragments.append(fragment_len_list)
             batch_idx_list.append(idx)
-            cur_sent_cnt += len(sents)
+            cur_segments_cnt += len(segmented_text)
             cur_token_cnt += token_cnt
         if docs:
             yield docs, doc_fragments, batch_idx_list
@@ -88,7 +88,6 @@ class BaseBatchGenerator:
 def _proc_wrapper_for_item_list(
     queue: multiprocessing.Queue, items: list[Any], fetcher, offset, *args, **kwargs
 ):
-
     try:
         generator = BaseBatchGenerator(*args, **kwargs)
         for docs, doc_fragments, batch_idx_list in generator.batches(items, fetcher):
@@ -127,7 +126,6 @@ class BatchIterator:
         generator_args=(),
         async_generators=1,
     ):
-
         self._generator_args = generator_args
         self._async_generators = async_generators
 
@@ -168,7 +166,6 @@ class BatchIterator:
             self._processes.append(p)
 
     def _input_generator_thread(self, items_generator, batch_size):
-
         try:
             items_batch = []
             for item in items_generator:
@@ -246,48 +243,62 @@ class BaseEncodeModule(torch.nn.Module):
         self._tp.load_state_dict(self._tp_state_dict)
 
         mc: DocModelConf = state_dict['model_conf']
-        base_sent_enc = create_sent_encoder(mc.sent.encoder, self._tp.vocab())
-        base_sent_enc.load_state_dict(state_dict['sent_enc'])
-        sent_for_doc_layer = None
-        if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
-            sent_for_doc_layer = create_encoder(mc.sent_for_doc)
-            sent_for_doc_layer.load_state_dict(state_dict['sent_for_doc'])
-        self._sent_layer = SentForDocEncoder.from_base(
-            base_sent_enc, sent_for_doc_layer, freeze_base_sents_layer=False
-        )
-        self._sent_layer = self._sent_layer.to(device=self._device)
-        logging.debug("sent layer\n%s", self._sent_layer)
+        self._sent_layer: SentForDocEncoder | None = None
+        sent_embs_out_size = 0
+        if mc.sent is not None:
+            base_sent_enc = create_sent_encoder(mc.sent.encoder, self._tp.vocab())
+            base_sent_enc.load_state_dict(state_dict['sent_enc'])
+            sent_for_doc_layer = None
+            if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
+                sent_for_doc_layer = create_encoder(mc.sent_for_doc)
+                sent_for_doc_layer.load_state_dict(state_dict['sent_for_doc'])
+            self._sent_layer = SentForDocEncoder.from_base(
+                base_sent_enc, sent_for_doc_layer, freeze_base_sents_layer=False
+            )
+            self._sent_layer = self._sent_layer.to(device=self._device)
+            logging.debug("sent layer\n%s", self._sent_layer)
+            sent_embs_out_size = self._sent_layer.out_embs_dim()
 
         self._fragment_layer = None
-        sent_embs_out_size = self._sent_layer.out_embs_dim()
         if 'frag_enc' in state_dict and mc.fragment is not None:
-            self._fragment_layer = create_emb_seq_encoder(mc.fragment, sent_embs_out_size)
+            self._fragment_layer = create_seq_encoder(
+                mc.fragment,
+                pad_idx=self._tp.vocab().pad_idx(),
+                device=self._device,
+                prev_output_size=sent_embs_out_size,
+            )
             self._fragment_layer = self._load_layer(self._fragment_layer, state_dict['frag_enc'])
             doc_input_size = self._fragment_layer.out_embs_dim()
             logging.debug("fragment layer\n:%s", self._fragment_layer)
         else:
             doc_input_size = sent_embs_out_size
 
-        self._doc_layer = create_emb_seq_encoder(mc.doc, doc_input_size)
+        self._doc_layer = create_seq_encoder(
+            mc.doc,
+            pad_idx=self._tp.vocab().pad_idx(),
+            device=self._device,
+            prev_output_size=doc_input_size,
+        )
         self._doc_layer = self._load_layer(self._doc_layer, state_dict['doc_enc'])
 
         logging.debug("doc layer\n:%s", self._doc_layer)
 
     def _load_layer(self, module, state_dict):
-        module.load_state_dict(state_dict)
+        if state_dict:
+            module.load_state_dict(state_dict)
         return module.to(device=self._device)
 
     def to_dict(self):
         # module weights may have changed; update them
         state_dict = copy.copy(self._state_dict)
-        state_dict['sent_enc'] = self._sent_layer.cast_to_base().state_dict()
         state_dict['doc_enc'] = self._doc_layer.state_dict()
+        if self._sent_layer is not None:
+            state_dict['sent_enc'] = self._sent_layer.cast_to_base().state_dict()
+            if 'sent_for_doc' in state_dict and self._sent_layer.doc_mode_encoder is not None:
+                state_dict['sent_for_doc'] = self._sent_layer.doc_mode_encoder.state_dict()
 
         if 'frag_enc' in state_dict and self._fragment_layer is not None:
             state_dict['frag_enc'] = self._fragment_layer.state_dict()
-
-        if 'sent_for_doc' in state_dict and self._sent_layer.doc_mode_encoder is not None:
-            state_dict['sent_for_doc'] = self._sent_layer.doc_mode_encoder.state_dict()
 
         return state_dict
 
@@ -297,8 +308,13 @@ class BaseEncodeModule(torch.nn.Module):
     def tp(self):
         return self._tp
 
+    def sent_encoding_supported(self):
+        return self._sent_layer is not None
+
     def sent_embs_dim(self):
-        return self._sent_layer.out_embs_dim()
+        if self._sent_layer is not None:
+            return self._sent_layer.out_embs_dim()
+        return 0
 
     def doc_embs_dim(self):
         return self._doc_layer.out_embs_dim()
@@ -316,8 +332,9 @@ class BaseEncodeModule(torch.nn.Module):
             elif k.startswith('frag_encoder'):
                 frag_state_dict[k.removeprefix('frag_encoder.')] = v
 
-        self._load_layer(self._sent_layer, sent_state_dict)
         self._load_layer(self._doc_layer, doc_state_dict)
+        if sent_state_dict:
+            self._load_layer(self._sent_layer, sent_state_dict)
 
         if frag_state_dict:
             self._load_layer(self._fragment_layer, frag_state_dict)
@@ -351,28 +368,46 @@ class BaseEncodeModule(torch.nn.Module):
         )
 
     def encode_sents(self, sents, collect_on_cpu=False):
+        if self._sent_layer is None:
+            raise RuntimeError("Sent layer is absent in this model")
         encoder = self._sent_layer.cast_to_base()
         return self._encode_sents_impl(sents, encoder, collect_on_cpu=collect_on_cpu)
 
-    def encode_docs(self, docs, doc_fragments):
-        """Each doc is a list of tokenized sentences."""
+    def encode_docs(self, docs: list[list[list[int]]], doc_fragments: list[list[int]]):
+        """Each doc is a list of tokenized sequences."""
 
-        all_sents = [s for d in docs for s in d]
-        sent_embs = self._encode_sents_impl(all_sents, self._sent_layer)
+        if self._sent_layer is not None:
+            # 1. document is a sequence of sentences
+            all_sents = [s for d in docs for s in d]
+            sent_embs = self._encode_sents_impl(all_sents, self._sent_layer)
+
+            if self._fragment_layer is not None:
+                frag_len: list[int] = []
+                len_list: list[int] = []
+                for fragments in doc_fragments:
+                    frag_len.extend(fragments)
+                    len_list.append(len(fragments))
+
+                embs = self._fragment_layer(sent_embs, frag_len, enforce_sorted=False).pooled_out
+            else:
+                embs = sent_embs
+                len_list = [len(d) for d in docs]
+
+            doc_embs = self._doc_layer(embs, len_list, enforce_sorted=False).pooled_out
+            return doc_embs
 
         if self._fragment_layer is not None:
-            frag_len = []
-            len_list = []
-            for fragments in doc_fragments:
-                frag_len.extend(fragments)
-                len_list.append(len(fragments))
-
-            embs = self._fragment_layer(sent_embs, frag_len, enforce_sorted=False).pooled_out
-        else:
-            embs = sent_embs
+            # 2. document is a sequence of fragments
+            all_fragments = [f for d in docs for f in d]
+            # TODO add enforce_sorted=False??
+            embs = self._fragment_layer(input_token_ids=all_fragments).pooled_out
             len_list = [len(d) for d in docs]
+            doc_embs = self._doc_layer(embs, len_list).pooled_out
+            return doc_embs
 
-        doc_embs = self._doc_layer(embs, len_list, enforce_sorted=False).pooled_out
+        # 3. document is a sequence of tokens
+        all_seqs = [d[0] for d in docs]
+        doc_embs = self._doc_layer(input_token_ids=all_seqs).pooled_out
         return doc_embs
 
     def forward(self, docs, doc_fragments):
@@ -397,7 +432,7 @@ class DocEncoder:
     def enc_module(self):
         return self._enc_module
 
-    def _encode_docs(self, docs, doc_fragments):
+    def _encode_docs(self, docs: list[list[list[int]]], doc_fragments: list[list[int]]):
         with torch.inference_mode(self._eval_mode):
             with autocast():
                 return self._enc_module.encode_docs(docs, doc_fragments)
@@ -412,6 +447,8 @@ class DocEncoder:
 
     def encode_sents(self, sents: list[str]) -> np.ndarray:
         """Encode bunch of sents to vectors."""
+        if not self._enc_module.sent_encoding_supported():
+            raise RuntimeError("Sent encoding is unsupported by this model!")
         sent_ids = self._enc_module.tp().prepare_sents(sents)
         return self._encode_sents(sent_ids).numpy()
 
@@ -425,6 +462,9 @@ class DocEncoder:
         on each batch.
         This method yields the tuple of sentence tetxt, sent vectors, and extra stuff from the generator.
         """
+        if not self._enc_module.sent_encoding_supported():
+            raise RuntimeError("Sent encoding is unsupported by this model!")
+
         sents_batch = []
         sents_misc = []
         for sent, *misc in sents_generator:
@@ -454,7 +494,9 @@ class DocEncoder:
             embs_idxs.extend(idxs)
 
         stacked = torch.vstack(embs)
-        assert len(stacked) == len(path_list)
+        assert stacked.shape[0] == len(
+            path_list
+        ), f"Missaligned data: {stacked.shape[0]} != {len(path_list)}"
 
         embs_idxs = torch.tensor(embs_idxs)
         initial_order_idxs = torch.empty_like(embs_idxs)

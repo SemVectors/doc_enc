@@ -9,15 +9,15 @@ import torch
 from doc_enc.training.base_batch_generator import create_padded_tensor
 
 from doc_enc.training.models.model_conf import DocModelConf
-from doc_enc.encoders.enc_factory import create_sent_encoder, create_emb_seq_encoder
-from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoderConf
+from doc_enc.encoders.enc_factory import create_sent_encoder, create_seq_encoder
+from doc_enc.encoders.emb_seq_encoder import SeqEncoderConf
 from doc_enc.text_processor import TextProcessor, TextProcessorConf
 
 
 class EmbSeqPrepare(torch.nn.Module):
     def __init__(
         self,
-        conf: EmbSeqEncoderConf,
+        conf: SeqEncoderConf,
     ):
         super().__init__()
 
@@ -102,7 +102,7 @@ class DocEncoderTS(torch.nn.Module):
             self.fragment_prepare.load_state_dict(
                 {'_beg_seq_param': state_dict['frag_enc']['_beg_seq_param']}
             )
-            frag_layer = create_emb_seq_encoder(mc.fragment, sent_embs_out_size)
+            frag_layer = create_seq_encoder(mc.fragment, sent_embs_out_size)
             frag_layer.load_state_dict(state_dict['frag_enc'])
             frag_layer.eval()
 
@@ -131,7 +131,7 @@ class DocEncoderTS(torch.nn.Module):
         self.doc_prepare.load_state_dict(
             {'_beg_seq_param': state_dict['doc_enc']['_beg_seq_param']}
         )
-        doc_layer = create_emb_seq_encoder(mc.doc, doc_input_size)
+        doc_layer = create_seq_encoder(mc.doc, doc_input_size)
         doc_layer.load_state_dict(state_dict['doc_enc'])
         doc_layer.eval()
 

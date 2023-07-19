@@ -17,14 +17,15 @@ import torch
 import torch.distributed as dist
 from torch.multiprocessing.spawn import spawn as mp_spawn
 
+from doc_enc.common_types import EncoderKind
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
-from doc_enc.tokenizer import TokenizerConf
+from doc_enc.tokenizer import TokenizerConf, TokenizerType
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 
 from doc_enc.training.train_conf import TrainerConf, OptimConf
-from doc_enc.training.trainer import Trainer
+from doc_enc.training.trainer import Trainer, BaseTrainerUtils
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
-from doc_enc.encoders.enc_config import SentEncoderConf, EmbSeqEncoderConf, BaseEncoderConf
+from doc_enc.encoders.enc_config import SentEncoderConf, SeqEncoderConf, BaseEncoderConf
 from doc_enc.training.index.prepare_index_util import prepare_sent_index
 
 from doc_enc.training.combine_docs_sources import combine_docs_datasets
@@ -56,8 +57,8 @@ cs.store(name="base_model_config", group="model", node=DocModelConf)
 cs.store(name="base_sent_model_config", group="model/sent", node=SentModelConf)
 cs.store(name="base_sent_for_doc_config", group="model/sent_for_doc", node=BaseEncoderConf)
 cs.store(name="base_sent_encoder_config", group="model/sent/encoder", node=SentEncoderConf)
-cs.store(name="base_frag_encoder_config", group="model/fragment", node=EmbSeqEncoderConf)
-cs.store(name="base_doc_encoder_config", group="model/doc", node=EmbSeqEncoderConf)
+cs.store(name="base_frag_encoder_config", group="model/fragment", node=SeqEncoderConf)
+cs.store(name="base_doc_encoder_config", group="model/doc", node=SeqEncoderConf)
 
 
 def _init_dist_default_group(local_rank, local_world_size, port='29500'):
@@ -113,8 +114,75 @@ def _destroy_proc(world_size):
         dist.destroy_process_group()
 
 
+def _is_training_required(conf: Config):
+    def _train_enc(c: BaseEncoderConf | None):
+        if c is not None and (
+            c.encoder_kind != EncoderKind.TRANSFORMERS_AUTO
+            or not c.transformers_fix_pretrained_params
+        ):
+            return True
+        return False
+
+    cm = conf.model
+    return (
+        _train_enc(cm.sent.encoder if cm.sent else None)
+        or _train_enc(cm.sent_for_doc)
+        or _train_enc(cm.fragment)
+        or _train_enc(cm.doc)
+    )
+
+
+def _adjust_config(conf: Config):
+    def _get_auto_model_name(c: BaseEncoderConf | None):
+        if c is None:
+            return None
+        if c.encoder_kind == EncoderKind.TRANSFORMERS_AUTO:
+            if not c.transformers_auto_name:
+                raise RuntimeError(
+                    "Encoder kind is TRANSFORMERS_AUTO, but transformers_auto_name is not set"
+                )
+            return (c.transformers_auto_name, c.transformers_cache_dir)
+        raise RuntimeError(
+            "TokenizerType is TRANSFORMERS_AUTO, but first encoder is not transformers_auto"
+        )
+
+    # adjust text processor options based on model architecture
+    if conf.model.sent is None:
+        conf.text_proc.split_into_sents = False
+        if conf.model.fragment is None:
+            conf.text_proc.split_into_fragments = False
+
+    # propagate configs of a model to tokenizer if tokenizer is TRANSFORMERS_AUTO
+    tok_conf = conf.text_proc.tokenizer
+    if (
+        tok_conf.tokenizer_type == TokenizerType.TRANSFORMERS_AUTO
+        and not tok_conf.transformers_auto_name
+    ):
+        # find first transformes auto model and use its name
+
+        cm = conf.model
+        for c in [cm.sent.encoder if cm.sent else None, cm.sent_for_doc, cm.fragment, cm.doc]:
+            t = _get_auto_model_name(c)
+            if t is not None:
+                name, cache_dir = t
+                tok_conf.transformers_auto_name = name
+                tok_conf.transformers_cache_dir = cache_dir
+                break
+        else:
+            raise RuntimeError(
+                "TokenizerType is TRANSFORMERS_AUTO, but none of encoders is transformers_auto"
+            )
+
+
 def _run_train(local_rank, local_world_size, conf: Config):
-    logging.info("lrank=%s", local_rank)
+    _adjust_config(conf)
+    if not _is_training_required(conf):
+        logging.info("Training is not required (using all pretrained models), just saving model")
+        # just export model so it can be loaded by DocEncdoer
+        BaseTrainerUtils(conf.trainer, conf.model, conf.text_proc).save_model()
+        return
+
+    logging.info("local_rank=%s", local_rank)
     rank, world_size = _init_proc(local_rank, local_world_size, conf)
 
     train_iter = None
@@ -243,6 +311,15 @@ def train_cli(conf: Config) -> None:
 def preproc_cli(conf: Config) -> None:
     _preproc(conf)
     _prepare_indexes(conf)
+
+
+@hydra.main(config_path=None, config_name="config", version_base=None)
+def repack_cli(conf: Config) -> None:
+    _adjust_config(conf)
+    if _is_training_required(conf):
+        raise RuntimeError("Training is required for a given config")
+
+    BaseTrainerUtils(conf.trainer, conf.model, conf.text_proc).save_model()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import torch
 from doc_enc.tokenizer import AbcTokenizer
 from doc_enc.training.models.model_conf import SentModelConf, DocModelConf, ModelKind
 
-from doc_enc.encoders.enc_factory import create_sent_encoder, create_emb_seq_encoder, create_encoder
+from doc_enc.encoders.enc_factory import create_sent_encoder, create_seq_encoder, create_encoder
 from doc_enc.encoders.sent_encoder import SentForDocEncoder
 
 from doc_enc.training.models.sent_dual_enc import SentDualEncoder
@@ -30,37 +30,49 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
     state_dict = None
     if conf.load_params_from:
         state_dict = torch.load(conf.load_params_from, map_location=device)
-    sent_model = _create_sent_model(conf.sent, vocab, device, state_dict)
 
-    sent_enc_for_doc = None
-    if conf.sent_for_doc is not None:
-        sent_enc_for_doc = create_encoder(conf.sent_for_doc)
-        if state_dict is not None:
-            sent_enc_for_doc.load_state_dict(state_dict['sent_for_doc'])
+    sent_model = None
+    sent_encoder = None
+    sent_embs_out_size = 0
+    if conf.sent is not None:
+        sent_model = _create_sent_model(conf.sent, vocab, device, state_dict)
 
-    e = sent_model.encoder
-    sent_encoder = SentForDocEncoder(
-        e.conf,
-        e.embed,
-        e.encoder,
-        emb_to_hidden_mapping=e.emb_to_hidden_mapping,
-        pad_to_multiple_of=e.pad_to_multiple_of,
-        doc_mode_encoder=sent_enc_for_doc,
-        freeze_base_sents_layer=conf.freeze_base_sents_layer,
-    )
+        sent_enc_for_doc = None
+        if conf.sent_for_doc is not None:
+            sent_enc_for_doc = create_encoder(conf.sent_for_doc)
+            if state_dict is not None:
+                sent_enc_for_doc.load_state_dict(state_dict['sent_for_doc'])
 
-    sent_embs_out_size = sent_model.encoder.out_embs_dim()
+        e = sent_model.encoder
+        sent_encoder = SentForDocEncoder(
+            e.conf,
+            e.embed,
+            e.encoder,
+            emb_to_hidden_mapping=e.emb_to_hidden_mapping,
+            pad_to_multiple_of=e.pad_to_multiple_of,
+            doc_mode_encoder=sent_enc_for_doc,
+            freeze_base_sents_layer=conf.freeze_base_sents_layer,
+        )
+
+        sent_embs_out_size = sent_model.encoder.out_embs_dim()
 
     frag_encoder = None
     if conf.fragment is not None:
-        frag_encoder = create_emb_seq_encoder(conf.fragment, sent_embs_out_size)
+        frag_encoder = create_seq_encoder(
+            conf.fragment,
+            pad_idx=vocab.pad_idx(),
+            device=device,
+            prev_output_size=sent_embs_out_size,
+        )
         if state_dict is not None:
             frag_encoder.load_state_dict(state_dict['frag_enc'])
         doc_input_size = frag_encoder.out_embs_dim()
     else:
         doc_input_size = sent_embs_out_size
 
-    doc_encoder = create_emb_seq_encoder(conf.doc, doc_input_size)
+    doc_encoder = create_seq_encoder(
+        conf.doc, pad_idx=vocab.pad_idx(), device=device, prev_output_size=doc_input_size
+    )
     if state_dict is not None:
         doc_encoder.load_state_dict(state_dict['doc_enc'])
 

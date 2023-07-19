@@ -18,6 +18,8 @@ class TextProcessorConf:
     min_sent_len: int = 4
     num_alpha_max_ratio: float = 1.0
 
+    split_into_sents: bool = True
+    split_into_fragments: bool = True
     fragment_size: int = 24
 
 
@@ -50,27 +52,46 @@ class TextProcessor:
 
         return False
 
-    def prepare_text(self, text_sents: list[str], split_into_fragments=True):
-        sents = []
-        for sent in text_sents:
-            if not sent.strip():
-                continue
+    def prepare_text(self, text_sents: list[str]) -> tuple[list[list[int]], list[int]]:
+        segmented_text: list[list[int]] = []
+        fragment_len_list: list[int] = []
 
-            tokens = self._tokenizer(sent)
-            if not self._filter_sent(tokens, sent):
-                tokens = tokens[: self._conf.max_sent_len]
-                sents.append(tokens)
+        if self._conf.split_into_sents:
+            # 1. document is a sequence of sentences (maybe grouped into fragments)
+            for sent in text_sents:
+                if not sent.strip():
+                    continue
 
-        fragment_len_list = []
-        if split_into_fragments:
-            fragment_len_list = split_into_fragments_by_len(sents, self._conf.fragment_size)
+                tokens = self._tokenizer(sent)
+                if not self._filter_sent(tokens, sent):
+                    if self._conf.max_sent_len:
+                        tokens = tokens[: self._conf.max_sent_len]
+                    segmented_text.append(tokens)
 
-        return sents, fragment_len_list
+            if self._conf.split_into_fragments:
+                fragment_len_list = split_into_fragments_by_len(
+                    segmented_text, self._conf.fragment_size
+                )
+        elif self._conf.split_into_fragments:
+            # 2. document is a sequence of fragments
+            fragment_lengths = split_into_fragments_by_len(text_sents, self._conf.fragment_size)
+            offset = 0
+            for frag_len in fragment_lengths:
+                tokens = self._tokenizer('\n'.join(text_sents[offset : offset + frag_len]))
+                offset += frag_len
+                segmented_text.append(tokens)
+        else:
+            # 3. document is a sequence of tokens
+            text = '\n'.join(text_sents)
+            tokens = self._tokenizer(text)
+            segmented_text.append(tokens)
 
-    def prepare_text_from_file(self, path, split_into_fragments=True):
+        return segmented_text, fragment_len_list
+
+    def prepare_text_from_file(self, path):
         with open_file(path) as f:
             sent_gen = (l.rstrip() for l in f)
-            return self.prepare_text(sent_gen, split_into_fragments=split_into_fragments)
+            return self.prepare_text(sent_gen)
 
     def prepare_sents(self, sent_strs):
         sent_ids = []

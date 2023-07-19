@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
 
 import logging
-from typing import Optional, List
 import math
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
 
-from doc_enc.encoders.enc_config import EmbSeqEncoderConf
 from doc_enc.embs.pos_emb import PositionalEmbedding
+from doc_enc.encoders.enc_config import SeqEncoderConf
 from doc_enc.encoders.base_encoder import BaseEncoder
 
+from doc_enc.training.base_batch_generator import create_padded_tensor
 
-class EmbSeqEncoder(nn.Module):
+
+class SeqEncoder(nn.Module):
     def __init__(
         self,
-        conf: EmbSeqEncoderConf,
+        conf: SeqEncoderConf,
         encoder: BaseEncoder,
-        prev_output_size: int,
+        pad_idx: int = 0,
+        device: torch.device = torch.device('cpu'),
+        prev_output_size: int = 0,
         pad_to_multiple_of: int = 0,
     ):
         super().__init__()
         self.conf = conf
         self.encoder = encoder
+        self.pad_idx = pad_idx
+        self.device = device
         self.pad_to_multiple_of = pad_to_multiple_of
 
         input_size = conf.input_size if conf.input_size is not None else conf.hidden_size
@@ -33,7 +38,7 @@ class EmbSeqEncoder(nn.Module):
             self.inp_dropout = nn.Dropout(conf.input_dropout)
 
         self.emb_to_hidden_mapping = None
-        if prev_output_size != input_size:
+        if prev_output_size and prev_output_size != input_size:
             self.emb_to_hidden_mapping = nn.Linear(prev_output_size, input_size)
 
         self._beg_seq_param = None
@@ -86,16 +91,32 @@ class EmbSeqEncoder(nn.Module):
 
     def forward(
         self,
-        embs: torch.Tensor,
-        lengths: List[int],
-        padded_seq_len: Optional[int] = None,
+        input_embs: torch.Tensor | None = None,
+        input_seq_lengths: list[int] | None = None,
+        input_token_ids: list[list[int]] | None = None,
+        padded_seq_len: int | None = None,
         **kwargs,
     ):
-        embs = self._prepare_input(embs)
+        if input_token_ids is not None:
+            max_len = len(max(input_token_ids, key=len))
+            seq_tensor, lengths_tensor = create_padded_tensor(
+                input_token_ids,
+                max_len,
+                pad_idx=self.pad_idx,
+                device=self.device,
+                pad_to_multiple_of=self.pad_to_multiple_of,
+            )
+            enc_result = self.encoder(input_token_ids=seq_tensor, lengths=lengths_tensor, **kwargs)
+            return enc_result
+
+        if input_embs is None or input_seq_lengths is None:
+            raise RuntimeError("Pass either input_embs and input_seq_lengths or input_token_ids")
+
+        embs = self._prepare_input(input_embs)
 
         extra_len = int(self._beg_seq_param is not None)
         if padded_seq_len is None:
-            padded_seq, max_len = self._pad_embs_seq(embs, lengths, extra_len)
+            padded_seq, max_len = self._pad_embs_seq(embs, input_seq_lengths, extra_len)
         else:
             if self.conf.add_beg_seq_token or self.pad_to_multiple_of:
                 raise RuntimeError(
@@ -105,12 +126,12 @@ class EmbSeqEncoder(nn.Module):
             padded_seq = embs
             max_len = padded_seq_len
 
-        len_tensor = torch.as_tensor(lengths, dtype=torch.int64, device=embs.device)
+        len_tensor = torch.as_tensor(input_seq_lengths, dtype=torch.int64, device=embs.device)
         if extra_len:
             len_tensor += extra_len
 
         emb_sz = embs.size(1)
-        seqs_tensor = padded_seq.reshape(len(lengths), max_len, emb_sz)
+        seqs_tensor = padded_seq.reshape(len(input_seq_lengths), max_len, emb_sz)
         if self.pos_emb is not None:
             seqs_tensor = seqs_tensor * math.sqrt(self.conf.hidden_size)
             seqs_tensor = self.pos_emb(seqs_tensor, len_tensor)

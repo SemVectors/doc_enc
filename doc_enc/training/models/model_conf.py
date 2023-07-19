@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from typing import Optional
 import dataclasses
 from enum import Enum
 
@@ -9,7 +8,7 @@ from omegaconf import MISSING
 from doc_enc.encoders.enc_config import (
     BaseEncoderConf,
     SentEncoderConf,
-    EmbSeqEncoderConf,
+    SeqEncoderConf,
 )
 
 from doc_enc.training.index.index_train_conf import IndexTrainConf
@@ -46,15 +45,15 @@ class SentModelConf(BaseModelConf):
 
 @dataclasses.dataclass
 class DocModelConf(BaseModelConf):
-    sent: SentModelConf = MISSING
-    sent_for_doc: Optional[BaseEncoderConf] = None
-    fragment: Optional[EmbSeqEncoderConf] = None
-    doc: EmbSeqEncoderConf = MISSING
+    sent: SentModelConf | None = None
+    sent_for_doc: BaseEncoderConf | None = None
+    fragment: SeqEncoderConf | None = None
+    doc: SeqEncoderConf = MISSING
 
     freeze_base_sents_layer: bool = False
 
     grad_tgt_sents: bool = True
-    grad_src_senst: bool = True
+    grad_src_sents: bool = True
 
     # index training
     index: IndexTrainConf = IndexTrainConf()

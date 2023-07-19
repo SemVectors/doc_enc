@@ -56,7 +56,7 @@ from doc_enc.training.metrics import create_metrics
 
 
 class Models(NamedTuple):
-    sent_model: BaseSentModel
+    sent_model: BaseSentModel | None
     doc_model: BaseDocModel
 
 
@@ -344,7 +344,96 @@ class LinearLRSchedule(torch.optim.lr_scheduler._LRScheduler):
         return [group['lr'] - s for group, s in zip(self.optimizer.param_groups, self._steps)]
 
 
-class Trainer:
+class BaseTrainerUtils:
+    def __init__(
+        self,
+        conf: TrainerConf,
+        model_conf: DocModelConf,
+        tp_conf: TextProcessorConf,
+        device: torch.device = torch.device('cpu'),
+        verbose=False,
+    ):
+        self._conf = conf
+        if not self._conf.save_path:
+            self._conf.save_path = os.getcwd()
+
+        self._model_conf = model_conf
+        self._tp_conf = tp_conf
+        self._device = device
+        self._verbose = verbose
+
+        self._run_id = self._create_run_id()
+
+        self._tp = TextProcessor(tp_conf)
+        self._local_models = self._create_models(model_conf)
+
+    def vocab(self):
+        return self._tp.vocab()
+
+    def _create_run_id(self):
+        # hydra sets working dir to outputs/<date>/<time> by default
+        cwd = os.getcwd()
+        bn = os.path.basename
+        dn = os.path.dirname
+        return f"{bn(dn(cwd))}_{bn(cwd)}"
+
+    def _log_current_mem_usage(self, prefix=''):
+        if self._conf.spam_allocated_memory_info:
+            mem = torch.cuda.memory_allocated(self._device)
+            logging.info("%s mem usage: %.3fMb", prefix, mem / 1024 / 1024)
+
+    def _create_models(self, model_conf: DocModelConf) -> Models:
+        sent_model, doc_model = create_models(model_conf, self.vocab(), self._device)
+        self._log_current_mem_usage('start')
+        if sent_model is not None:
+            sent_model = sent_model.to(self._device)
+        doc_model = doc_model.to(self._device)
+        self._log_current_mem_usage('after loading')
+        logging.info("created model %s", doc_model)
+        logging.info("model loaded to %s", self._device)
+        mem_params = sum(
+            param.nelement() * param.element_size() for param in doc_model.parameters()
+        )
+        mem_bufs = sum(buf.nelement() * buf.element_size() for buf in doc_model.buffers())
+        logging.info("Model params mem usage %.3f Mb", mem_params / 1024 / 1024)
+        logging.info("Model buf mem usage %.3f Kb", mem_bufs / 1024)
+        return Models(sent_model=sent_model, doc_model=doc_model)
+
+    def save_model(self, out_path=''):
+        if not out_path:
+            out_path = self._conf.save_path + '/model.pt'
+        try:
+            version = pkg_resources.require("doc_enc")[0].version
+        except pkg_resources.DistributionNotFound:
+            version = 0
+        state_dict = {
+            'version': version,
+            'trainer_conf': OmegaConf.to_container(
+                self._conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
+            ),
+            'model_conf': OmegaConf.to_container(
+                self._model_conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
+            ),
+            'tp_conf': OmegaConf.to_container(
+                self._tp_conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
+            ),
+            'tp': self._tp.state_dict(),
+            'doc_enc': self._local_models.doc_model.doc_encoder.state_dict(),
+        }
+
+        if self._local_models.sent_model is not None:
+            state_dict['sent_enc'] = self._local_models.sent_model.encoder.state_dict()
+            sm = self._local_models.doc_model.sent_encoder
+            if sm is not None and sm.doc_mode_encoder is not None:
+                state_dict['sent_for_doc'] = sm.doc_mode_encoder.state_dict()
+
+        if self._local_models.doc_model.frag_encoder is not None:
+            state_dict['frag_enc'] = self._local_models.doc_model.frag_encoder.state_dict()
+
+        torch.save(state_dict, out_path)
+
+
+class Trainer(BaseTrainerUtils):
     def __init__(
         self,
         opts: TrainerConf,
@@ -356,22 +445,13 @@ class Trainer:
         amp=True,
         verbose=False,
     ):
-        self._conf = opts
-        if not self._conf.save_path:
-            self._conf.save_path = os.getcwd()
+        super().__init__(
+            opts, model_conf, tp_conf, device=torch.device(f'cuda:{local_rank}'), verbose=verbose
+        )
 
-        self._model_conf = model_conf
         self._is_master = is_master
         self._world_size = world_size
-        self._device = torch.device(f'cuda:{local_rank}')
         self._amp_enabled = amp
-        self._verbose = verbose
-
-        self._run_id = self._create_run_id()
-
-        self._tp_conf = tp_conf
-        self._tp = TextProcessor(tp_conf)
-        self._local_models = self._create_models(model_conf)
 
         if world_size > 1:
             logging.info("Creating DistributedDataParallel instance")
@@ -420,37 +500,6 @@ class Trainer:
         self._init_epoch = 1
         if self._conf.resume_checkpoint:
             self._init_epoch = self._load_from_checkpoint()
-
-    def _log_current_mem_usage(self, prefix=''):
-        if self._conf.spam_allocated_memory_info:
-            mem = torch.cuda.memory_allocated(self._device)
-            logging.info("%s mem usage: %.3fMb", prefix, mem / 1024 / 1024)
-
-    def vocab(self):
-        return self._tp.vocab()
-
-    def _create_run_id(self):
-        # hydra sets working dir to outputs/<date>/<time> by default
-        cwd = os.getcwd()
-        bn = os.path.basename
-        dn = os.path.dirname
-        return f"{bn(dn(cwd))}_{bn(cwd)}"
-
-    def _create_models(self, model_conf: DocModelConf) -> Models:
-        sent_model, doc_model = create_models(model_conf, self.vocab(), self._device)
-        self._log_current_mem_usage('start')
-        sent_model = sent_model.to(self._device)
-        doc_model = doc_model.to(self._device)
-        self._log_current_mem_usage('after loading')
-        logging.info("created model %s", doc_model)
-        logging.info("model loaded to %s", self._device)
-        mem_params = sum(
-            param.nelement() * param.element_size() for param in doc_model.parameters()
-        )
-        mem_bufs = sum(buf.nelement() * buf.element_size() for buf in doc_model.buffers())
-        logging.info("Model params mem usage %.3f Mb", mem_params / 1024 / 1024)
-        logging.info("Model buf mem usage %.3f Kb", mem_bufs / 1024)
-        return Models(sent_model=sent_model, doc_model=doc_model)
 
     def _calc_sent_retr_loss(self, output: DualEncModelOutput, labels, batch_size):
         sim_matrix = output.dense_score_matrix
@@ -1044,39 +1093,10 @@ class Trainer:
             logging.info("best %s dev %s", self._best_metric, best_m)
             if best_m > self._best_metric:
                 self._best_metric = best_m
-                self._save_model(Path(self._conf.save_path) / 'model.pt')
+                self.save_model()
                 logging.info(
                     "new best model was saved in %s", Path(self._conf.save_path) / 'model.pt'
                 )
-
-    def _save_model(self, out_path):
-        try:
-            version = pkg_resources.require("doc_enc")[0].version
-        except pkg_resources.DistributionNotFound:
-            version = 0
-        state_dict = {
-            'version': version,
-            'trainer_conf': OmegaConf.to_container(
-                self._conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
-            ),
-            'model_conf': OmegaConf.to_container(
-                self._model_conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
-            ),
-            'tp_conf': OmegaConf.to_container(
-                self._tp_conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
-            ),
-            'tp': self._tp.state_dict(),
-            'sent_enc': self._local_models.sent_model.encoder.state_dict(),
-            'doc_enc': self._local_models.doc_model.doc_encoder.state_dict(),
-        }
-        if self._local_models.doc_model.frag_encoder is not None:
-            state_dict['frag_enc'] = self._local_models.doc_model.frag_encoder.state_dict()
-
-        sent_for_doc = self._local_models.doc_model.sent_encoder.doc_mode_encoder
-        if sent_for_doc is not None:
-            state_dict['sent_for_doc'] = sent_for_doc.state_dict()
-
-        torch.save(state_dict, out_path)
 
     def __call__(self, train_iter: BatchIterator, dev_iter: BatchIterator):
         epoch = self._init_epoch

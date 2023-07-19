@@ -52,7 +52,11 @@ def skip_to_line(fp, line_offset):
 
 
 def create_padded_tensor(
-    tokens: list[list[int]], max_len: int, pad_idx: int, device: str, pad_to_multiple_of: int = 0
+    tokens: list[list[int]],
+    max_len: int,
+    pad_idx: int,
+    device: str | torch.device,
+    pad_to_multiple_of: int = 0,
 ):
     bs: int = len(tokens)
 

@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
-from typing import Optional
-
 from torch import nn
 
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.types import DocsBatch
 from doc_enc.encoders.sent_encoder import SentForDocEncoder
-from doc_enc.encoders.emb_seq_encoder import EmbSeqEncoder
+from doc_enc.encoders.emb_seq_encoder import SeqEncoder
 
 from doc_enc.training.models.base_model import DualEncModelOutput
 
@@ -18,14 +16,14 @@ class BaseDocModel(nn.Module):
     def __init__(
         self,
         conf: DocModelConf,
-        sent_encoder: SentForDocEncoder,
-        doc_encoder: EmbSeqEncoder,
-        frag_encoder: Optional[EmbSeqEncoder] = None,
+        doc_encoder: SeqEncoder,
+        sent_encoder: SentForDocEncoder | None = None,
+        frag_encoder: SeqEncoder | None = None,
     ):
         super().__init__()
         self.conf = conf
-        self.sent_encoder = sent_encoder
         self.doc_encoder = doc_encoder
+        self.sent_encoder = sent_encoder
         self.frag_encoder = frag_encoder
 
         self.index: TrainableIvfPQ | None = None

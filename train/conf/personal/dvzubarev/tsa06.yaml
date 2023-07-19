@@ -41,5 +41,5 @@ batches:
       # input_dir: >-
       #   /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/
       pad_src_sentences: false
-      batch_src_sents_cnt: 128
+      batch_total_sents_cnt: 256
       input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc

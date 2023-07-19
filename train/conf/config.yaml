@@ -14,10 +14,10 @@ defaults:
   - text_proc/tokenizer: sentencepiece
   - model: default
   - model/sent: dual_enc
-  - model/sent/encoder: lstm
+  - model/sent/encoder: null
   - model/sent_for_doc: null
-  - model/fragment: lstm
-  - model/doc: lstm
+  - model/fragment: null
+  - model/doc: null
   - _self_
 
 verbose: false
