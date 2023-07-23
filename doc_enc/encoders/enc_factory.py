@@ -21,6 +21,7 @@ from doc_enc.encoders.base_fnet import FNetEncoder
 from doc_enc.encoders.base_longformer import LongformerEncoder
 from doc_enc.encoders.base_local_transformer import LocalAttnEncoder
 from doc_enc.encoders.transformers_encoder import TransformersAutoModel, TransformersLongformer
+from doc_enc.encoders.averaging_encoder import AveragingEncoder
 
 
 def _get_extra_padding(conf: BaseEncoderConf):
@@ -53,6 +54,8 @@ def create_encoder(conf: BaseEncoderConf):
         if 'longformer' in conf.transformers_auto_name:
             return TransformersLongformer(conf)
         return TransformersAutoModel(conf)
+    if conf.encoder_kind == EncoderKind.AVERAGING:
+        return AveragingEncoder(conf)
 
     raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 

@@ -315,8 +315,8 @@ class BaseEncodeModule(torch.nn.Module):
                     doc_len_list.append(len(fragments))
 
                 embs = self.frag_layer(
-                    sent_embs,
-                    frag_len,
+                    input_embs=sent_embs,
+                    input_seq_lengths=frag_len,
                     enforce_sorted=False,
                     padded_seq_len=batch_info.get('fragment_len'),
                 ).pooled_out
@@ -327,7 +327,10 @@ class BaseEncodeModule(torch.nn.Module):
                 padded_seq_len = batch_info.get('doc_len_in_sents')
 
             doc_embs = self.doc_layer(
-                embs, doc_len_list, enforce_sorted=False, padded_seq_len=padded_seq_len
+                input_embs=embs,
+                input_seq_lengths=doc_len_list,
+                enforce_sorted=False,
+                padded_seq_len=padded_seq_len,
             ).pooled_out
             return doc_embs
 
@@ -336,7 +339,7 @@ class BaseEncodeModule(torch.nn.Module):
             # TODO add enforce_sorted=False??
             embs = self.frag_layer(input_token_ids=doc_segments).pooled_out
             doc_len_list = [l for d in doc_lengths for l in d]
-            doc_embs = self.doc_layer(embs, doc_len_list).pooled_out
+            doc_embs = self.doc_layer(input_embs=embs, input_seq_lengths=doc_len_list).pooled_out
             return doc_embs
 
         # 3. document is a sequence of tokens

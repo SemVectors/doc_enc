@@ -1,0 +1,4 @@
+defaults:
+  - base_doc_encoder_config
+
+encoder_kind: AVERAGING

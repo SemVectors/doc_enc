@@ -18,6 +18,7 @@ class EncoderKind(Enum):
     GRU = 5
     LOCAL_ATTN_TRANSFORMER = 6
     TRANSFORMERS_AUTO = 7
+    AVERAGING = 8
 
 
 class PoolingStrategy(Enum):

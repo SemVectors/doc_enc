@@ -1,0 +1,17 @@
+# @package _global_
+
+defaults:
+  - /base_config
+  - override /text_proc/tokenizer: transformers_auto
+  - override /model/sent: null
+  - override /model/fragment: transformers_auto
+  - override /model/doc: averaging
+  - _self_
+
+text_proc:
+  fragment_size: 16
+
+model:
+  fragment:
+    transformers_auto_name: roberta-base
+    transformers_fix_pretrained_params: true

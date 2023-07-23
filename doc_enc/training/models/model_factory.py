@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
+from omegaconf import OmegaConf
 import torch
+
+from doc_enc.common_types import EncoderKind
+from doc_enc.encoders.enc_config import BaseEncoderConf
 
 from doc_enc.tokenizer import AbcTokenizer
 from doc_enc.training.models.model_conf import SentModelConf, DocModelConf, ModelKind
@@ -24,6 +28,15 @@ def _create_sent_model(conf: SentModelConf, vocab: AbcTokenizer, device, state_d
 
         return model
     raise RuntimeError(f"Unknown model kind {conf.kind}")
+
+
+def _check_enc_layer_correctness(enc_config: BaseEncoderConf, prev_output_size):
+    if enc_config.encoder_kind == EncoderKind.AVERAGING:
+        if not prev_output_size:
+            raise RuntimeError("Averaging encoder can't be the first one!")
+
+        if OmegaConf.is_missing(enc_config, 'hidden_size'):
+            enc_config.hidden_size = prev_output_size
 
 
 def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
@@ -58,6 +71,8 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
 
     frag_layer = None
     if conf.fragment is not None:
+        _check_enc_layer_correctness(conf.fragment, sent_embs_out_size)
+
         frag_layer = create_seq_encoder(
             conf.fragment,
             pad_idx=vocab.pad_idx(),
@@ -70,6 +85,7 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
     else:
         doc_input_size = sent_embs_out_size
 
+    _check_enc_layer_correctness(conf.doc, doc_input_size)
     doc_layer = create_seq_encoder(
         conf.doc, pad_idx=vocab.pad_idx(), device=device, prev_output_size=doc_input_size
     )

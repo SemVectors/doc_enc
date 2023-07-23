@@ -117,12 +117,15 @@ def _destroy_proc(world_size):
 
 def _is_training_required(conf: Config):
     def _train_enc(c: BaseEncoderConf | None):
-        if c is not None and (
-            c.encoder_kind != EncoderKind.TRANSFORMERS_AUTO
-            or not c.transformers_fix_pretrained_params
+        if c is None or (
+            (
+                c.encoder_kind == EncoderKind.TRANSFORMERS_AUTO
+                and c.transformers_fix_pretrained_params
+            )
+            or c.encoder_kind == EncoderKind.AVERAGING
         ):
-            return True
-        return False
+            return False
+        return True
 
     cm = conf.model
     return (

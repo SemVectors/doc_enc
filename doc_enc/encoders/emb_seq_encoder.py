@@ -97,6 +97,7 @@ class SeqEncoder(nn.Module):
         padded_seq_len: int | None = None,
         **kwargs,
     ):
+        # 1. input is token ids
         if input_token_ids is not None:
             max_len = len(max(input_token_ids, key=len))
             seq_tensor, lengths_tensor = create_padded_tensor(
@@ -112,6 +113,7 @@ class SeqEncoder(nn.Module):
         if input_embs is None or input_seq_lengths is None:
             raise RuntimeError("Pass either input_embs and input_seq_lengths or input_token_ids")
 
+        # 2. input is embeddings
         embs = self._prepare_input(input_embs)
 
         extra_len = int(self._beg_seq_param is not None)
@@ -136,6 +138,6 @@ class SeqEncoder(nn.Module):
             seqs_tensor = seqs_tensor * math.sqrt(self.conf.hidden_size)
             seqs_tensor = self.pos_emb(seqs_tensor, len_tensor)
 
-        enc_result = self.encoder(seqs_tensor, len_tensor, **kwargs)
+        enc_result = self.encoder(input_embs=seqs_tensor, lengths=len_tensor, **kwargs)
 
         return enc_result
