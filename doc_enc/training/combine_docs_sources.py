@@ -131,7 +131,7 @@ def _process_in_pool(pool, func, args_generator, on_result=None):
         futures = _wait_for_futures(futures)
 
 
-_PROC_TEXT_PROC = None
+_PROC_TEXT_PROC: TextProcessor | None = None
 
 
 def _proc_init(text_proc):
@@ -149,21 +149,30 @@ def _doc_id_from_path(p):
 
 def _proc_calc_sent_info_for_paths(paths: list[Path]):
     out_info_dict = {}
+    split_into_sents = True
+    if _PROC_TEXT_PROC is not None:
+        split_into_sents = _PROC_TEXT_PROC.conf().split_into_sents
     for p in paths:
         md5hash = hashlib.md5()
-        cnt = 0
+        tokens_cnt = 0
+        segments_cnt = 0
         if _PROC_TEXT_PROC is not None:
-            sent_tokens, _ = _PROC_TEXT_PROC.prepare_text_from_file(p, split_into_fragments=False)
-            cnt = len(sent_tokens)
-            for tokens in sent_tokens:
+            segmented_text_tokens, _ = _PROC_TEXT_PROC.prepare_text_from_file(p)
+            segments_cnt = len(segmented_text_tokens)
+            tokens_cnt = sum(len(s) for s in segmented_text_tokens)
+            for tokens in segmented_text_tokens:
                 md5hash.update(b''.join(t.to_bytes(4, 'little') for t in tokens))
         else:
             with open_bin_file(p) as f:
                 for l in f:
                     if l.strip():
-                        cnt += 1
+                        segments_cnt += 1
+                        tokens_cnt += len(l.split())
                         md5hash.update(l)
 
+        cnt = segments_cnt
+        if not split_into_sents:
+            cnt = tokens_cnt
         if cnt > 0:
             doc_id = _doc_id_from_path(p)
             out_info_dict[doc_id] = (cnt, md5hash.hexdigest())

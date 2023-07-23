@@ -12,4 +12,4 @@ defaults:
 model:
   doc:
     transformers_auto_name: allenai/longformer-base-4096
-    transformers_fix_pretrained_params: true
+    # transformers_fix_pretrained_params: true

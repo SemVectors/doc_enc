@@ -29,6 +29,7 @@ from doc_enc.encoders.enc_config import SentEncoderConf, SeqEncoderConf, BaseEnc
 from doc_enc.training.index.prepare_index_util import prepare_sent_index
 
 from doc_enc.training.combine_docs_sources import combine_docs_datasets
+from doc_enc.training.types import TaskType
 
 
 @dataclass
@@ -173,14 +174,45 @@ def _adjust_config(conf: Config):
                 "TokenizerType is TRANSFORMERS_AUTO, but none of encoders is transformers_auto"
             )
 
+    # check batch options
+    docs_gen_conf = conf.batches.docs_batch_iterator_conf.batch_generator_conf
+    if (
+        not docs_gen_conf.batch_docs_cnt
+        and not docs_gen_conf.batch_total_sents_cnt
+        and not docs_gen_conf.batch_total_tokens_cnt
+    ):
+        raise RuntimeError("batch size limits weren't set!")
+
+
+def _check_training_tasks(conf: Config):
+    if not conf.trainer.tasks:
+        conf.trainer.tasks = [TaskType.SENT_RETR, TaskType.DOC_RETR]
+    if not conf.trainer.eval_tasks:
+        conf.trainer.eval_tasks = conf.trainer.tasks
+
+    if conf.model.sent is None:
+        if (
+            TaskType.SENT_RETR in conf.trainer.tasks
+            or TaskType.SENT_RETR in conf.trainer.eval_tasks
+        ):
+            logging.warning(
+                "Sent layer is not presented but SENT_RETR task is set for training."
+                " It will be excluded from training tasks."
+            )
+            conf.trainer.tasks = [t for t in conf.trainer.tasks if t != TaskType.SENT_RETR]
+            conf.trainer.eval_tasks = [
+                t for t in conf.trainer.eval_tasks if t != TaskType.SENT_RETR
+            ]
+
 
 def _run_train(local_rank, local_world_size, conf: Config):
-    _adjust_config(conf)
     if not _is_training_required(conf):
         logging.info("Training is not required (using all pretrained models), just saving model")
         # just export model so it can be loaded by DocEncdoer
         BaseTrainerUtils(conf.trainer, conf.model, conf.text_proc).save_model()
         return
+
+    _check_training_tasks(conf)
 
     logging.info("local_rank=%s", local_rank)
     rank, world_size = _init_proc(local_rank, local_world_size, conf)
@@ -197,9 +229,10 @@ def _run_train(local_rank, local_world_size, conf: Config):
             local_rank=local_rank,
             verbose=conf.verbose,
         )
-        include_fragments_level = conf.model.fragment is not None
+        if conf.model.fragment is None:
+            conf.batches.docs_batch_iterator_conf.batch_generator_conf.pad_fragments_level = False
         pad_to_multiple_of = 0
-        if conf.model.sent.encoder.attention_window:
+        if conf.model.sent is not None and conf.model.sent.encoder.attention_window:
             pad_to_multiple_of = max(conf.model.sent.encoder.attention_window)
 
         batch_device = torch.device(f'cuda:{local_rank}')
@@ -208,7 +241,6 @@ def _run_train(local_rank, local_world_size, conf: Config):
             conf.text_proc,
             (conf.job_logging, conf.verbose),
             split="train",
-            include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
             device=batch_device,
@@ -221,7 +253,6 @@ def _run_train(local_rank, local_world_size, conf: Config):
             conf.text_proc,
             (conf.job_logging, conf.verbose),
             split="dev",
-            include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
             device=batch_device,
@@ -258,8 +289,15 @@ def _preproc(conf: Config):
     logging.info("combining docs datasets. It may take some time...")
 
     text_proc = None
+    min_doc_len = gen_conf.min_sents_per_doc
+    max_doc_len = gen_conf.max_sents_per_doc
     if conf.combine_datasets_use_text_proc:
         text_proc = TextProcessor(conf.text_proc)
+        if not text_proc.conf().split_into_sents:
+            # Do not filter by doc length
+            min_doc_len = 0
+            max_doc_len = float('inf')
+
     combine_docs_datasets(
         input_dir,
         split="train",
@@ -267,8 +305,8 @@ def _preproc(conf: Config):
         include_datasets=iter_conf.include_datasets,
         exclude_datasets=iter_conf.exclude_datasets,
         out_filename_prefix=prefix,
-        min_doc_len=gen_conf.min_sents_per_doc,
-        max_doc_len=gen_conf.max_sents_per_doc,
+        min_doc_len=min_doc_len,
+        max_doc_len=max_doc_len,
         procs=iter_conf.combine_procs_cnt,
     )
     logging.info("done with train")
@@ -279,15 +317,15 @@ def _preproc(conf: Config):
         include_datasets=iter_conf.include_datasets,
         exclude_datasets=iter_conf.exclude_datasets,
         out_filename_prefix=prefix,
-        min_doc_len=gen_conf.min_sents_per_doc,
-        max_doc_len=gen_conf.max_sents_per_doc,
+        min_doc_len=min_doc_len,
+        max_doc_len=max_doc_len,
         procs=iter_conf.combine_procs_cnt,
     )
     logging.info("done with dev")
 
 
 def _prepare_indexes(conf: Config):
-    if conf.model.sent.index.enable:
+    if conf.model.sent is not None and conf.model.sent.index.enable:
         prepare_sent_index(
             conf.model.sent,
             conf.batches.sents_batch_iterator_conf.batch_generator_conf,
@@ -299,11 +337,14 @@ def train_cli(conf: Config) -> None:
     gpu_cnt = torch.cuda.device_count()
     if gpu_cnt <= 0:
         raise RuntimeError("No gpu was found")
+
+    _adjust_config(conf)
     _preproc(conf)
     _prepare_indexes(conf)
     try:
         mp_spawn(_run_train, args=(gpu_cnt, conf), nprocs=gpu_cnt, join=True)
     except Exception as e:
+        logging.exception(e)
         sys.exit(1)
 
 

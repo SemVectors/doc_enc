@@ -75,7 +75,6 @@ batches:
     batch_generator_conf:
       pad_src_sentences: false
       positives_per_doc: [1, 4]
-      batch_src_sents_cnt: 12384
       batch_total_sents_cnt: 15384
       batch_size: 256
       max_sents_per_doc: 1024

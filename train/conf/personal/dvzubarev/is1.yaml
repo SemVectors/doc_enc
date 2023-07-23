@@ -24,5 +24,5 @@ batches:
       - mini
     batch_generator_conf:
       pad_src_sentences: false
-      batch_src_sents_cnt: 128
+      batch_total_sents_cnt: 256
       input_dir: /srv/apps/doc-enc-work-dir/docs-mini

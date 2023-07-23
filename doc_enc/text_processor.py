@@ -30,6 +30,9 @@ class TextProcessor:
         self._tokenizer = create_tokenizer(conf.tokenizer, inference_mode=inference_mode)
         self._alpha_nums_regex = re.compile(r'(\d+[-–.]?\d*)|(\w+)')
 
+    def conf(self):
+        return self._conf
+
     def vocab(self):
         return self._tokenizer
 
@@ -54,7 +57,7 @@ class TextProcessor:
 
     def prepare_text(self, text_sents: list[str]) -> tuple[list[list[int]], list[int]]:
         segmented_text: list[list[int]] = []
-        fragment_len_list: list[int] = []
+        doc_segments_length: list[int] = []
 
         if self._conf.split_into_sents:
             # 1. document is a sequence of sentences (maybe grouped into fragments)
@@ -69,9 +72,14 @@ class TextProcessor:
                     segmented_text.append(tokens)
 
             if self._conf.split_into_fragments:
-                fragment_len_list = split_into_fragments_by_len(
+                # document is a sequence of fragments
+                doc_segments_length = split_into_fragments_by_len(
                     segmented_text, self._conf.fragment_size
                 )
+            else:
+                # document is a sequence of sentences
+                doc_segments_length.append(len(segmented_text))
+
         elif self._conf.split_into_fragments:
             # 2. document is a sequence of fragments
             fragment_lengths = split_into_fragments_by_len(text_sents, self._conf.fragment_size)
@@ -80,13 +88,17 @@ class TextProcessor:
                 tokens = self._tokenizer('\n'.join(text_sents[offset : offset + frag_len]))
                 offset += frag_len
                 segmented_text.append(tokens)
+            # save number of fragments for this doc
+            doc_segments_length.append(len(fragment_lengths))
         else:
             # 3. document is a sequence of tokens
             text = '\n'.join(text_sents)
             tokens = self._tokenizer(text)
             segmented_text.append(tokens)
+            # document is one sequence
+            doc_segments_length.append(1)
 
-        return segmented_text, fragment_len_list
+        return segmented_text, doc_segments_length
 
     def prepare_text_from_file(self, path):
         with open_file(path) as f:

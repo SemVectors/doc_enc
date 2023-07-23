@@ -39,6 +39,8 @@ def FakeTrainingData():
             f.write("1 2 3 4 7\n" * 30)
         with open(ds1_docs_dir / '40.txt', 'w', encoding='utf8') as f:
             f.write("1 2 3 4 8\n" * 40)
+        with open(ds1_docs_dir / '120.txt', 'w', encoding='utf8') as f:
+            f.write("1 2 3 4 8\n" * 120)
 
         ds2_docs_dir = tmpdirname / "ds2" / "texts"
         with open(ds2_docs_dir / '15.txt', 'w', encoding='utf8') as f:
@@ -57,6 +59,7 @@ def FakeTrainingData():
             f.write("ds2,15,50,1,15,50,15hash,50hash\n")
             f.write("ds2,15,30,0,15,30,15hash,30хэш\n")
             f.write("ds1,16,40,0,16,40,16hash,40hash\n")
+            f.write("ds1,120,40,0,120,40,120hash,40hash\n")
 
         yield tmpdirname
 
@@ -163,6 +166,7 @@ def _create_gen_opts(
     positives_per_doc=[2, 2],
     min_sents_per_doc=1,
     pad_sentences=False,
+    pad_with_fragments=False,
     min_sent_len=1,
     **kwargs,
 ):
@@ -173,6 +177,7 @@ def _create_gen_opts(
         min_sents_per_doc=min_sents_per_doc,
         pad_src_sentences=pad_sentences,
         pad_tgt_sentences=pad_sentences,
+        pad_fragments_level=pad_with_fragments,
         min_tgt_docs_per_src_doc=1,
         **kwargs,
     )
@@ -191,9 +196,9 @@ def test_gen_basic(FakeTrainingData):
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: DocsBatch = batches[0]
-    print(batch.src_sents)
-    assert len(batch.src_sents) == 18
-    assert len(batch.tgt_sents) == 166
+    print(batch.src_texts)
+    assert len(batch.src_texts) == 18
+    assert len(batch.tgt_texts) == 166
 
     assert batch.src_fragment_len == [15, 3]
     assert batch.tgt_fragment_len == [
@@ -231,25 +236,27 @@ def test_gen_basic(FakeTrainingData):
 
 def test_two_batches(FakeTrainingData):
     conf, tp_conf = _create_gen_opts(
-        FakeTrainingData, batch_src_sents_cnt=15, allow_docs_without_positives=True
+        FakeTrainingData,
+        batch_total_sents_cnt=200,
+        allow_docs_without_positives=True,
     )
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
     assert len(batches) == 2
     batch1: DocsBatch = batches[0]
-    assert len(batch1.src_sents) == 16
-    assert len(batch1.tgt_sents) == 40
+    assert len(batch1.src_texts) == 136
+    assert len(batch1.tgt_texts) == 40
 
-    assert batch1.src_fragment_len == [16]
+    assert batch1.src_fragment_len == [16] * 7 + [8, 16]
     assert batch1.tgt_fragment_len == [16, 16, 8]
 
-    assert batch1.info['src_docs_cnt'] == 1
+    assert batch1.info['src_docs_cnt'] == 2
     assert batch1.info['tgt_docs_cnt'] == 1
 
     batch2: DocsBatch = batches[1]
 
-    assert len(batch2.src_sents) == 18
-    assert len(batch2.tgt_sents) == 166
+    assert len(batch2.src_texts) == 18
+    assert len(batch2.tgt_texts) == 166
 
     assert batch2.src_fragment_len == [15, 3]
 
@@ -260,8 +267,8 @@ def test_two_batches(FakeTrainingData):
 def test_three_batches(FakeTrainingData):
     conf, tp_conf = _create_gen_opts(
         FakeTrainingData,
-        batch_src_sents_cnt=15,
-        max_sents_cnt_delta=2,
+        batch_total_sents_cnt=170,
+        max_sents_cnt_delta=8,
         allow_docs_without_positives=True,
     )
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
@@ -270,19 +277,19 @@ def test_three_batches(FakeTrainingData):
     assert len(batches) == 3
     batch1: DocsBatch = batches[0]
 
-    assert len(batch1.src_sents) == 16
-    assert len(batch1.tgt_sents) == 40
+    assert len(batch1.src_texts) == 136
+    assert len(batch1.tgt_texts) == 40
 
-    assert batch1.src_fragment_len == [16]
+    assert batch1.src_fragment_len == [16] * 7 + [8, 16]
     assert batch1.tgt_fragment_len == [16, 16, 8]
 
-    assert batch1.info['src_docs_cnt'] == 1
+    assert batch1.info['src_docs_cnt'] == 2
     assert batch1.info['tgt_docs_cnt'] == 1
 
     batch2: DocsBatch = batches[1]
 
-    assert len(batch2.src_sents) == 15
-    assert len(batch2.tgt_sents) == 110
+    assert len(batch2.src_texts) == 15
+    assert len(batch2.tgt_texts) == 110
 
     assert batch2.src_fragment_len == [15]
     assert batch2.tgt_fragment_len == [16, 14, 16, 16, 16, 2, 16, 14]
@@ -292,8 +299,8 @@ def test_three_batches(FakeTrainingData):
 
     batch3: DocsBatch = batches[2]
 
-    assert len(batch3.src_sents) == 3
-    assert len(batch3.tgt_sents) == 86
+    assert len(batch3.src_texts) == 3
+    assert len(batch3.tgt_texts) == 86
 
     assert batch3.src_fragment_len == [3]
 
@@ -304,22 +311,29 @@ def test_three_batches(FakeTrainingData):
 def test_cant_fit_batch(FakeTrainingData):
     conf, tp_conf = _create_gen_opts(
         FakeTrainingData,
-        batch_src_sents_cnt=10,
-        max_sents_cnt_delta=2,
+        batch_total_sents_cnt=90,
+        max_sents_cnt_delta=10,
         allow_docs_without_positives=True,
     )
     gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
-    assert len(batches) == 1
+    assert len(batches) == 2
     batch1: DocsBatch = batches[0]
-
-    assert len(batch1.src_sents) == 3
-    assert len(batch1.tgt_sents) == 86
-
-    assert batch1.src_fragment_len == [3]
+    assert len(batch1.src_texts) == 16
+    assert len(batch1.tgt_texts) == 40
 
     assert batch1.info['src_docs_cnt'] == 1
-    assert batch1.info['tgt_docs_cnt'] == 3
+    assert batch1.info['tgt_docs_cnt'] == 1
+
+    batch2: DocsBatch = batches[1]
+
+    assert len(batch2.src_texts) == 3
+    assert len(batch2.tgt_texts) == 86
+
+    assert batch2.src_fragment_len == [3]
+
+    assert batch2.info['src_docs_cnt'] == 1
+    assert batch2.info['tgt_docs_cnt'] == 3
 
 
 def test_iterator_two_generators(FakeTrainingData):
@@ -339,11 +353,12 @@ def test_iterator_two_generators(FakeTrainingData):
     assert labels1[1].tolist() == [0, 1, 0]
 
     batch2, labels2 = res[1]
-    assert batch2.src_ids == [16, 15]
-    assert batch2.info['src_docs_cnt'] == 2
+    assert batch2.src_ids == [120, 16, 15]
+    assert batch2.info['src_docs_cnt'] == 3
     assert batch2.info['tgt_docs_cnt'] == 3
     assert labels2[0].tolist() == [0, 0, 0]
-    assert labels2[1].tolist() == [0, 1, 0]
+    assert labels2[1].tolist() == [0, 0, 0]
+    assert labels2[2].tolist() == [0, 1, 0]
 
 
 def test_gen_with_dups(FakeTrainingDataWithDups):
@@ -354,11 +369,11 @@ def test_gen_with_dups(FakeTrainingDataWithDups):
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: DocsBatch = batches[0]
-    print(batch.src_sents)
+    print(batch.src_texts)
     assert batch.src_ids == [3, 2]
     assert batch.tgt_ids == [30, 16, 40]
-    assert len(batch.src_sents) == 5
-    assert len(batch.tgt_sents) == 86
+    assert len(batch.src_texts) == 5
+    assert len(batch.tgt_texts) == 86
 
     assert batch.src_fragment_len == [3, 2]
 
@@ -383,11 +398,11 @@ def test_gen_with_dups2(FakeTrainingDataWithDups):
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: DocsBatch = batches[0]
-    print(batch.src_sents)
+    print(batch.src_texts)
     assert batch.src_ids == [3, 2]
     assert batch.tgt_ids == [16, 30, 40]
-    assert len(batch.src_sents) == 5
-    assert len(batch.tgt_sents) == 86
+    assert len(batch.src_texts) == 5
+    assert len(batch.tgt_texts) == 86
 
     assert batch.src_fragment_len == [3, 2]
 
@@ -414,8 +429,8 @@ def test_gen_with_filters(FakeTrainingFiltering):
     print(batch.positive_idxs)
     assert batch.src_ids == [4]
     assert batch.tgt_ids == [15, 16]
-    assert len(batch.src_sents) == 4
-    assert len(batch.tgt_sents) == 31
+    assert len(batch.src_texts) == 4
+    assert len(batch.tgt_texts) == 31
 
     assert batch.src_fragment_len == [4]
 
@@ -449,8 +464,8 @@ def test_gen_with_filtering_sents_by_len(FakeTrainingFiltering):
     print(batch.positive_idxs)
     assert batch.src_ids == [15, 3]
     assert batch.tgt_ids == [3, 15]
-    assert len(batch.src_sents) == 18
-    assert len(batch.tgt_sents) == 18
+    assert len(batch.src_texts) == 18
+    assert len(batch.tgt_texts) == 18
 
     assert batch.src_fragment_len == [15, 3]
 
@@ -466,27 +481,25 @@ def test_gen_with_filtering_sents_by_len(FakeTrainingFiltering):
 
 def test_gen_with_padding_wo_fragments(FakeTrainingPadding):
     conf, tp_conf = _create_gen_opts(FakeTrainingPadding, pad_sentences=True)
-    gen = DocsBatchGenerator(
-        conf, tp_conf=tp_conf, split='train', line_offset=0, include_fragments_level=False
-    )
+    gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: DocsBatch = batches[0]
-    print(batch.src_sents)
+    print(batch.src_texts)
     assert batch.src_ids == [8, 5, 3]
     assert batch.tgt_ids == [30, 10, 8]
-    assert len(batch.src_sents) == 24
-    assert len(batch.tgt_sents) == 90
+    assert len(batch.src_texts) == 24
+    assert len(batch.tgt_texts) == 90
 
-    assert batch.src_sents[4] == [1, 2, 3, 4, 5]
-    assert batch.src_sents[8] == [1, 2]
-    assert batch.src_sents[12] == [11, 12, 13, 14]
-    assert batch.src_sents[13] == [0]
-    assert batch.src_sents[15] == [0]
-    assert batch.src_sents[16] == [1, 2, 3, 4]
-    assert batch.src_sents[18] == [5, 6, 7, 8]
-    assert batch.src_sents[19] == [0]
-    assert batch.src_sents[23] == [0]
+    assert batch.src_texts[4] == [1, 2, 3, 4, 5]
+    assert batch.src_texts[8] == [1, 2]
+    assert batch.src_texts[12] == [11, 12, 13, 14]
+    assert batch.src_texts[13] == [0]
+    assert batch.src_texts[15] == [0]
+    assert batch.src_texts[16] == [1, 2, 3, 4]
+    assert batch.src_texts[18] == [5, 6, 7, 8]
+    assert batch.src_texts[19] == [0]
+    assert batch.src_texts[23] == [0]
 
     assert batch.src_fragment_len is None
     assert batch.tgt_fragment_len is None
@@ -501,39 +514,39 @@ def test_gen_with_padding_wo_fragments(FakeTrainingPadding):
 
 
 def test_gen_with_padding_w_fragments(FakeTrainingPadding):
-    conf, tp_conf = _create_gen_opts(FakeTrainingPadding, pad_sentences=True)
-    gen = DocsBatchGenerator(
-        conf, tp_conf=tp_conf, split='train', line_offset=0, include_fragments_level=True
+    conf, tp_conf = _create_gen_opts(
+        FakeTrainingPadding, pad_sentences=True, pad_with_fragments=True
     )
+    gen = DocsBatchGenerator(conf, tp_conf=tp_conf, split='train', line_offset=0)
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: DocsBatch = batches[0]
-    print(batch.src_sents)
+    print(batch.src_texts)
     assert batch.src_ids == [8, 5, 3]
     assert batch.tgt_ids == [30, 10, 8]
-    assert len(batch.src_sents) == 24
-    assert len(batch.tgt_sents) == 32 + 32 + 32
+    assert len(batch.src_texts) == 24
+    assert len(batch.tgt_texts) == 32 + 32 + 32
     #                            1st d  2nd and 3rd with extra fragment
 
-    assert batch.src_sents[4] == [1, 2, 3, 4, 5]
-    assert batch.src_sents[12] == [11, 12, 13, 14]
-    assert batch.src_sents[15] == [0]
-    assert batch.src_sents[16] == [1, 2, 3, 4]
-    assert batch.src_sents[23] == [0]
+    assert batch.src_texts[4] == [1, 2, 3, 4, 5]
+    assert batch.src_texts[12] == [11, 12, 13, 14]
+    assert batch.src_texts[15] == [0]
+    assert batch.src_texts[16] == [1, 2, 3, 4]
+    assert batch.src_texts[23] == [0]
 
-    assert batch.tgt_sents[18] == [1, 2, 3, 4, 6, 7]
-    assert batch.tgt_sents[29] == [1, 2, 3, 4, 6, 7]
-    assert batch.tgt_sents[30] == [0]
-    assert batch.tgt_sents[32] == [1, 2, 3, 4, 6]
-    assert batch.tgt_sents[41] == [1, 2, 3, 4, 6]
-    assert batch.tgt_sents[47] == [0]
-    assert batch.tgt_sents[63] == [0]
-    assert batch.tgt_sents[64] == [1, 2, 3, 4, 5]
-    assert batch.tgt_sents[71] == [1, 2, 3, 4, 5]
-    assert batch.tgt_sents[72] == [0]
-    assert batch.tgt_sents[79] == [0]
-    assert batch.tgt_sents[80] == [0]
-    assert batch.tgt_sents[95] == [0]
+    assert batch.tgt_texts[18] == [1, 2, 3, 4, 6, 7]
+    assert batch.tgt_texts[29] == [1, 2, 3, 4, 6, 7]
+    assert batch.tgt_texts[30] == [0]
+    assert batch.tgt_texts[32] == [1, 2, 3, 4, 6]
+    assert batch.tgt_texts[41] == [1, 2, 3, 4, 6]
+    assert batch.tgt_texts[47] == [0]
+    assert batch.tgt_texts[63] == [0]
+    assert batch.tgt_texts[64] == [1, 2, 3, 4, 5]
+    assert batch.tgt_texts[71] == [1, 2, 3, 4, 5]
+    assert batch.tgt_texts[72] == [0]
+    assert batch.tgt_texts[79] == [0]
+    assert batch.tgt_texts[80] == [0]
+    assert batch.tgt_texts[95] == [0]
 
     # fragment_size == 16
     assert batch.info['src_fragment_len'] == 8

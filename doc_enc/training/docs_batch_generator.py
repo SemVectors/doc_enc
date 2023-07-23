@@ -23,7 +23,6 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
-    create_padded_tensor,
 )
 from doc_enc.utils import find_file
 from doc_enc.training.types import DocsBatch
@@ -34,10 +33,10 @@ class DocsBatchGeneratorConf:
     input_dir: str
     meta_prefix: str = "combined"
 
-    batch_src_sents_cnt: int = 512
-    batch_total_sents_cnt: int = 1296
+    batch_docs_cnt: int = 512
+    batch_total_tokens_cnt: int = 0
+    batch_total_sents_cnt: int = 8192
     max_sents_cnt_delta: int = 64
-    batch_size: int = 96
 
     positives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [1, 3])
     negatives_per_doc: List[int] = dataclasses.field(default_factory=lambda: [0, 3])
@@ -47,8 +46,9 @@ class DocsBatchGeneratorConf:
     min_tgt_docs_per_src_doc: int = 2
     allow_docs_without_positives: bool = False
 
-    pad_src_sentences: bool = True
+    pad_src_sentences: bool = False
     pad_tgt_sentences: bool = False
+    pad_fragments_level: bool = False
 
 
 EXMPL_DATASET = 0
@@ -73,13 +73,11 @@ class DocsBatchGenerator:
         opts: DocsBatchGeneratorConf,
         tp_conf: TextProcessorConf,
         split,
-        include_fragments_level=True,
         line_offset=0,
         line_cnt=-1,
         limit=0,
     ):
         self._opts = opts
-        self._include_fragments_level = include_fragments_level
 
         self._text_proc = TextProcessor(tp_conf)
         self._doc_pair_metas = self._load_metas(split, line_offset, line_cnt)
@@ -123,18 +121,35 @@ class DocsBatchGenerator:
         return random.sample(targets, n)
 
     def _populate_doc_len(
-        self, sents: List, fragments_cnt, doc_len_in_sents_list, doc_len_in_frags_list: List
+        self,
+        segmented_text: list[list[int]],
+        doc_segments_length: list[int],
+        sent_len_list: list[int],
+        frag_len_in_sents: list[int],
+        doc_len_in_sents_list: list[int],
+        doc_len_in_frags_list: list[int],
     ):
-        doc_no = len(doc_len_in_sents_list)
-        doc_len_in_sents_list.append(len(sents))
-        doc_len_in_frags_list.append(fragments_cnt)
-        return doc_no
+        if self._text_proc.conf().split_into_sents and self._text_proc.conf().split_into_fragments:
+            frag_len_in_sents.extend(doc_segments_length)
+            doc_len_in_frags_list.append(len(doc_segments_length))
+        elif self._text_proc.conf().split_into_fragments:
+            doc_len_in_frags_list.append(doc_segments_length[0])
+
+        if self._text_proc.conf().split_into_sents:
+            sent_len_list.extend(len(t) for t in segmented_text)
+            doc_len_in_sents_list.append(len(segmented_text))
 
     def _prepare_all_targets(
-        self, positive_targets, negative_targets, tgt_hashes, batch_dups, batch
+        self,
+        positive_targets,
+        negative_targets,
+        tgt_hashes,
+        batch_dups,
+        batch,
+        tokenized_texts_cache,
     ):
         positive_idxs = []
-        for tgt_path, tgt_id, _, tgt_hash, lbl in itertools.chain(
+        for _, tgt_hash, tgt_id, lbl in itertools.chain(
             (t + (1,) for t in positive_targets),
             (t + (0,) for t in negative_targets),
         ):
@@ -143,23 +158,20 @@ class DocsBatchGenerator:
                     positive_idxs.append(tgt_hashes[tgt_hash])
                 continue
 
-            if lbl == 0 and not self._opts.allow_docs_without_positives and not positive_idxs:
-                return positive_idxs
-
-            tgt_sents, fragment_len_list = self._text_proc.prepare_text_from_file(tgt_path)
-            if (
-                not tgt_sents
-                or len(tgt_sents) < self._opts.min_sents_per_doc
-                or len(tgt_sents) >= self._opts.max_sents_per_doc
-            ):
+            if tgt_hash not in tokenized_texts_cache:
                 continue
+            segmented_text, doc_segments_length = tokenized_texts_cache[tgt_hash]
 
+            tgt_no = len(batch.tgt_ids)
             batch.tgt_ids.append(tgt_id)
-            batch.tgt_sents.extend(tgt_sents)
-            batch.tgt_fragment_len.extend(fragment_len_list)
-            tgt_no = self._populate_doc_len(
-                tgt_sents,
-                len(fragment_len_list),
+            batch.tgt_texts.extend(segmented_text)
+            batch.tgt_doc_segments_length.append(doc_segments_length)
+
+            self._populate_doc_len(
+                segmented_text,
+                doc_segments_length,
+                batch.tgt_sent_len,
+                batch.tgt_fragment_len,
                 batch.tgt_doc_len_in_sents,
                 batch.tgt_doc_len_in_frags,
             )
@@ -173,6 +185,39 @@ class DocsBatchGenerator:
                 batch.positive_idxs[batch_dups[tgt_hash]].append(tgt_no)
         return positive_idxs
 
+    def _prepare_doc_texts(self, path_gen, tokenized_texts_cache):
+        for path, doc_hash, *_ in path_gen:
+            if doc_hash in tokenized_texts_cache:
+                continue
+            if not os.path.exists(path):
+                continue
+
+            segmented_text, doc_segments_length = self._text_proc.prepare_text_from_file(path)
+            if not segmented_text or (
+                self._text_proc.conf().split_into_sents
+                and (
+                    len(segmented_text) < self._opts.min_sents_per_doc
+                    or len(segmented_text) >= self._opts.max_sents_per_doc
+                )
+            ):
+                continue
+
+            tokenized_texts_cache[doc_hash] = (segmented_text, doc_segments_length)
+
+    def _check_src_doc(self, src_info, positive_targets, tokenized_texts_cache):
+        src_hash = src_info[1]
+        if src_hash not in tokenized_texts_cache:
+            return False
+
+        if not self._opts.allow_docs_without_positives:
+            for _, tgt_hash, *_ in positive_targets:
+                if tgt_hash in tokenized_texts_cache:
+                    break
+            else:
+                return False
+
+        return True
+
     def _process_src_doc(
         self,
         src_info,
@@ -181,6 +226,7 @@ class DocsBatchGenerator:
         batch: DocsBatch,
         tgt_hashes: dict,
         batch_dups: dict,
+        tokenized_texts_cache: dict,
     ) -> _ProcSrcStatus:
         if not all_positive_targets:
             if not self._opts.allow_docs_without_positives:
@@ -188,54 +234,58 @@ class DocsBatchGenerator:
             if not all_negative_targets:
                 return _ProcSrcStatus.NON_VALID_SRC
 
-        src_path, src_id, src_len = src_info
-
-        if not os.path.exists(src_path):
-            logging.warning("src text is missing: %s", src_path)
-            return _ProcSrcStatus.NON_VALID_SRC
-
         positive_targets = self._select_targets(all_positive_targets, self._opts.positives_per_doc)
         negative_targets = self._select_targets(all_negative_targets, self._opts.negatives_per_doc)
 
-        tgt_extra_len = sum(t[2] for t in itertools.chain(positive_targets, negative_targets))
-        if self._is_batch_ready(batch, src_extra=src_len, tgt_extra=tgt_extra_len):
+        def _gen():
+            yield src_info
+            yield from positive_targets
+            yield from negative_targets
+
+        self._prepare_doc_texts(_gen(), tokenized_texts_cache)
+        if not self._check_src_doc(src_info, positive_targets, tokenized_texts_cache):
+            return _ProcSrcStatus.NON_VALID_SRC
+
+        def _texts_gen():
+            yield tokenized_texts_cache[src_info[1]][0]
+            for _, tgt_hash, *_ in itertools.chain(positive_targets, negative_targets):
+                if tgt_hash not in tgt_hashes and tgt_hash in tokenized_texts_cache:
+                    yield tokenized_texts_cache[tgt_hash][0]
+
+        if self._is_batch_ready(batch, new_docs=list(_texts_gen())):
             return _ProcSrcStatus.CANT_FIT_IN_BATCH
 
-        src_sents, fragment_len_list = self._text_proc.prepare_text_from_file(src_path)
-        if (
-            not src_sents
-            or len(src_sents) < self._opts.min_sents_per_doc
-            or len(src_sents) >= self._opts.max_sents_per_doc
-        ):
-            return _ProcSrcStatus.NON_VALID_SRC
-
         positive_idxs = self._prepare_all_targets(
-            positive_targets, negative_targets, tgt_hashes, batch_dups, batch
+            positive_targets, negative_targets, tgt_hashes, batch_dups, batch, tokenized_texts_cache
         )
-        if not positive_idxs and not self._opts.allow_docs_without_positives:
-            return _ProcSrcStatus.NON_VALID_SRC
+
+        src_hash = src_info[1]
+        segmented_text, doc_segments_length = tokenized_texts_cache[src_hash]
 
         batch.positive_idxs.append(positive_idxs)
-        batch.src_ids.append(src_id)
-        batch.src_sents.extend(src_sents)
-        batch.src_fragment_len.extend(fragment_len_list)
+        batch.src_ids.append(src_info[2])
+        batch.src_texts.extend(segmented_text)
+        batch.src_doc_segments_length.append(doc_segments_length)
+
         self._populate_doc_len(
-            src_sents,
-            len(fragment_len_list),
+            segmented_text,
+            doc_segments_length,
+            batch.src_sent_len,
+            batch.src_fragment_len,
             batch.src_doc_len_in_sents,
             batch.src_doc_len_in_frags,
         )
 
         src_no = len(batch.src_ids) - 1
         selected_hashes = [t[-1] for t in positive_targets]
-        for _, _, _, h in all_positive_targets:
+        for _, h, _ in all_positive_targets:
             if h not in selected_hashes:
                 batch_dups[h] = src_no
 
         return _ProcSrcStatus.ADDED
 
     def _empty_batch(self):
-        iterable: List[Union[List, Mapping[str, int]]] = [[] for _ in range(13)]
+        iterable: List[Union[List, Mapping[str, int]]] = [[] for _ in range(15)]
         iterable.append(
             {
                 'src_docs_cnt': 0,
@@ -268,10 +318,10 @@ class DocsBatchGenerator:
     def _finalize_batch(self, batch: DocsBatch):
         for l in batch.positive_idxs:
             l.sort()
-        src_sz = len(batch.src_doc_len_in_sents)
+        src_sz = len(batch.src_doc_segments_length)
         batch.info['bs'] = src_sz
         batch.info['src_docs_cnt'] = src_sz
-        batch.info['tgt_docs_cnt'] = len(batch.tgt_doc_len_in_sents)
+        batch.info['tgt_docs_cnt'] = len(batch.tgt_doc_segments_length)
         batch.info['src_frags_cnt'] = len(batch.src_fragment_len)
         batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
 
@@ -279,11 +329,15 @@ class DocsBatchGenerator:
         if not self._opts.pad_src_sentences and not self._opts.pad_tgt_sentences:
             return batch
 
-        if self._include_fragments_level:
-            src_padded_sents = batch.src_sents
+        if (
+            self._opts.pad_fragments_level
+            and self._text_proc.conf().split_into_sents
+            and self._text_proc.conf().split_into_fragments
+        ):
+            src_padded_sents = batch.src_texts
             if self._opts.pad_src_sentences:
                 src_padded_sents = self._pad_batch_with_fragments(
-                    batch.src_sents,
+                    batch.src_texts,
                     batch.src_fragment_len,
                     batch.src_doc_len_in_frags,
                     'src',
@@ -291,10 +345,10 @@ class DocsBatchGenerator:
                 )
                 batch.info['src_frags_cnt'] = len(batch.src_fragment_len)
 
-            tgt_padded_sents = batch.tgt_sents
+            tgt_padded_sents = batch.tgt_texts
             if self._opts.pad_tgt_sentences:
                 tgt_padded_sents = self._pad_batch_with_fragments(
-                    batch.tgt_sents,
+                    batch.tgt_texts,
                     batch.tgt_fragment_len,
                     batch.tgt_doc_len_in_frags,
                     'tgt',
@@ -302,27 +356,27 @@ class DocsBatchGenerator:
                 )
                 batch.info['tgt_frags_cnt'] = len(batch.tgt_fragment_len)
 
-            return batch._replace(src_sents=src_padded_sents, tgt_sents=tgt_padded_sents)
+            return batch._replace(src_texts=src_padded_sents, tgt_texts=tgt_padded_sents)
 
-        if self._opts.pad_src_sentences:
+        if self._opts.pad_src_sentences and self._text_proc.conf().split_into_sents:
             src_padded_sents, src_doc_len = pad_sent_sequences(
-                batch.src_sents, batch.src_doc_len_in_sents, self._text_proc.vocab()
+                batch.src_texts, batch.src_doc_len_in_sents, self._text_proc.vocab()
             )
             batch.info['src_doc_len_in_sents'] = src_doc_len
 
             batch = batch._replace(
-                src_sents=src_padded_sents,
+                src_texts=src_padded_sents,
                 src_fragment_len=None,
                 src_doc_len_in_frags=None,
             )
-        if self._opts.pad_tgt_sentences:
+        if self._opts.pad_tgt_sentences and self._text_proc.conf().split_into_sents:
             tgt_padded_sents, tgt_doc_len = pad_sent_sequences(
-                batch.tgt_sents, batch.tgt_doc_len_in_sents, self._text_proc.vocab()
+                batch.tgt_texts, batch.tgt_doc_len_in_sents, self._text_proc.vocab()
             )
             batch.info['tgt_doc_len_in_sents'] = tgt_doc_len
 
             batch = batch._replace(
-                tgt_sents=tgt_padded_sents,
+                tgt_texts=tgt_padded_sents,
                 tgt_fragment_len=None,
                 tgt_doc_len_in_frags=None,
             )
@@ -334,15 +388,40 @@ class DocsBatchGenerator:
             and batch.info['tgt_docs_cnt'] < self._opts.min_tgt_docs_per_src_doc
         )
 
-    def _is_batch_ready(self, batch: DocsBatch, src_extra=0, tgt_extra=0):
-        src_sz = len(batch.src_sents)
-        d = self._opts.max_sents_cnt_delta if src_extra or tgt_extra else 0
-        return (
-            src_sz + src_extra > self._opts.batch_src_sents_cnt + d
-            or src_sz + src_extra + len(batch.tgt_sents) + tgt_extra
-            > self._opts.batch_total_sents_cnt + d
-            or len(batch.src_ids) > self._opts.batch_size
-        )
+    def _is_batch_ready(self, batch: DocsBatch, new_docs: list | None = None):
+        batch_doc_size = len(batch.src_ids) + len(batch.tgt_ids)
+
+        new_docs_cnt = 0
+        if new_docs is not None:
+            new_docs_cnt = len(new_docs)
+
+        # check number of documents
+        if self._opts.batch_docs_cnt and batch_doc_size + new_docs_cnt > self._opts.batch_docs_cnt:
+            return True
+
+        if self._opts.batch_total_tokens_cnt:
+            # check number of tokens
+            tokens_cnt = sum(len(t) for t in batch.src_texts)
+            tokens_cnt += sum(len(t) for t in batch.tgt_texts)
+            new_tokens_cnt = 0
+            if new_docs is not None:
+                for d in new_docs:
+                    new_tokens_cnt += sum(len(s) for s in d)
+            if tokens_cnt + new_tokens_cnt > self._opts.batch_total_tokens_cnt:
+                return True
+
+        if self._text_proc.conf().split_into_sents and self._opts.batch_total_sents_cnt:
+            # check number of sentences
+            d = self._opts.max_sents_cnt_delta if new_docs is not None else 0
+            new_sents_cnt = 0
+            if new_docs is not None:
+                new_sents_cnt += sum(len(d) for d in new_docs)
+
+            sents_cnt = len(batch.src_texts) + len(batch.tgt_texts)
+            if sents_cnt + new_sents_cnt > self._opts.batch_total_sents_cnt + d:
+                return True
+
+        return False
 
     def _buckets_iter(self):
         bucket = []
@@ -381,10 +460,14 @@ class DocsBatchGenerator:
         negative_targets = []
         cur_hash = ''
         src_info = tuple()
+        tokenized_texts_cache = {}
 
         batch, tgt_hashes, batch_dups = self._empty_batch()
 
         for metas in self._buckets_iter():
+            if len(tokenized_texts_cache) > 4000:
+                tokenized_texts_cache.clear()
+
             src_texts, tgt_texts = self._text_dirs_dict[metas[EXMPL_DATASET]]
             if cur_hash != metas[EXMPL_SRC_HASH]:
                 status = self._process_src_doc(
@@ -394,10 +477,11 @@ class DocsBatchGenerator:
                     batch,
                     tgt_hashes,
                     batch_dups,
+                    tokenized_texts_cache,
                 )
 
                 if (
-                    status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents
+                    status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_texts
                 ) or self._is_batch_ready(batch):
                     batch = self._finalize_batch(batch)
                     if not self._is_defect_batch(batch):
@@ -405,6 +489,7 @@ class DocsBatchGenerator:
                     batch, tgt_hashes, batch_dups = self._empty_batch()
 
                 if status == _ProcSrcStatus.CANT_FIT_IN_BATCH:
+                    # add to new batch current document
                     self._process_src_doc(
                         src_info,
                         positive_targets,
@@ -412,6 +497,7 @@ class DocsBatchGenerator:
                         batch,
                         tgt_hashes,
                         batch_dups,
+                        tokenized_texts_cache,
                     )
 
                 # preparations for new src doc
@@ -419,13 +505,11 @@ class DocsBatchGenerator:
                 negative_targets = []
                 cur_hash = metas[EXMPL_SRC_HASH]
 
-                src_id = metas[EXMPL_SRC_ID]
-                src_len = metas[EXMPL_SRC_LEN]
                 src_path = find_file(
                     f"{self._opts.input_dir}/{metas[EXMPL_DATASET]}/{src_texts}/{metas[EXMPL_SRC_ID]}.txt",
                     throw_if_not_exist=False,
                 )
-                src_info = (src_path, src_id, src_len)
+                src_info = (src_path, cur_hash, metas[EXMPL_SRC_ID])
 
             tgt_id = metas[EXMPL_TGT_ID]
             tgt_path = find_file(
@@ -436,8 +520,7 @@ class DocsBatchGenerator:
                 logging.warning("tgt text is missing: %s", tgt_path)
                 continue
 
-            tgt_len = metas[EXMPL_TGT_LEN]
-            tgt_info = (tgt_path, tgt_id, tgt_len, metas[EXMPL_TGT_HASH])
+            tgt_info = (tgt_path, metas[EXMPL_TGT_HASH], tgt_id)
 
             label = metas[EXMPL_LABEL]
             if label == 1:
@@ -446,18 +529,30 @@ class DocsBatchGenerator:
                 negative_targets.append(tgt_info)
 
         status = self._process_src_doc(
-            src_info, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
+            src_info,
+            positive_targets,
+            negative_targets,
+            batch,
+            tgt_hashes,
+            batch_dups,
+            tokenized_texts_cache,
         )
-        if status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_sents:
+        if status == _ProcSrcStatus.CANT_FIT_IN_BATCH and batch.src_texts:
             batch = self._finalize_batch(batch)
             if not self._is_defect_batch(batch):
                 yield batch
             batch, tgt_hashes, batch_dups = self._empty_batch()
             self._process_src_doc(
-                src_info, positive_targets, negative_targets, batch, tgt_hashes, batch_dups
+                src_info,
+                positive_targets,
+                negative_targets,
+                batch,
+                tgt_hashes,
+                batch_dups,
+                tokenized_texts_cache,
             )
 
-        if batch.src_sents:
+        if batch.src_texts:
             batch = self._finalize_batch(batch)
             if not self._is_defect_batch(batch):
                 yield batch
@@ -480,11 +575,9 @@ class DocsBatchIterator(BaseBatchIterator):
         tp_conf: TextProcessorConf,
         logging_conf,
         split,
-        include_fragments_level=True,
         rank=0,
         world_size=-1,
         device=None,
-        pad_idx=0,
         pad_to_multiple_of=0,
     ):
         super().__init__(
@@ -492,7 +585,7 @@ class DocsBatchIterator(BaseBatchIterator):
             opts,
             logging_conf,
             DocsBatchGenerator,
-            (opts.batch_generator_conf, tp_conf, split, include_fragments_level),
+            (opts.batch_generator_conf, tp_conf, split),
             rank=rank,
             world_size=world_size,
         )
@@ -504,7 +597,6 @@ class DocsBatchIterator(BaseBatchIterator):
             device = torch.device('cpu')
         self._device = device
 
-        self._pad_idx = pad_idx
         self._pad_to_multiple_of = pad_to_multiple_of
         self._epoch = 0
 
@@ -516,16 +608,6 @@ class DocsBatchIterator(BaseBatchIterator):
             raise RuntimeError("Failed to init docs batch generator, empty folder or config error")
 
     def _make_batch_for_retr_task(self, batch: DocsBatch):
-        src_max_len = len(max(batch.src_sents, key=len))
-        src_tensor, src_lengths = create_padded_tensor(
-            batch.src_sents, src_max_len, self._pad_idx, self._device, self._pad_to_multiple_of
-        )
-
-        tgt_max_len = len(max(batch.tgt_sents, key=len))
-        tgt_tensor, tgt_lengths = create_padded_tensor(
-            batch.tgt_sents, tgt_max_len, self._pad_idx, self._device, self._pad_to_multiple_of
-        )
-
         src_cnt = batch.info['src_docs_cnt']
         labels = torch.full(
             (src_cnt, batch.info['tgt_docs_cnt']), 0.0, dtype=torch.float32, device=self._device
@@ -535,13 +617,7 @@ class DocsBatchIterator(BaseBatchIterator):
             if positive_tgts:
                 labels[i][positive_tgts] = 1.0
 
-        b = batch._replace(
-            src_sents=src_tensor,
-            src_sent_len=src_lengths,
-            tgt_sents=tgt_tensor,
-            tgt_sent_len=tgt_lengths,
-        )
-        return b, labels
+        return batch, labels
 
     def _prepare_batch(self, batch):
         return self._make_batch_for_retr_task(batch)

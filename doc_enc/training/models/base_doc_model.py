@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
 
-from torch import nn
+import torch
 
-from doc_enc.training.models.model_conf import DocModelConf
-from doc_enc.training.types import DocsBatch
+from doc_enc.doc_encoder import BaseEncodeModule
 from doc_enc.encoders.sent_encoder import SentForDocEncoder
 from doc_enc.encoders.emb_seq_encoder import SeqEncoder
+from doc_enc.training.models.model_conf import DocModelConf
+from doc_enc.training.types import DocsBatch
 
 from doc_enc.training.models.base_model import DualEncModelOutput
 
 from doc_enc.training.index.ivf_pq_model import TrainableIvfPQ
 
 
-class BaseDocModel(nn.Module):
+class BaseDocModel(BaseEncodeModule):
     def __init__(
         self,
         conf: DocModelConf,
-        doc_encoder: SeqEncoder,
-        sent_encoder: SentForDocEncoder | None = None,
-        frag_encoder: SeqEncoder | None = None,
+        doc_layer: SeqEncoder,
+        pad_idx: int,
+        device: torch.device,
+        sent_layer: SentForDocEncoder | None = None,
+        frag_layer: SeqEncoder | None = None,
     ):
-        super().__init__()
+        super().__init__(
+            doc_layer=doc_layer,
+            sent_layer=sent_layer,
+            frag_layer=frag_layer,
+            pad_idx=pad_idx,
+            device=device,
+        )
         self.conf = conf
-        self.doc_encoder = doc_encoder
-        self.sent_encoder = sent_encoder
-        self.frag_encoder = frag_encoder
 
         self.index: TrainableIvfPQ | None = None
         if conf.index.enable:

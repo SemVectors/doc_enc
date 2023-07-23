@@ -32,7 +32,7 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
         state_dict = torch.load(conf.load_params_from, map_location=device)
 
     sent_model = None
-    sent_encoder = None
+    sent_layer = None
     sent_embs_out_size = 0
     if conf.sent is not None:
         sent_model = _create_sent_model(conf.sent, vocab, device, state_dict)
@@ -44,7 +44,7 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
                 sent_enc_for_doc.load_state_dict(state_dict['sent_for_doc'])
 
         e = sent_model.encoder
-        sent_encoder = SentForDocEncoder(
+        sent_layer = SentForDocEncoder(
             e.conf,
             e.embed,
             e.encoder,
@@ -56,32 +56,34 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
 
         sent_embs_out_size = sent_model.encoder.out_embs_dim()
 
-    frag_encoder = None
+    frag_layer = None
     if conf.fragment is not None:
-        frag_encoder = create_seq_encoder(
+        frag_layer = create_seq_encoder(
             conf.fragment,
             pad_idx=vocab.pad_idx(),
             device=device,
             prev_output_size=sent_embs_out_size,
         )
         if state_dict is not None:
-            frag_encoder.load_state_dict(state_dict['frag_enc'])
-        doc_input_size = frag_encoder.out_embs_dim()
+            frag_layer.load_state_dict(state_dict['frag_enc'])
+        doc_input_size = frag_layer.out_embs_dim()
     else:
         doc_input_size = sent_embs_out_size
 
-    doc_encoder = create_seq_encoder(
+    doc_layer = create_seq_encoder(
         conf.doc, pad_idx=vocab.pad_idx(), device=device, prev_output_size=doc_input_size
     )
     if state_dict is not None:
-        doc_encoder.load_state_dict(state_dict['doc_enc'])
+        doc_layer.load_state_dict(state_dict['doc_enc'])
 
     if conf.kind == ModelKind.DUAL_ENC:
         model = DocDualEncoder(
             conf,
-            sent_encoder=sent_encoder,
-            doc_encoder=doc_encoder,
-            frag_encoder=frag_encoder,
+            sent_layer=sent_layer,
+            doc_layer=doc_layer,
+            frag_layer=frag_layer,
+            pad_idx=vocab.pad_idx(),
+            device=device,
         )
     else:
         raise RuntimeError(f"Unknown doc model kind {conf.kind}")

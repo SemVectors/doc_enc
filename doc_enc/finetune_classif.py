@@ -17,7 +17,7 @@ from torch.cuda.amp.grad_scaler import GradScaler
 from torch.cuda.amp.autocast_mode import autocast
 
 
-from doc_enc.doc_encoder import DocEncoderConf, BaseEncodeModule, BatchIterator, file_path_fetcher
+from doc_enc.doc_encoder import DocEncoderConf, EncodeModule, BatchIterator, file_path_fetcher
 
 # * Configs
 
@@ -51,7 +51,7 @@ cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 
 class DocClassifier(nn.Module):
-    def __init__(self, encoder: BaseEncodeModule, classif_nlabels=0):
+    def __init__(self, encoder: EncodeModule, classif_nlabels=0):
         super().__init__()
         self.encoder = encoder
 
@@ -95,7 +95,7 @@ class ClassifBatchIterator:
 
 
 def classif_fine_tune(conf: ClassifFineTuneConf):
-    doc_encoder = BaseEncodeModule(conf)
+    doc_encoder = EncodeModule(conf)
     model = DocClassifier(doc_encoder, conf.nlabels)
     train_iter = ClassifBatchIterator(
         conf.train_meta_path,

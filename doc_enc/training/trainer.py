@@ -117,45 +117,50 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             if is_no_decay:
                 yield p
 
-    param_groups = [
-        _init_gr(
-            {
-                'name': 'emb',
-                'params': _no_decay_params(models.sent_model.encoder.emb_named_params(), True),
-            },
-            conf,
-            conf.emb,
-        ),
-        _init_gr(
-            {
-                'name': 'emb.no_decay',
-                'params': _no_decay_params(models.sent_model.encoder.emb_named_params()),
-            },
-            conf,
-            conf.emb,
-            no_decay=True,
-        ),
-        _init_gr(
-            {
-                'name': 'sent',
-                'params': _no_decay_params(models.sent_model.encoder.enc_named_params(), True),
-            },
-            conf,
-            conf.sent,
-        ),
-        _init_gr(
-            {
-                'name': 'sent.no_decay',
-                'params': _no_decay_params(models.sent_model.encoder.enc_named_params()),
-            },
-            conf,
-            conf.sent,
-            no_decay=True,
-        ),
+    param_groups = []
+    if models.sent_model is not None:
+        param_groups = param_groups + [
+            _init_gr(
+                {
+                    'name': 'emb',
+                    'params': _no_decay_params(models.sent_model.encoder.emb_named_params(), True),
+                },
+                conf,
+                conf.emb,
+            ),
+            _init_gr(
+                {
+                    'name': 'emb.no_decay',
+                    'params': _no_decay_params(models.sent_model.encoder.emb_named_params()),
+                },
+                conf,
+                conf.emb,
+                no_decay=True,
+            ),
+            _init_gr(
+                {
+                    'name': 'sent',
+                    'params': _no_decay_params(models.sent_model.encoder.enc_named_params(), True),
+                },
+                conf,
+                conf.sent,
+            ),
+            _init_gr(
+                {
+                    'name': 'sent.no_decay',
+                    'params': _no_decay_params(models.sent_model.encoder.enc_named_params()),
+                },
+                conf,
+                conf.sent,
+                no_decay=True,
+            ),
+        ]
+
+    param_groups = param_groups + [
         _init_gr(
             {
                 'name': 'doc',
-                'params': _no_decay_params(models.doc_model.doc_encoder.named_parameters(), True),
+                'params': _no_decay_params(models.doc_model.doc_layer.named_parameters(), True),
             },
             conf,
             conf.doc,
@@ -163,7 +168,7 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
         _init_gr(
             {
                 'name': 'doc.no_decay',
-                'params': _no_decay_params(models.doc_model.doc_encoder.named_parameters()),
+                'params': _no_decay_params(models.doc_model.doc_layer.named_parameters()),
             },
             conf,
             conf.doc,
@@ -171,13 +176,13 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
         ),
     ]
 
-    if models.doc_model.frag_encoder is not None:
+    if models.doc_model.frag_layer is not None:
         param_groups.append(
             _init_gr(
                 {
                     'name': 'frag',
                     'params': _no_decay_params(
-                        models.doc_model.frag_encoder.named_parameters(), True
+                        models.doc_model.frag_layer.named_parameters(), True
                     ),
                 },
                 conf,
@@ -188,15 +193,18 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             _init_gr(
                 {
                     'name': 'frag.no_decay',
-                    'params': _no_decay_params(models.doc_model.frag_encoder.named_parameters()),
+                    'params': _no_decay_params(models.doc_model.frag_layer.named_parameters()),
                 },
                 conf,
                 conf.fragment,
                 no_decay=True,
             )
         )
-    sent_for_doc = models.doc_model.sent_encoder.doc_mode_encoder
-    if sent_for_doc is not None:
+
+    if (
+        models.doc_model.sent_layer is not None
+        and (sent_for_doc := models.doc_model.sent_layer.doc_mode_encoder) is not None
+    ):
         param_groups.append(
             _init_gr(
                 {
@@ -219,7 +227,7 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             )
         )
 
-    if models.sent_model.index is not None:
+    if models.sent_model is not None and models.sent_model.index is not None:
         param_groups.append(
             _init_gr(
                 {
@@ -274,31 +282,23 @@ def _create_lr_lists(conf: OptimConf, param_groups):
 
     n = len(param_groups)
 
+    final_lr = []
+    lr = []
     if n == 1:
         # its only one lr
         final_lr = [conf.final_lr]
         lr = [conf.lr]
-    elif 1 < n < 13:
-        final_lr = [
-            _v(conf.emb.final_lr, conf.final_lr),
-            _v(conf.emb.final_lr, conf.final_lr),
-            _v(conf.sent.final_lr, conf.final_lr),
-            _v(conf.sent.final_lr, conf.final_lr),
-            _v(conf.doc.final_lr, conf.final_lr),
-            _v(conf.doc.final_lr, conf.final_lr),
-        ]
-        lr = [
-            _v(conf.emb.lr, conf.lr),
-            _v(conf.emb.lr, conf.lr),
-            _v(conf.sent.lr, conf.lr),
-            _v(conf.sent.lr, conf.lr),
-            _v(conf.doc.lr, conf.lr),
-            _v(conf.doc.lr, conf.lr),
-        ]
-
-        other_n = n - len(lr)
-        while other_n:
-            pg = param_groups[-other_n]
+    else:
+        for pg in param_groups:
+            if pg['name'].startswith('emb'):
+                final_lr.append(_v(conf.emb.final_lr, conf.final_lr))
+                lr.append(_v(conf.emb.lr, conf.lr))
+            if pg['name'] in ('sent', 'sent.no_decay'):
+                final_lr.append(_v(conf.sent.final_lr, conf.final_lr))
+                lr.append(_v(conf.sent.lr, conf.lr))
+            if pg['name'].startswith('doc'):
+                final_lr.append(_v(conf.doc.final_lr, conf.final_lr))
+                lr.append(_v(conf.doc.lr, conf.lr))
             if pg['name'].startswith('frag'):
                 final_lr.append(_v(conf.fragment.final_lr, conf.final_lr))
                 lr.append(_v(conf.fragment.lr, conf.lr))
@@ -313,10 +313,6 @@ def _create_lr_lists(conf: OptimConf, param_groups):
                 lr.append(_v(conf.doc_index.lr, conf.lr))
             else:
                 raise RuntimeError(f"Unknown name of param group {pg['name']}")
-            other_n -= 1
-
-    else:
-        raise RuntimeError(f"Unsupported # of param groups: {n}")
 
     return lr, final_lr
 
@@ -418,17 +414,17 @@ class BaseTrainerUtils:
                 self._tp_conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
             ),
             'tp': self._tp.state_dict(),
-            'doc_enc': self._local_models.doc_model.doc_encoder.state_dict(),
+            'doc_enc': self._local_models.doc_model.doc_layer.state_dict(),
         }
 
         if self._local_models.sent_model is not None:
             state_dict['sent_enc'] = self._local_models.sent_model.encoder.state_dict()
-            sm = self._local_models.doc_model.sent_encoder
-            if sm is not None and sm.doc_mode_encoder is not None:
-                state_dict['sent_for_doc'] = sm.doc_mode_encoder.state_dict()
+            sl = self._local_models.doc_model.sent_layer
+            if sl is not None and sl.doc_mode_encoder is not None:
+                state_dict['sent_for_doc'] = sl.doc_mode_encoder.state_dict()
 
-        if self._local_models.doc_model.frag_encoder is not None:
-            state_dict['frag_enc'] = self._local_models.doc_model.frag_encoder.state_dict()
+        if self._local_models.doc_model.frag_layer is not None:
+            state_dict['frag_enc'] = self._local_models.doc_model.frag_layer.state_dict()
 
         torch.save(state_dict, out_path)
 
@@ -461,14 +457,17 @@ class Trainer(BaseTrainerUtils):
             self._sync_group = dist.new_group(
                 backend='gloo', timeout=datetime.timedelta(minutes=timeout)
             )
-            self._sent_model: nn.Module = DDP(
-                self._local_models.sent_model,
-                device_ids=[local_rank],
-                output_device=local_rank,
-                gradient_as_bucket_view=True,
-                find_unused_parameters=False,
-                static_graph=True,
-            )
+            self._sent_model: nn.Module | BaseSentModel | None = None
+
+            if self._local_models.sent_model is not None:
+                self._sent_model = DDP(
+                    self._local_models.sent_model,
+                    device_ids=[local_rank],
+                    output_device=local_rank,
+                    gradient_as_bucket_view=True,
+                    find_unused_parameters=False,
+                    static_graph=True,
+                )
             self._doc_model: nn.Module = DDP(
                 self._local_models.doc_model,
                 device_ids=[local_rank],
@@ -482,7 +481,7 @@ class Trainer(BaseTrainerUtils):
             logging.info("Skip creating DistributedDataParallel since world size == 1")
             self._sync_group = None
             self._doc_model: nn.Module = self._local_models.doc_model
-            self._sent_model: nn.Module = self._local_models.sent_model
+            self._sent_model = self._local_models.sent_model
             self._uneven_input_handling = contextlib.nullcontext
 
         self._sent_retr_criterion = torch.nn.CrossEntropyLoss()
@@ -618,6 +617,7 @@ class Trainer(BaseTrainerUtils):
             f.write('\n')
 
     def _save_retr_debug_info(self, batch, output: DualEncModelOutput, _, meta):
+        assert self._model_conf.sent is not None, "logic error1919"
         self._save_sent_retr_debug_info_impl(
             self._model_conf.sent,
             batch,
@@ -700,40 +700,43 @@ class Trainer(BaseTrainerUtils):
                 logging.debug('tgt_len: %s', batch.tgt_len)
         elif task == TaskType.DOC_RETR:
             logging.debug(
-                "src docs cnt: %s; frags cnt: %s; sents cnt: %s",
+                "src docs cnt: %s; frags cnt: %s; text segments cnt: %s, tokens cnt: %s",
                 len(batch.src_ids),
                 len(batch.src_fragment_len) if batch.src_fragment_len else '-',
-                len(batch.src_sents),
+                len(batch.src_texts),
+                sum(len(s) for s in batch.src_texts),
             )
             logging.debug(
-                "tgt docs cnt: %s; frags cnt: %s; sents cnt: %s",
+                "tgt docs cnt: %s; frags cnt: %s; text segments cnt: %s, tokens cnt: %s",
                 len(batch.tgt_ids),
                 len(batch.tgt_fragment_len) if batch.tgt_fragment_len else '-',
-                len(batch.tgt_sents),
+                len(batch.tgt_texts),
+                sum(len(s) for s in batch.tgt_texts),
             )
-            src_sent_sum = batch.src_sent_len.sum().item()
-            logging.debug(
-                "src sents stat: max: %s; min: %s; avg: %s; sum: %s",
-                batch.src_sent_len.max().item(),
-                batch.src_sent_len.min().item(),
-                src_sent_sum / len(batch.src_sent_len),
-                src_sent_sum,
-            )
-            tgt_sent_sum = batch.tgt_sent_len.sum().item()
-            logging.debug(
-                "tgt sents stat: max: %s; min: %s; avg: %s; sum: %s",
-                batch.tgt_sent_len.max().item(),
-                batch.tgt_sent_len.min().item(),
-                tgt_sent_sum / len(batch.tgt_sent_len),
-                tgt_sent_sum,
-            )
+            if batch.src_sent_len:
+                src_sent_sum = sum(batch.src_sent_len)
+                logging.debug(
+                    "src sents stat: max: %s; min: %s; avg: %s; sum: %s",
+                    max(batch.src_sent_len),
+                    min(batch.src_sent_len),
+                    src_sent_sum / len(batch.src_sent_len),
+                    src_sent_sum,
+                )
+                tgt_sent_sum = sum(batch.tgt_sent_len)
+                logging.debug(
+                    "tgt sents stat: max: %s; min: %s; avg: %s; sum: %s",
+                    max(batch.tgt_sent_len),
+                    min(batch.tgt_sent_len),
+                    tgt_sent_sum / len(batch.tgt_sent_len),
+                    tgt_sent_sum,
+                )
 
             if self._conf.print_batches:
                 logging.debug(
                     'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
                     'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
                     batch.src_ids,
-                    len(batch.src_sents),
+                    len(batch.src_texts),
                     batch.src_sent_len,
                     batch.src_fragment_len,
                     batch.src_doc_len_in_sents,
@@ -743,7 +746,7 @@ class Trainer(BaseTrainerUtils):
                     'tgt ids: %s\ntgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
                     'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
                     batch.tgt_ids,
-                    len(batch.tgt_sents),
+                    len(batch.tgt_texts),
                     batch.tgt_sent_len,
                     batch.tgt_fragment_len,
                     batch.tgt_doc_len_in_sents,
@@ -767,7 +770,7 @@ class Trainer(BaseTrainerUtils):
         if any_max_grad_norm or self._conf.emb_grad_scale:
             self._scaler.unscale_(self._optimizer)
 
-            if self._conf.emb_grad_scale:
+            if self._conf.emb_grad_scale and self._local_models.sent_model is not None:
                 wgrad = self._local_models.sent_model.encoder.embed.embed_tokens.weight.grad
                 if wgrad is not None:
                     wgrad *= self._conf.emb_grad_scale
@@ -781,13 +784,14 @@ class Trainer(BaseTrainerUtils):
         self._scaler.step(self._optimizer)
         self._scaler.update()
 
-        update_sent_index_model(self._local_models.sent_model, self._world_size)
+        if self._local_models.sent_model is not None:
+            update_sent_index_model(self._local_models.sent_model, self._world_size)
         update_doc_index_model(self._local_models.doc_model, self._world_size)
 
         self._optimizer.zero_grad()
 
     def _run_forward(self, task, batch, labels) -> DualEncModelOutput:
-        if task == TaskType.SENT_RETR:
+        if task == TaskType.SENT_RETR and self._sent_model is not None:
             output = self._sent_model(batch)
         elif task == TaskType.DOC_RETR:
             if not self._conf.use_grad_checkpoint:
@@ -898,7 +902,7 @@ class Trainer(BaseTrainerUtils):
             gen = train_iter.batches(self._conf.switch_tasks_every)
 
             join_modules = []
-            if task == TaskType.SENT_RETR:
+            if task == TaskType.SENT_RETR and self._sent_model is not None:
                 self._sent_model.train()
                 join_modules.append(self._sent_model)
             else:
@@ -973,20 +977,27 @@ class Trainer(BaseTrainerUtils):
         self._scaler.load_state_dict(state['scaler'])
         self._best_metric = state['best_metric']
         self._local_models.doc_model.load_state_dict(state['model'])
-        self._local_models.sent_model.encoder = (
-            self._local_models.doc_model.sent_encoder.cast_to_base()
-        )
+        if self._local_models.sent_model is not None:
+            assert self._local_models.doc_model.sent_layer is not None
+            self._local_models.sent_model.encoder = (
+                self._local_models.doc_model.sent_layer.cast_to_base()
+            )
         if isinstance(self._doc_model, DDP):
             self._doc_model.module = self._local_models.doc_model
-            self._sent_model.module = self._local_models.sent_model
+            if self._sent_model is not None:
+                self._sent_model.module = self._local_models.sent_model
         else:
             self._doc_model = self._local_models.doc_model
-            self._sent_model = self._local_models.sent_model
+            if self._local_models.sent_model is not None:
+                self._sent_model = self._local_models.sent_model
 
         return state['epoch']
 
     def _save_indexes(self, train_iter: BatchIterator):
-        if self._local_models.sent_model.index is not None:
+        if (
+            self._local_models.sent_model is not None
+            and self._local_models.sent_model.index is not None
+        ):
             if self._is_master:
                 logging.info("Saving sent faiss index")
                 index_path = self._local_models.sent_model.index.save_as_faiss_index(
@@ -1044,7 +1055,8 @@ class Trainer(BaseTrainerUtils):
 
     def _eval_on_dev(self, epoch, dev_iter: BatchIterator):
         with torch.no_grad():
-            self._local_models.sent_model.eval()
+            if self._local_models.sent_model is not None:
+                self._local_models.sent_model.eval()
             self._local_models.doc_model.eval()
             all_tasks = self._conf.eval_tasks
             if not all_tasks:
@@ -1059,6 +1071,8 @@ class Trainer(BaseTrainerUtils):
                     model = self._local_models.sent_model
                 else:
                     model = self._local_models.doc_model
+
+                assert model is not None, "logic error 8321"
 
                 for batch, labels in dev_iter.batches(batches_cnt=0):
                     output = model.calc_sim_matrix(batch, dont_cross_device_sample=True)

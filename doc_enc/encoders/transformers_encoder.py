@@ -73,6 +73,8 @@ class TransformersAutoModel(BaseEncoder):
         # if finetuning save state_dict
         if self.config.transformers_fix_pretrained_params:
             return {}
+        prefix = kwargs.get('prefix', '')
+        kwargs['prefix'] = prefix + 'auto_model.'
         return self.auto_model.state_dict(*args, **kwargs)
 
 

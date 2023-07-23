@@ -33,14 +33,12 @@ class BatchIterator:
         tp_conf: TextProcessorConf,
         logging_conf,
         split,
-        include_fragments_level=True,
         rank=0,
         world_size=-1,
         device=None,
         pad_idx=0,
         pad_to_multiple_of=0,
     ):
-
         self._sents_batch_iterator = SentsBatchIterator(
             opts.sents_batch_iterator_conf,
             tp_conf.tokenizer,
@@ -58,11 +56,9 @@ class BatchIterator:
             tp_conf,
             logging_conf,
             split=split,
-            include_fragments_level=include_fragments_level,
             rank=rank,
             world_size=world_size,
             device=device,
-            pad_idx=pad_idx,
             pad_to_multiple_of=pad_to_multiple_of,
         )
 
