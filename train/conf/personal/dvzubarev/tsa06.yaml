@@ -1,6 +1,9 @@
 # @package _global_
 defaults:
   - /base_config
+  - override /model/sent/encoder: lstm
+  - override /model/fragment: null
+  - override /model/doc: averaging
   - _self_
 
 trainer:
@@ -32,14 +35,15 @@ batches:
     use_existing_combined_meta: true
     async_generators: 1
     combine_procs_cnt: 7
-    include_datasets:
-      - ParalWiki
-      - SimRuWiki
-      - SimEnSci
-      - SimEnWiki
+    # include_datasets:
+    #   - ParalWiki
+    #   - SimRuWiki
+    #   - SimEnSci
+    #   - SimEnWiki
     batch_generator_conf:
-      # input_dir: >-
-      #   /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/
+      input_dir: >-
+        /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/
       pad_src_sentences: false
       batch_total_sents_cnt: 256
-      input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
+      batch_total_tokens_cnt: 10_000
+      # input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc

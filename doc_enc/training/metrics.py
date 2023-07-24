@@ -4,7 +4,7 @@ import itertools
 
 import torch
 
-from doc_enc.training.types import TaskType
+from doc_enc.training.types import DocsBatch, TaskType
 from doc_enc.training.models.base_model import DualEncModelOutput
 
 
@@ -21,20 +21,29 @@ class BaseMetrics:
         self._ivf_loss = 0.0
         self._pq_loss = 0.0
 
-        self._src_item_len_sum = 0
         self._src_item_cnt = 0
-        self._tgt_item_len_sum = 0
+        self._src_len_in_sents = 0
+        self._src_len_in_frags = 0
+        self._src_len_in_tokens = 0
+
         self._tgt_item_cnt = 0
+        self._tgt_len_in_sents = 0
+        self._tgt_len_in_frags = 0
+        self._tgt_len_in_tokens = 0
 
     def tolist(self):
         return [
             self._cnt,
             self._ncorrect,
             self._total,
-            self._src_item_len_sum,
             self._src_item_cnt,
-            self._tgt_item_len_sum,
             self._tgt_item_cnt,
+            self._src_len_in_sents,
+            self._src_len_in_frags,
+            self._src_len_in_tokens,
+            self._tgt_len_in_sents,
+            self._tgt_len_in_frags,
+            self._tgt_len_in_tokens,
             self._loss,
             self._dense_loss,
             self._ivf_loss,
@@ -42,23 +51,30 @@ class BaseMetrics:
         ]
 
     @classmethod
-    def fromlist(cls, l):
-        m = cls()
-        assert len(l) == 11
+    def fromlist(cls, l, inst=None):
+        if inst is None:
+            m = cls()
+        else:
+            m = inst
+        assert len(l) == 15, "Logic error 23822"
         fields = (
             '_cnt',
             '_ncorrect',
             '_total',
-            '_src_item_len_sum',
             '_src_item_cnt',
-            '_tgt_item_len_sum',
             '_tgt_item_cnt',
+            '_src_len_in_sents',
+            '_src_len_in_frags',
+            '_src_len_in_tokens',
+            '_tgt_len_in_sents',
+            '_tgt_len_in_frags',
+            '_tgt_len_in_tokens',
         )
-        for f, v in zip(fields, l[:7]):
+        for f, v in zip(fields, l[:11]):
             m.__dict__[f] = int(v)
 
         loss_fields = ('_loss', '_dense_loss', '_ivf_loss', '_pq_loss')
-        for f, v in zip(loss_fields, l[7:]):
+        for f, v in zip(loss_fields, l[11:]):
             m.__dict__[f] = v
 
         return m
@@ -91,10 +107,16 @@ class BaseMetrics:
         self._pq_loss += other._pq_loss
         self._ncorrect += other._ncorrect
         self._total += other._total
-        self._src_item_len_sum += other._src_item_len_sum
         self._src_item_cnt += other._src_item_cnt
-        self._tgt_item_len_sum += other._tgt_item_len_sum
         self._tgt_item_cnt += other._tgt_item_cnt
+
+        self._src_len_in_sents += other._src_len_in_sents
+        self._src_len_in_frags += other._src_len_in_frags
+        self._src_len_in_tokens += other._src_len_in_tokens
+
+        self._tgt_len_in_sents += other._tgt_len_in_sents
+        self._tgt_len_in_frags += other._tgt_len_in_frags
+        self._tgt_len_in_tokens += other._tgt_len_in_tokens
         return self
 
     def metrics(self):
@@ -106,13 +128,24 @@ class BaseMetrics:
         return 'rec', m['rec']
 
     def stats(self):
-        avg_src_item_len = (
-            self._src_item_len_sum / self._src_item_cnt if self._src_item_cnt else 0.0
-        )
-        avg_tgt_item_len = (
-            self._tgt_item_len_sum / self._tgt_item_cnt if self._tgt_item_cnt else 0.0
-        )
-        return {'asl': avg_src_item_len, 'atl': avg_tgt_item_len}
+        avg_src_item_cnt = self._src_item_cnt / self._cnt if self._cnt else 0.0
+        avg_tgt_item_cnt = self._tgt_item_cnt / self._cnt if self._cnt else 0.0
+        stat = {
+            'as': avg_src_item_cnt,
+            'at': avg_tgt_item_cnt,
+        }
+
+        if self._src_len_in_sents and self._src_item_cnt:
+            stat['asls'] = self._src_len_in_sents / self._src_item_cnt
+            stat['atls'] = self._tgt_len_in_sents / self._tgt_item_cnt
+        if self._src_len_in_frags and self._src_item_cnt:
+            stat['aslf'] = self._src_len_in_frags / self._src_item_cnt
+            stat['atlf'] = self._tgt_len_in_frags / self._tgt_item_cnt
+        if self._src_len_in_tokens and self._src_item_cnt:
+            stat['aslt'] = self._src_len_in_tokens / self._src_item_cnt
+            stat['atlt'] = self._tgt_len_in_tokens / self._tgt_item_cnt
+
+        return stat
 
     def __str__(self):
         prefix = "; loss %.5f" % (self._loss / self._cnt if self._cnt else 0.0)
@@ -135,15 +168,15 @@ class SentRetrMetrics(BaseMetrics):
         self._ncorrect += (ypredicted == labels).sum().item()
         self._total += output.dense_score_matrix.size(0)
 
-        self._src_item_len_sum += batch.src_len.sum().item()
+        self._src_len_in_tokens += batch.src_len.sum().item()
         self._src_item_cnt += len(batch.src_len)
 
-        self._tgt_item_len_sum += batch.tgt_len.sum().item()
+        self._tgt_len_in_tokens += batch.tgt_len.sum().item()
         self._tgt_item_cnt += len(batch.tgt_len)
 
 
 class DocRetrMetrics(BaseMetrics):
-    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch):
+    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch: DocsBatch):
         k = batch.info['max_positives_per_doc']
 
         pidxs = batch.positive_idxs
@@ -165,17 +198,15 @@ class DocRetrMetrics(BaseMetrics):
 
         self._total += labels.sum().item()
 
-        self._src_item_len_sum += sum(batch.src_doc_len_in_sents)
-        self._src_item_cnt += len(batch.src_doc_len_in_sents)
+        self._src_item_cnt += len(batch.src_ids)
+        self._src_len_in_sents += sum(batch.src_doc_len_in_sents)
+        self._src_len_in_frags += sum(batch.src_doc_len_in_frags)
+        self._src_len_in_tokens += sum(len(t) for t in batch.src_texts)
 
-        self._tgt_item_len_sum += sum(batch.tgt_doc_len_in_sents)
-        self._tgt_item_cnt += len(batch.tgt_doc_len_in_sents)
-
-    def stats(self):
-        s = super().stats()
-        s['asdb'] = self._src_item_cnt / self._cnt if self._cnt else 0.0
-        s['atdb'] = self._tgt_item_cnt / self._cnt if self._cnt else 0.0
-        return s
+        self._tgt_item_cnt += len(batch.tgt_ids)
+        self._tgt_len_in_sents += sum(batch.tgt_doc_len_in_sents)
+        self._tgt_len_in_frags += sum(batch.tgt_doc_len_in_frags)
+        self._tgt_len_in_tokens += sum(len(t) for t in batch.tgt_texts)
 
 
 def create_metrics(task: TaskType, metrics_list=None) -> BaseMetrics:

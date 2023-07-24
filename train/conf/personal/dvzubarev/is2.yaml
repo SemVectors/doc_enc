@@ -1,0 +1,57 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /text_proc/tokenizer: transformers_auto
+  - override /model/sent: null
+  - override /model/fragment: transformers_auto
+  - override /model/doc: averaging
+  - _self_
+
+trainer:
+  max_updates: 2000
+  eval_every: 500
+  checkpoint_every: 4000
+  switch_tasks_every: 10
+  debug_iters:
+    - 50
+
+model:
+  # sent:
+  #   cross_device_sample: true
+  fragment:
+    transformers_auto_name: distilbert-base-multilingual-cased
+
+
+text_proc:
+  tokenizer:
+    vocab_path: /srv/apps/doc-enc-testing/sentencepiece.bpe.model
+
+combine_datasets_use_text_proc: true
+
+batches:
+  sents_batch_iterator_conf:
+    batch_generator_conf:
+      batch_size: 256
+      input_dir: /srv/apps/doc-enc-testing/sents-mini
+
+  docs_batch_iterator_conf:
+    use_existing_combined_meta: true
+    async_generators: 1
+    combine_procs_cnt: 7
+    # include_datasets:
+    #   - ParalWiki
+    #   - SimRuWiki
+    #   - SimEnSci
+    #   - SimEnWiki
+    batch_generator_conf:
+      # input_dir: >-
+      #   /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/
+      pad_src_sentences: false
+      batch_total_tokens_cnt: 15_000
+      negatives_per_doc:
+        - 0
+        - 1
+      positives_per_doc:
+        - 0
+        - 1
+      input_dir: /srv/apps/doc-enc-testing/docs

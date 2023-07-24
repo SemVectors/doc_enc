@@ -570,10 +570,25 @@ class Trainer(BaseTrainerUtils):
         maxk = min(5, score_matrix.size(1))
         values, indices = torch.topk(score_matrix, maxk, 1)
         meta['num_updates'] = self._num_updates
-        meta['avg_src_len'] = meta['asl']
-        del meta['asl']
-        meta['avg_tgt_len'] = meta['atl']
-        del meta['atl']
+        meta['src_docs_in_batch'] = meta['as']
+        meta['tgt_docs_in_batch'] = meta['at']
+        del meta['as']
+        del meta['at']
+        if 'asls' in meta:
+            meta['src_len_in_sents'] = meta['asls']
+            del meta['asls']
+            meta['tgt_len_in_sents'] = meta['atls']
+            del meta['atls']
+        if 'aslf' in meta:
+            meta['src_len_in_frags'] = meta['aslf']
+            del meta['aslf']
+            meta['tgt_len_in_frags'] = meta['atlf']
+            del meta['atlf']
+        if 'aslt' in meta:
+            meta['src_len_in_tokens'] = meta['aslt']
+            del meta['aslt']
+            meta['tgt_len_in_tokens'] = meta['atlt']
+            del meta['atlt']
 
         unscale_factor = 1 / self._model_conf.scale if self._model_conf.scale else 1.0
         examples = []
@@ -646,10 +661,10 @@ class Trainer(BaseTrainerUtils):
         values, indices = torch.topk(score_matrix, 3, 1)
 
         meta['num_updates'] = self._num_updates
-        meta['avg_src_len'] = meta['asl']
-        del meta['asl']
-        meta['avg_tgt_len'] = meta['atl']
-        del meta['atl']
+        meta['src_len'] = meta['aslt']
+        del meta['aslt']
+        meta['tgt_len'] = meta['atlt']
+        del meta['atlt']
 
         examples = []
         unscale_factor = 1 / conf.scale if conf.scale else 1.0
@@ -716,19 +731,17 @@ class Trainer(BaseTrainerUtils):
             if batch.src_sent_len:
                 src_sent_sum = sum(batch.src_sent_len)
                 logging.debug(
-                    "src sents stat: max: %s; min: %s; avg: %s; sum: %s",
+                    "src sents len stat: max: %s; min: %s; avg: %s",
                     max(batch.src_sent_len),
                     min(batch.src_sent_len),
                     src_sent_sum / len(batch.src_sent_len),
-                    src_sent_sum,
                 )
                 tgt_sent_sum = sum(batch.tgt_sent_len)
                 logging.debug(
-                    "tgt sents stat: max: %s; min: %s; avg: %s; sum: %s",
+                    "tgt sents len stat: max: %s; min: %s; avg: %s",
                     max(batch.tgt_sent_len),
                     min(batch.tgt_sent_len),
                     tgt_sent_sum / len(batch.tgt_sent_len),
-                    tgt_sent_sum,
                 )
 
             if self._conf.print_batches:
@@ -892,7 +905,7 @@ class Trainer(BaseTrainerUtils):
 
         def _reset():
             nonlocal running_metrics
-            running_metrics = {t: create_metrics(t) for t in train_iter.supported_tasks()}
+            running_metrics = {t: create_metrics(t) for t in self._conf.tasks}
 
         _reset()
 

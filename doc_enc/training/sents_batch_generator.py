@@ -169,7 +169,7 @@ class SentsBatchGenerator:
                     excluded_ids.add(hn_id)
                     tgt_tokens.append(toks)
                     tgt_ids.append(hn_id)
-        logging.debug("batch was adjusted with %d tries", tries_cnt)
+        # logging.debug("batch was adjusted with %d tries", tries_cnt)
 
     def _make_batch(self, examples, excluded_ids, bucket: List[Example]):
         src_tokens = []
@@ -219,7 +219,7 @@ class SentsBatchGenerator:
     def _maybe_prepend_not_fitted(self, not_fitted, bucket, to_next_bucket):
         if not not_fitted:
             return
-        logging.debug("not_fitted: size %s", len(not_fitted))
+        # logging.debug("not_fitted: size %s", len(not_fitted))
 
         if not bucket:
             to_next_bucket.extend(not_fitted)
