@@ -151,13 +151,16 @@ class BaseTransformerEncoder(BaseEncoder):
 
     def forward(
         self,
-        embs: torch.Tensor,
+        input_embs: torch.Tensor | None,
         lengths: torch.Tensor,
         key_padding_mask: torch.Tensor | None = None,
         **kwargs,
     ) -> BaseEncoderOut:
+        if input_embs is None:
+            raise RuntimeError("Only embs as input are supported")
+
         # embs shape: batch_sz, seq_len, hidden_dim
-        embs = embs.transpose(0, 1)
+        embs = input_embs.transpose(0, 1)
         if key_padding_mask is None:
             key_padding_mask = self._create_key_padding_mask(embs.size()[0], lengths, embs.device)
 

@@ -79,11 +79,14 @@ class BaseRNNEncoder(BaseEncoder):
         return self.output_units
 
     def forward(
-        self, embs: torch.Tensor, lengths: torch.Tensor, enforce_sorted=True, **kwargs
+        self, input_embs: torch.Tensor, lengths: torch.Tensor, enforce_sorted=True, **kwargs
     ) -> BaseEncoderOut:
-        bsz, seqlen = embs.size()[:2]
+        if input_embs is None:
+            raise RuntimeError("Only embs as input are supported")
+
+        bsz, seqlen = input_embs.size()[:2]
         # BS x SeqLen x Dim -> SeqLen x BS x DIM
-        x = embs.transpose(0, 1)
+        x = input_embs.transpose(0, 1)
 
         # pack embedded source tokens into a PackedSequence
         packed_x = nn.utils.rnn.pack_padded_sequence(
