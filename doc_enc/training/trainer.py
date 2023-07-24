@@ -293,13 +293,13 @@ def _create_lr_lists(conf: OptimConf, param_groups):
             if pg['name'].startswith('emb'):
                 final_lr.append(_v(conf.emb.final_lr, conf.final_lr))
                 lr.append(_v(conf.emb.lr, conf.lr))
-            if pg['name'] in ('sent', 'sent.no_decay'):
+            elif pg['name'] in ('sent', 'sent.no_decay'):
                 final_lr.append(_v(conf.sent.final_lr, conf.final_lr))
                 lr.append(_v(conf.sent.lr, conf.lr))
-            if pg['name'].startswith('doc'):
+            elif pg['name'].startswith('doc'):
                 final_lr.append(_v(conf.doc.final_lr, conf.final_lr))
                 lr.append(_v(conf.doc.lr, conf.lr))
-            if pg['name'].startswith('frag'):
+            elif pg['name'].startswith('frag'):
                 final_lr.append(_v(conf.fragment.final_lr, conf.final_lr))
                 lr.append(_v(conf.fragment.lr, conf.lr))
             elif pg['name'].startswith('sent_for_doc'):
@@ -312,7 +312,7 @@ def _create_lr_lists(conf: OptimConf, param_groups):
                 final_lr.append(_v(conf.doc_index.final_lr, conf.final_lr))
                 lr.append(_v(conf.doc_index.lr, conf.lr))
             else:
-                raise RuntimeError(f"Unknown name of param group {pg['name']}")
+                raise RuntimeError(f"Unknown name of param group: {pg['name']}")
 
     return lr, final_lr
 
@@ -892,11 +892,33 @@ class Trainer(BaseTrainerUtils):
         return {k: create_metrics(k, v) for k, v in zip(tasks, t.tolist())}
 
     def _format_lr(self):
+        lr_names = []
+        if len(self._optimizer.param_groups) == 1:
+            lr_names.append('all')
+        else:
+            for gr in self._optimizer.param_groups:
+                lr_names.append(gr['name'])
+
+        lrs = []
         if self._scheduler is None:
-            return '-'
-        lrs = self._scheduler.get_last_lr()
-        lrstr = ','.join(f"{l:.4e}" for l in lrs)
-        return f"[{lrstr}]"
+            lrs, _ = _create_lr_lists(self._conf.optim, self._optimizer.param_groups)
+        else:
+            lrs = self._scheduler.get_last_lr()
+
+        assert len(lrs) == len(lr_names), "logic error lr2328"
+        lr_strs = []
+        for name, lr in zip(lr_names, lrs):
+            if name.endswith('.no_decay'):
+                continue
+            if name == 'sent_for_doc':
+                short_name = 'sd'
+            elif name.endswith('.index'):
+                short_name = name[0] + 'i'
+            else:
+                short_name = name[0]
+            lr_strs.append(f'{short_name}:{lr:.4e}')
+
+        return f"[{', '.join(lr_strs)}]"
 
     def _train_epoch(self, epoch, train_iter: BatchIterator, dev_iter: BatchIterator):
         epoch_updates = 0
@@ -942,7 +964,7 @@ class Trainer(BaseTrainerUtils):
                         sm += f"\nTask: {tstr} #up: {m.updates_num()/self._world_size}{m}"
 
                     logging.info(
-                        "#%d %d/%d, lr %s%s",
+                        "#%d %d/%d, lr=%s%s",
                         self._num_updates,
                         epoch,
                         epoch_updates,
