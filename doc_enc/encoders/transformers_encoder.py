@@ -3,6 +3,7 @@
 import torch
 
 from transformers import AutoModel
+from transformers.modeling_outputs import BaseModelOutput
 
 from doc_enc.common_types import PoolingStrategy
 from doc_enc.encoders.base_pooler import BasePoolerConf
@@ -26,7 +27,6 @@ class TransformersAutoModel(BaseEncoder):
         config.hidden_size = c.hidden_size
         config.num_layers = c.num_hidden_layers
         config.num_heads = c.num_attention_heads
-        config.dropout = c.hidden_dropout_prob
         config.pooler = BasePoolerConf(pooling_strategy=PoolingStrategy.UNDEFINED)
 
     def out_embs_dim(self) -> int:
@@ -66,7 +66,14 @@ class TransformersAutoModel(BaseEncoder):
             attention_mask=attention_mask,
             **transformers_kwargs,
         )
-        return BaseEncoderOut(result.pooler_output, result.hidden_states, lengths)
+        if (pooled_out := getattr(result, 'pooler_output', None)) is None:
+            if isinstance(result, BaseModelOutput):
+                hidden_states = result[0]
+                pooled_out = hidden_states[:, 0]
+            else:
+                raise RuntimeError(f"Unsupported result type from transformers lib {type(result)} ")
+
+        return BaseEncoderOut(pooled_out, result.hidden_states, lengths)
 
     def state_dict(self, *args, **kwargs):
         # do not save state when params are fixed

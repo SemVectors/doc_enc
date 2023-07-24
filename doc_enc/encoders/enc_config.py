@@ -23,8 +23,8 @@ class BaseEncoderConf:
     encoder_kind: EncoderKind
     hidden_size: int
     num_layers: int
-    dropout: float
     pooler: BasePoolerConf
+    dropout: float = 0.0
 
     # lstm opts
     input_size: Optional[int] = None

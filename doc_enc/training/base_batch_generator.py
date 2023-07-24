@@ -34,7 +34,7 @@ def _generator_proc_wrapper(
         for b in generator.batches():
             queue.put(b)
     except Exception as e:
-        logging.error(
+        logging.exception(
             "Failed to process batches: GenCls=%s; Args=%s; kwargs=%s : %s", GenCls, args, kwargs, e
         )
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import List
+from typing import Iterable, List
 import dataclasses
 import itertools
 import re
@@ -55,7 +55,7 @@ class TextProcessor:
 
         return False
 
-    def prepare_text(self, text_sents: list[str]) -> tuple[list[list[int]], list[int]]:
+    def prepare_text(self, text_sents: Iterable[str]) -> tuple[list[list[int]], list[int]]:
         segmented_text: list[list[int]] = []
         doc_segments_length: list[int] = []
 
@@ -82,6 +82,8 @@ class TextProcessor:
 
         elif self._conf.split_into_fragments:
             # 2. document is a sequence of fragments
+            if not isinstance(text_sents, list):
+                text_sents = list(text_sents)
             fragment_lengths = split_into_fragments_by_len(text_sents, self._conf.fragment_size)
             offset = 0
             for frag_len in fragment_lengths:
