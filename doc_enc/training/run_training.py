@@ -153,8 +153,8 @@ def _adjust_config(conf: Config):
     # adjust text processor options based on model architecture
     if conf.model.sent is None:
         conf.text_proc.split_into_sents = False
-        if conf.model.fragment is None:
-            conf.text_proc.split_into_fragments = False
+    if conf.model.fragment is None:
+        conf.text_proc.split_into_fragments = False
 
     # propagate configs of a model to tokenizer if tokenizer is TRANSFORMERS_AUTO
     tok_conf = conf.text_proc.tokenizer
