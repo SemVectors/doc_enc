@@ -13,6 +13,7 @@ import collections.abc
 import numpy as np
 import torch
 from torch.cuda.amp.autocast_mode import autocast
+from doc_enc.encoders.enc_config import BaseEncoderConf
 
 
 from doc_enc.text_processor import TextProcessor, TextProcessorConf
@@ -347,6 +348,12 @@ class BaseEncodeModule(torch.nn.Module):
         return doc_embs
 
 
+def _adjust_enc_config(config: BaseEncoderConf):
+    # wipe out cacheck dir since it is different from machine on which model was trained
+    if config.transformers_cache_dir:
+        config.transformers_cache_dir = None
+
+
 class EncodeModule(BaseEncodeModule):
     def __init__(self, conf: DocEncoderConf) -> None:
         self._conf = conf
@@ -361,6 +368,7 @@ class EncodeModule(BaseEncodeModule):
         self._state_dict = state_dict
         self._tp_conf: TextProcessorConf = state_dict['tp_conf']
         self._tp_conf.tokenizer.vocab_path = None
+        self._tp_conf.tokenizer.transformers_cache_dir = None
         self._tp_state_dict = state_dict['tp']
         self._tp = TextProcessor(self._tp_conf, inference_mode=True)
         self._tp.load_state_dict(self._tp_state_dict)
@@ -370,6 +378,7 @@ class EncodeModule(BaseEncodeModule):
         sent_embs_out_size = 0
         if mc.sent is not None:
             base_sent_enc = create_sent_encoder(mc.sent.encoder, self._tp.vocab())
+            _adjust_enc_config(mc.sent.encoder)
             base_sent_enc.load_state_dict(state_dict['sent_enc'])
             sent_for_doc_layer = None
             if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
@@ -384,6 +393,7 @@ class EncodeModule(BaseEncodeModule):
 
         frag_layer = None
         if 'frag_enc' in state_dict and mc.fragment is not None:
+            _adjust_enc_config(mc.fragment)
             frag_layer = create_seq_encoder(
                 mc.fragment,
                 pad_idx=self._tp.vocab().pad_idx(),
@@ -396,6 +406,7 @@ class EncodeModule(BaseEncodeModule):
         else:
             doc_input_size = sent_embs_out_size
 
+        _adjust_enc_config(mc.doc)
         doc_layer = create_seq_encoder(
             mc.doc,
             pad_idx=self._tp.vocab().pad_idx(),
