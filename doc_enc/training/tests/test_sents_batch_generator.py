@@ -151,8 +151,10 @@ def test_iterator_single_generator(FakeTrainingData):
     assert batch.src_id == [5, 1, 2, 4]
     assert batch.tgt_id == [5, 1, 2, 4, 40, 41, 42, 10, 11, 20, 21, 22]
 
-    assert batch.src.shape == (4, 4)
-    assert batch.tgt.shape == (12, 6)
+    assert len(batch.src) == 4
+    assert len(max(batch.src, key=len)) == 4
+    assert len(batch.tgt) == 12
+    assert len(max(batch.tgt, key=len)) == 6
     assert labels.shape == (4,)
 
 
@@ -169,8 +171,10 @@ def test_iterator_1st_rank(FakeTrainingData):
     assert batch.src_id == [5, 6]
     assert batch.tgt_id == [5, 6, 40, 41, 42, 50]
 
-    assert batch.src.shape == (2, 4)
-    assert batch.tgt.shape == (6, 4)
+    assert len(batch.src) == 2
+    assert len(max(batch.src, key=len)) == 4
+    assert len(batch.tgt) == 6
+    assert len(max(batch.tgt, key=len)) == 4
 
 
 def test_iterator_two_generators(FakeTrainingData):
@@ -186,13 +190,17 @@ def test_iterator_two_generators(FakeTrainingData):
     assert batch1.src_id == [1, 2, 4, 3]
     assert batch1.tgt_id == [1, 2, 4, 3, 10, 11, 20, 21, 22]
 
-    assert batch1.src.shape == (4, 4)
-    assert batch1.tgt.shape == (9, 6)
+    assert len(batch1.src) == 4
+    assert len(max(batch1.src, key=len)) == 4
+    assert len(batch1.tgt) == 9
+    assert len(max(batch1.tgt, key=len)) == 6
 
     batch2, _ = res[1]
     assert batch2.info['bs'] == 2
     assert batch2.src_id == [5, 6]
     assert batch2.tgt_id == [5, 6, 40, 41, 42, 50]
 
-    assert batch2.src.shape == (2, 4)
-    assert batch2.tgt.shape == (6, 4)
+    assert len(batch2.src) == 2
+    assert len(max(batch2.src, key=len)) == 4
+    assert len(batch2.tgt) == 6
+    assert len(max(batch2.tgt, key=len)) == 4

@@ -31,11 +31,11 @@ trainer:
     emb:
       lr: 0.0005
     sent:
-       lr: 0.0009
+      lr: 0.0009
     fragment:
-       lr: 0.00006
+      lr: 0.00006
     doc:
-       lr: 0.00005
+      lr: 0.00005
 model:
   freeze_base_sents_layer: false
   max_chunk_size: 1024

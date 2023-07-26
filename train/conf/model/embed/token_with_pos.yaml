@@ -1,0 +1,6 @@
+defaults:
+  - base_embed_config
+
+emb_kind: TOKEN_WITH_POSITIONAL_EMB
+emb_dim: 320
+scale_by_dim: true

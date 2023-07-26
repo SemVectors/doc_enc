@@ -168,10 +168,10 @@ class SentRetrMetrics(BaseMetrics):
         self._ncorrect += (ypredicted == labels).sum().item()
         self._total += output.dense_score_matrix.size(0)
 
-        self._src_len_in_tokens += batch.src_len.sum().item()
+        self._src_len_in_tokens += sum(batch.src_len)
         self._src_item_cnt += len(batch.src_len)
 
-        self._tgt_len_in_tokens += batch.tgt_len.sum().item()
+        self._tgt_len_in_tokens += sum(batch.tgt_len)
         self._tgt_item_cnt += len(batch.tgt_len)
 
 

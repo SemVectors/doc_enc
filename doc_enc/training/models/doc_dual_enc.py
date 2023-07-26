@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.models.base_doc_model import BaseDocModel
 from doc_enc.training.types import DocsBatch
+from doc_enc.embs.token_embed import TokenEmbedding
 from doc_enc.encoders.sent_encoder import SentForDocEncoder
 from doc_enc.encoders.emb_seq_encoder import SeqEncoder
 from doc_enc.training.models.base_model import DualEncModelOutput
@@ -24,12 +25,14 @@ class DocDualEncoder(BaseDocModel):
         doc_layer: SeqEncoder,
         pad_idx: int,
         device: torch.device,
+        embed: TokenEmbedding | None = None,
         sent_layer: SentForDocEncoder | None = None,
         frag_layer: SeqEncoder | None = None,
     ):
         super().__init__(
             conf,
             doc_layer=doc_layer,
+            embed=embed,
             sent_layer=sent_layer,
             frag_layer=frag_layer,
             pad_idx=pad_idx,
@@ -46,9 +49,8 @@ class DocDualEncoder(BaseDocModel):
     def _reset_cur_sents_ctx_mrg(self, ctx_mgr: Any = contextlib.nullcontext):
         self._cur_sents_ctx_mgr = ctx_mgr
 
-    def _encode_sents_impl(self, *args, **kwargs):
-        with self._cur_sents_ctx_mgr():
-            return super()._encode_sents_impl(*args, **kwargs)
+    def _sent_level_ctx_mgr(self):
+        return self._cur_sents_ctx_mgr()
 
     def _create_batch_info_dict(self, prefix, batch: DocsBatch):
         d = {}
@@ -63,7 +65,7 @@ class DocDualEncoder(BaseDocModel):
         src_doc_embs = self._encode_docs_impl(
             batch.src_texts,
             batch.src_doc_segments_length,
-            split_sents=self.conf.split_sents,
+            split_input=self.conf.split_input,
             max_chunk_size=self.conf.max_chunk_size,
             max_tokens_in_chunk=self.conf.max_tokens_in_chunk,
             batch_info=self._create_batch_info_dict('src', batch),
@@ -72,7 +74,7 @@ class DocDualEncoder(BaseDocModel):
         tgt_doc_embs = self._encode_docs_impl(
             batch.tgt_texts,
             batch.tgt_doc_segments_length,
-            split_sents=self.conf.split_sents,
+            split_input=self.conf.split_input,
             max_chunk_size=self.conf.max_chunk_size,
             max_tokens_in_chunk=self.conf.max_tokens_in_chunk,
             batch_info=self._create_batch_info_dict('tgt', batch),

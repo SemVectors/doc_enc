@@ -1,0 +1,64 @@
+# @package _global_
+
+defaults:
+  - /base_config
+  - override /trainer: full
+  - override /trainer/optim: adam_with_one_cycle
+  - override /text_proc/tokenizer: transformers_auto
+  - override /model/sent: null
+  - override /model/fragment: transformers_auto
+  - override /model/doc: transformer
+  - _self_
+
+text_proc:
+  fragment_size: 16
+
+trainer:
+  tasks:
+    - DOC_RETR
+
+  optim:
+    max_grad_norm: 3.0
+    optim_kind: ADAMW
+    lr_scheduler_kwargs:
+      div_factor: 10
+      final_div_factor: 1
+    fragment:
+      lr: 0.00002
+    doc:
+      lr: 0.00005
+
+
+model:
+  scale: 40
+  margin: 0.2
+  fragment:
+    transformers_auto_name: xlm-roberta-base
+    transformers_cache_dir: /train/transformers_cache
+
+  doc:
+    add_beg_seq_token: true
+    num_layers: 3
+    full_intermediate: true
+    hidden_size: 768
+
+batches:
+  reinit_last_iter: false
+
+  docs_batch_iterator_conf:
+    async_generators: 6
+    include_datasets:
+      - ParalWiki
+      - SimEnSci
+      - SimEnWiki
+      - SimRuWiki
+    batch_generator_conf:
+      input_dir: /train/data/docs
+      batch_total_tokens_cnt: 36000
+      batch_docs_cnt: 384
+      negatives_per_doc:
+        - 0
+        - 2
+      positives_per_doc:
+        - 1
+        - 1

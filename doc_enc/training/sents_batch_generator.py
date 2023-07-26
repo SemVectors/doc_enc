@@ -16,7 +16,6 @@ from doc_enc.training.base_batch_generator import (
     BaseBatchIterator,
     BaseBatchIteratorConf,
     skip_to_line,
-    create_padded_tensor,
 )
 from doc_enc.training.types import SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
@@ -464,17 +463,10 @@ class SentsBatchIterator(BaseBatchIterator):
             raise RuntimeError("Failed to init sents batch generator, empty folder or config error")
 
     def _make_batch_for_retr_task(self, batch):
-        src, src_len = create_padded_tensor(
-            batch.src, len(batch.src[0]), self._pad_idx, self._device, self._pad_to_multiple_of
-        )
-
-        tgt_max_len = len(max(batch.tgt, key=len))
-        tgt, tgt_len = create_padded_tensor(
-            batch.tgt, tgt_max_len, self._pad_idx, self._device, self._pad_to_multiple_of
-        )
-
         labels = torch.arange(0, batch.info['bs'], device=self._device)
-        b = batch._replace(src=src, src_len=src_len, tgt=tgt, tgt_len=tgt_len, hn_idxs=[])
+        b = batch._replace(
+            src_len=[len(t) for t in batch.src], tgt_len=[len(t) for t in batch.tgt], hn_idxs=[]
+        )
         return b, labels
 
     def _prepare_batch(self, batch):

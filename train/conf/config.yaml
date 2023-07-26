@@ -13,6 +13,7 @@ defaults:
   - text_proc: default
   - text_proc/tokenizer: sentencepiece
   - model: default
+  - model/embed: token
   - model/sent: dual_enc
   - model/sent/encoder: null
   - model/sent_for_doc: null

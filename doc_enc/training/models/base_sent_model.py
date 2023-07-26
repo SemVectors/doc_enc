@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
 
-from torch import nn
+import torch
+from doc_enc.doc_encoder import BaseSentEncodeModule
+from doc_enc.embs.token_embed import TokenEmbedding
+from doc_enc.encoders.emb_seq_encoder import SeqEncoder
 from doc_enc.training.models.model_conf import SentModelConf
-from doc_enc.encoders.sent_encoder import SentEncoder
 
 from doc_enc.training.models.base_model import DualEncModelOutput
 
 from doc_enc.training.index.ivf_pq_model import TrainableIvfPQ
 
 
-class BaseSentModel(nn.Module):
-    def __init__(self, conf: SentModelConf, encoder: SentEncoder):
-        super().__init__()
+class BaseSentModel(BaseSentEncodeModule):
+    def __init__(
+        self,
+        conf: SentModelConf,
+        encoder: SeqEncoder,
+        pad_idx: int,
+        device: torch.device,
+        embed: TokenEmbedding | None = None,
+    ):
+        super().__init__(pad_idx=pad_idx, device=device, embed=embed, sent_layer=encoder)
         self.conf = conf
-        self.encoder = encoder
         self.index: TrainableIvfPQ | None = None
         if conf.index.enable:
             self.index = TrainableIvfPQ(conf.index)

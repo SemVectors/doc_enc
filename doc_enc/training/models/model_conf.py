@@ -5,9 +5,9 @@ from enum import Enum
 
 from omegaconf import MISSING
 
+from doc_enc.embs.emb_config import BaseEmbConf
 from doc_enc.encoders.enc_config import (
     BaseEncoderConf,
-    SentEncoderConf,
     SeqEncoderConf,
 )
 
@@ -28,7 +28,7 @@ class BaseModelConf:
     scale: float = 20.0
     margin: float = 0.0
 
-    split_sents: bool = True
+    split_input: bool = True
     max_chunk_size: int = 512
     max_tokens_in_chunk: int = 48_000
 
@@ -40,11 +40,12 @@ class BaseModelConf:
 
 @dataclasses.dataclass
 class SentModelConf(BaseModelConf):
-    encoder: SentEncoderConf = MISSING
+    encoder: SeqEncoderConf = MISSING
 
 
 @dataclasses.dataclass
 class DocModelConf(BaseModelConf):
+    embed: BaseEmbConf | None = None
     sent: SentModelConf | None = None
     sent_for_doc: BaseEncoderConf | None = None
     fragment: SeqEncoderConf | None = None

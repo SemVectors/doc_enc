@@ -18,6 +18,7 @@ import torch.distributed as dist
 from torch.multiprocessing.spawn import spawn as mp_spawn
 
 from doc_enc.common_types import EncoderKind
+from doc_enc.embs.emb_config import BaseEmbConf
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.tokenizer import TokenizerConf, TokenizerType
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
@@ -25,7 +26,7 @@ from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 from doc_enc.training.train_conf import TrainerConf, OptimConf
 from doc_enc.training.trainer import Trainer, BaseTrainerUtils
 from doc_enc.training.models.model_conf import DocModelConf, SentModelConf
-from doc_enc.encoders.enc_config import SentEncoderConf, SeqEncoderConf, BaseEncoderConf
+from doc_enc.encoders.enc_config import SeqEncoderConf, BaseEncoderConf
 from doc_enc.training.index.prepare_index_util import prepare_sent_index
 
 from doc_enc.training.combine_docs_sources import combine_docs_datasets
@@ -55,9 +56,10 @@ cs.store(name="base_batches_config", group="batches", node=BatchIteratorConf)
 cs.store(name="base_trainer_config", group="trainer", node=TrainerConf)
 cs.store(name="base_optim_config", group="trainer/optim", node=OptimConf)
 cs.store(name="base_model_config", group="model", node=DocModelConf)
+cs.store(name="base_embed_config", group="model/embed", node=BaseEmbConf)
 cs.store(name="base_sent_model_config", group="model/sent", node=SentModelConf)
 cs.store(name="base_sent_for_doc_config", group="model/sent_for_doc", node=BaseEncoderConf)
-cs.store(name="base_sent_encoder_config", group="model/sent/encoder", node=SentEncoderConf)
+cs.store(name="base_sent_encoder_config", group="model/sent/encoder", node=SeqEncoderConf)
 cs.store(name="base_frag_encoder_config", group="model/fragment", node=SeqEncoderConf)
 cs.store(name="base_doc_encoder_config", group="model/doc", node=SeqEncoderConf)
 

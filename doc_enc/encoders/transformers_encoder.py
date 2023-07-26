@@ -46,6 +46,7 @@ class TransformersAutoModel(BaseEncoder):
         input_token_ids: torch.Tensor | None = None,
         lengths: torch.Tensor | None = None,
         transformers_kwargs: dict | None = None,
+        **kwargs,
     ):
         # input shape: batch_sz, seq_len, hidden_dim
         if input_token_ids is None and input_embs is None:
@@ -92,6 +93,7 @@ class TransformersLongformer(TransformersAutoModel):
         input_token_ids: torch.Tensor | None = None,
         lengths: torch.Tensor | None = None,
         transformers_kwargs: dict | None = None,
+        **kwargs,
     ):
         t = None
         if input_token_ids is not None:
@@ -115,4 +117,5 @@ class TransformersLongformer(TransformersAutoModel):
             input_token_ids=input_token_ids,
             lengths=lengths,
             transformers_kwargs=transformers_kwargs,
+            **kwargs,
         )

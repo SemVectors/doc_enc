@@ -1,0 +1,5 @@
+defaults:
+  - base_embed_config
+
+emb_kind: TOKEN
+emb_dim: 320

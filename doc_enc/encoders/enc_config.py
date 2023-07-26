@@ -4,10 +4,8 @@ from enum import Enum
 from typing import Optional, List
 import dataclasses
 
-from omegaconf import MISSING
 
 from doc_enc.common_types import EncoderKind
-from doc_enc.embs.emb_config import BaseEmbConf
 from doc_enc.encoders.base_pooler import BasePoolerConf
 
 
@@ -44,11 +42,6 @@ class BaseEncoderConf:
     transformers_auto_name: str = ''
     transformers_cache_dir: str | None = None
     transformers_fix_pretrained_params: bool = False
-
-
-@dataclasses.dataclass
-class SentEncoderConf(BaseEncoderConf):
-    emb_conf: BaseEmbConf = MISSING
 
 
 @dataclasses.dataclass

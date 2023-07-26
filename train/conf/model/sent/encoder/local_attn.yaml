@@ -1,11 +1,6 @@
 defaults:
   - base_sent_encoder_config
 
-emb_conf:
-  emb_kind: TOKEN_WITH_POSITIONAL_EMB
-  emb_dim: 320
-  scale_by_dim: true
-
 pooler:
   pooling_strategy: FIRST
 

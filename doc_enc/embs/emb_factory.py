@@ -7,8 +7,7 @@ from doc_enc.embs.token_with_positional_enc import TokenWithPositionalEncoding
 from doc_enc.embs.token_with_positional_emb import TokenWithPositionalEmbedding
 
 
-def create_emb_layer(conf: BaseEmbConf, vocab_size, pad_idx):
-
+def create_emb_layer(conf: BaseEmbConf, vocab_size, pad_idx) -> TokenEmbedding:
     if conf.emb_kind == EmbKind.TOKEN:
         emb = TokenEmbedding(conf, vocab_size, pad_idx)
     elif conf.emb_kind == EmbKind.TOKEN_WITH_POSITIONAL_EMB:

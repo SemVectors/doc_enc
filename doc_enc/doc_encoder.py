@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import contextlib
 import logging
 import math
 import copy
@@ -13,6 +14,8 @@ import collections.abc
 import numpy as np
 import torch
 from torch.cuda.amp.autocast_mode import autocast
+from doc_enc.embs.emb_factory import create_emb_layer
+from doc_enc.embs.token_embed import TokenEmbedding
 from doc_enc.encoders.enc_config import BaseEncoderConf
 
 
@@ -21,10 +24,9 @@ from doc_enc.training.base_batch_generator import create_padded_tensor
 
 from doc_enc.encoders.enc_factory import (
     create_encoder,
-    create_sent_encoder,
     create_seq_encoder,
 )
-from doc_enc.encoders.sent_encoder import SentEncoder, split_sents_and_embed, SentForDocEncoder
+from doc_enc.encoders.sent_encoder import split_sents_and_embed, SentForDocEncoder
 from doc_enc.encoders.emb_seq_encoder import SeqEncoder
 from doc_enc.training.models.model_conf import DocModelConf
 
@@ -65,12 +67,12 @@ class BaseBatchGenerator:
                 segmented_text = [[self._tp.vocab().pad_idx()]]
                 doc_segments_length = [1]
 
-            if (
-                docs
-                and self._conf.max_sents
-                and cur_segments_cnt + len(segmented_text) > self._conf.max_sents
-                or self._conf.max_tokens
-                and cur_token_cnt + token_cnt > self._conf.max_tokens
+            if docs and (
+                (
+                    self._conf.max_sents
+                    and cur_segments_cnt + len(segmented_text) > self._conf.max_sents
+                )
+                or (self._conf.max_tokens and cur_token_cnt + token_cnt > self._conf.max_tokens)
             ):
                 yield docs, doc_lengths, batch_idx_list
                 docs = []
@@ -204,6 +206,17 @@ class BatchIterator:
         )
         self._generator_thread.start()
 
+    def _print_debug_info_for_batch(self, batch):
+        if not logging.getLogger().isEnabledFor(logging.DEBUG):
+            return
+        docs, *_ = batch
+        logging.debug(
+            "docs_cnt=%s, segments_cnt=%s, tokens_cnt=%s",
+            len(docs),
+            sum(len(d) for d in docs),
+            sum(len(s) for d in docs for s in d),
+        )
+
     def batches(self):
         if not self._processes:
             raise RuntimeError("Batch Iterator is not initialized!")
@@ -215,6 +228,7 @@ class BatchIterator:
             if batch is None:
                 finished_processes += 1
                 continue
+            self._print_debug_info_for_batch(batch)
             yield batch
 
         for p in self._processes:
@@ -225,22 +239,171 @@ class BatchIterator:
             self._generator_thread.join()
 
 
-class BaseEncodeModule(torch.nn.Module):
+class _InputData:
+    def __init__(
+        self,
+        lengths_tensor: torch.Tensor,
+        tokens_tensor: torch.Tensor | None = None,
+        emb_tensor: torch.Tensor | None = None,
+        already_sorted: bool = False,
+    ) -> None:
+        self._lengths_tensor = lengths_tensor
+        self._tokens_tensor = tokens_tensor
+        self._emb_tensor = emb_tensor
+        self._already_sorted = already_sorted
+
+    def input_tensor(self):
+        if self._tokens_tensor is not None:
+            return self._tokens_tensor
+        if self._emb_tensor is not None:
+            return self._emb_tensor
+        raise RuntimeError("Logic error 1939")
+
+    def lengths(self):
+        return self._lengths_tensor
+
+    def as_kwargs(self):
+        if self._tokens_tensor is not None:
+            return {
+                'input_token_ids': self._tokens_tensor,
+                'input_seq_lengths': self._lengths_tensor,
+                'enforce_sorted': self._already_sorted,
+            }
+
+        if self._emb_tensor is not None:
+            return {
+                'input_embs': self._emb_tensor,
+                'input_seq_lengths': self._lengths_tensor,
+                'padded_seq_len': self._emb_tensor.shape[1],
+                'enforce_sorted': self._already_sorted,
+            }
+        raise RuntimeError("Logic error 1940")
+
+    def create_callback_for_split_input(self, encoder: SeqEncoder):
+        if self._tokens_tensor is not None:
+
+            def _enc_cb(chunk, chunk_lengths, **kwargs):
+                return encoder(input_token_ids=chunk, input_seq_lengths=chunk_lengths, **kwargs)
+
+            return _enc_cb
+
+        if self._emb_tensor is not None:
+
+            def _enc_cb(chunk, chunk_lengths, **kwargs):
+                padded_seq_len = chunk.shape[1]
+                return encoder(
+                    input_embs=chunk,
+                    input_seq_lengths=chunk_lengths,
+                    padded_seq_len=padded_seq_len,
+                    **kwargs,
+                )
+
+            return _enc_cb
+
+        raise RuntimeError("Logic error 1941")
+
+
+def encode_input_data(
+    input_data: _InputData,
+    encoder: SeqEncoder,
+    collect_on_cpu=False,
+    split_data=True,
+    max_chunk_size=1024,
+    max_tokens_in_chunk=48_000,
+):
+    if not split_data:
+        # TODO handle collect_on_cpu == True ??
+        return encoder(**input_data.as_kwargs()).pooled_out
+
+    enc_cb = input_data.create_callback_for_split_input(encoder)
+
+    return split_sents_and_embed(
+        enc_cb,
+        input_data.input_tensor(),
+        input_data.lengths(),
+        max_chunk_size=max_chunk_size,
+        max_tokens_in_chunk=max_tokens_in_chunk,
+        collect_on_cpu=collect_on_cpu,
+        pad_to_multiple_of=encoder.pad_to_multiple_of,
+    )
+
+
+class BaseSentEncodeModule(torch.nn.Module):
+    def __init__(
+        self,
+        pad_idx: int,
+        device: torch.device,
+        embed: TokenEmbedding | None = None,
+        sent_layer: SentForDocEncoder | None = None,
+    ):
+        super().__init__()
+        self._pad_idx = pad_idx
+        self.device = device
+
+        self.embed = embed
+        self.sent_layer = sent_layer
+
+    def _first_encode_layer(self) -> SeqEncoder:
+        if self.sent_layer is not None:
+            return self.sent_layer
+        raise RuntimeError("No encode layers in Sent Encode module")
+
+    def _prepare_input_data(self, doc_segments: list[list[int]], already_sorted=False):
+        max_len = len(max(doc_segments, key=len))
+        tokens_tensor, lengths_tensor = create_padded_tensor(
+            doc_segments,
+            max_len,
+            pad_idx=self._pad_idx,
+            device=self.device,
+            pad_to_multiple_of=self._first_encode_layer().pad_to_multiple_of,
+        )
+
+        if self.embed is not None:
+            embs = self.embed(tokens_tensor)
+            return _InputData(
+                emb_tensor=embs, lengths_tensor=lengths_tensor, already_sorted=already_sorted
+            )
+        return _InputData(
+            tokens_tensor=tokens_tensor,
+            lengths_tensor=lengths_tensor,
+            already_sorted=already_sorted,
+        )
+
+    def _encode_sents_impl(
+        self,
+        sents: list[list[int]],
+        already_sorted=False,
+        collect_on_cpu=False,
+        split_sents=True,
+        max_chunk_size=1024,
+        max_tokens_in_chunk=48_000,
+    ):
+        assert self.sent_layer is not None, "Logic error 38389"
+        input_data = self._prepare_input_data(sents, already_sorted=already_sorted)
+        return encode_input_data(
+            input_data,
+            self.sent_layer,
+            collect_on_cpu=collect_on_cpu,
+            split_data=split_sents,
+            max_chunk_size=max_chunk_size,
+            max_tokens_in_chunk=max_tokens_in_chunk,
+        )
+
+
+class BaseEncodeModule(BaseSentEncodeModule):
     def __init__(
         self,
         doc_layer: SeqEncoder,
         pad_idx: int,
         device: torch.device,
+        embed: TokenEmbedding | None = None,
         sent_layer: SentForDocEncoder | None = None,
         frag_layer: SeqEncoder | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(embed=embed, sent_layer=sent_layer, pad_idx=pad_idx, device=device)
 
         self.doc_layer = doc_layer
-        self.sent_layer = sent_layer
         self.frag_layer = frag_layer
-        self.device = device
-        self._pad_idx = pad_idx
 
     def sent_encoding_supported(self):
         return self.sent_layer is not None
@@ -253,43 +416,21 @@ class BaseEncodeModule(torch.nn.Module):
     def doc_embs_dim(self):
         return self.doc_layer.out_embs_dim()
 
-    def _encode_sents_impl(
-        self,
-        sents,
-        encoder: SentEncoder,
-        collect_on_cpu=False,
-        already_sorted=False,
-        split_sents=True,
-        max_chunk_size=1024,
-        max_tokens_in_chunk=48_000,
-    ):
-        max_len = len(max(sents, key=len))
-        sent_tensor, lengths_tensor = create_padded_tensor(
-            sents,
-            max_len,
-            pad_idx=self._pad_idx,
-            device=self.device,
-            pad_to_multiple_of=encoder.pad_to_multiple_of,
-        )
+    def _first_encode_layer(self) -> SeqEncoder:
+        if self.sent_layer is not None:
+            return self.sent_layer
+        if self.frag_layer is not None:
+            return self.frag_layer
+        return self.doc_layer
 
-        if not split_sents:
-            res = encoder(sents, lengths_tensor, enforce_sorted=already_sorted)
-            return res.pooled_out
-
-        return split_sents_and_embed(
-            encoder,
-            sent_tensor,
-            lengths_tensor,
-            max_chunk_size=max_chunk_size,
-            max_tokens_in_chunk=max_tokens_in_chunk,
-            collect_on_cpu=collect_on_cpu,
-        )
+    def _sent_level_ctx_mgr(self):
+        return contextlib.nullcontext()
 
     def _encode_docs_impl(
         self,
         doc_segments: list[list[int]],
         doc_lengths: list[list[int]],
-        split_sents=True,
+        split_input=True,
         max_chunk_size=1024,
         max_tokens_in_chunk=48_000,
         batch_info: dict | None = None,
@@ -298,15 +439,20 @@ class BaseEncodeModule(torch.nn.Module):
 
         if batch_info is None:
             batch_info = {}
+
+        input_data = self._prepare_input_data(doc_segments)
+
         if self.sent_layer is not None:
             # 1. document is a sequence of sentences
-            sent_embs = self._encode_sents_impl(
-                doc_segments,
-                self.sent_layer,
-                split_sents=split_sents,
-                max_chunk_size=max_chunk_size,
-                max_tokens_in_chunk=max_tokens_in_chunk,
-            )
+
+            with self._sent_level_ctx_mgr():
+                sent_embs = encode_input_data(
+                    input_data,
+                    self.sent_layer,
+                    split_data=split_input,
+                    max_chunk_size=max_chunk_size,
+                    max_tokens_in_chunk=max_tokens_in_chunk,
+                )
 
             if self.frag_layer is not None:
                 frag_len: list[int] = []
@@ -315,9 +461,10 @@ class BaseEncodeModule(torch.nn.Module):
                     frag_len.extend(fragments)
                     doc_len_list.append(len(fragments))
 
+                len_tensor = torch.as_tensor(frag_len, dtype=torch.int64, device=sent_embs.device)
                 embs = self.frag_layer(
                     input_embs=sent_embs,
-                    input_seq_lengths=frag_len,
+                    input_seq_lengths=len_tensor,
                     enforce_sorted=False,
                     padded_seq_len=batch_info.get('fragment_len'),
                 ).pooled_out
@@ -327,9 +474,10 @@ class BaseEncodeModule(torch.nn.Module):
                 doc_len_list = [l for d in doc_lengths for l in d]
                 padded_seq_len = batch_info.get('doc_len_in_sents')
 
+            len_tensor = torch.as_tensor(doc_len_list, dtype=torch.int64, device=embs.device)
             doc_embs = self.doc_layer(
                 input_embs=embs,
-                input_seq_lengths=doc_len_list,
+                input_seq_lengths=len_tensor,
                 enforce_sorted=False,
                 padded_seq_len=padded_seq_len,
             ).pooled_out
@@ -337,14 +485,23 @@ class BaseEncodeModule(torch.nn.Module):
 
         if self.frag_layer is not None:
             # 2. document is a sequence of fragments
-            # TODO add enforce_sorted=False??
-            embs = self.frag_layer(input_token_ids=doc_segments).pooled_out
-            doc_len_list = [l for d in doc_lengths for l in d]
-            doc_embs = self.doc_layer(input_embs=embs, input_seq_lengths=doc_len_list).pooled_out
+
+            embs = encode_input_data(
+                input_data,
+                self.frag_layer,
+                split_data=split_input,
+                max_chunk_size=max_chunk_size,
+                max_tokens_in_chunk=max_tokens_in_chunk,
+            )
+
+            len_tensor = torch.as_tensor(
+                [l for d in doc_lengths for l in d], dtype=torch.int64, device=embs.device
+            )
+            doc_embs = self.doc_layer(input_embs=embs, input_seq_lengths=len_tensor).pooled_out
             return doc_embs
 
         # 3. document is a sequence of tokens
-        doc_embs = self.doc_layer(input_token_ids=doc_segments).pooled_out
+        doc_embs = self.doc_layer(**input_data.as_kwargs()).pooled_out
         return doc_embs
 
 
@@ -373,12 +530,20 @@ class EncodeModule(BaseEncodeModule):
         self._tp = TextProcessor(self._tp_conf, inference_mode=True)
         self._tp.load_state_dict(self._tp_state_dict)
 
+        vocab = self._tp.vocab()
         mc: DocModelConf = state_dict['model_conf']
+        embed: TokenEmbedding | None = None
+        emb_dim = 0
+        if mc.embed is not None:
+            embed = create_emb_layer(mc.embed, vocab.vocab_size(), vocab.pad_idx())
+            embed.load_state_dict(state_dict['embed'])
+            emb_dim = mc.embed.emb_dim
+
         sent_layer: SentForDocEncoder | None = None
         sent_embs_out_size = 0
         if mc.sent is not None:
-            base_sent_enc = create_sent_encoder(mc.sent.encoder, self._tp.vocab())
             _adjust_enc_config(mc.sent.encoder)
+            base_sent_enc = create_seq_encoder(mc.sent.encoder, prev_output_size=emb_dim)
             base_sent_enc.load_state_dict(state_dict['sent_enc'])
             sent_for_doc_layer = None
             if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
@@ -396,8 +561,6 @@ class EncodeModule(BaseEncodeModule):
             _adjust_enc_config(mc.fragment)
             frag_layer = create_seq_encoder(
                 mc.fragment,
-                pad_idx=self._tp.vocab().pad_idx(),
-                device=device,
                 prev_output_size=sent_embs_out_size,
             )
             frag_layer = self._load_layer(frag_layer, state_dict['frag_enc'], device)
@@ -409,8 +572,6 @@ class EncodeModule(BaseEncodeModule):
         _adjust_enc_config(mc.doc)
         doc_layer = create_seq_encoder(
             mc.doc,
-            pad_idx=self._tp.vocab().pad_idx(),
-            device=device,
             prev_output_size=doc_input_size,
         )
         doc_layer = self._load_layer(doc_layer, state_dict['doc_enc'], device)
@@ -419,8 +580,9 @@ class EncodeModule(BaseEncodeModule):
 
         super().__init__(
             doc_layer=doc_layer,
-            pad_idx=self._tp.vocab().pad_idx(),
+            pad_idx=vocab.pad_idx(),
             device=device,
+            embed=embed,
             sent_layer=sent_layer,
             frag_layer=frag_layer,
         )
@@ -476,16 +638,30 @@ class EncodeModule(BaseEncodeModule):
             self._conf.async_batch_gen,
         )
 
-    def encode_sents(self, sents, collect_on_cpu=False):
+    def encode_sents(self, sents: list[list[int]], collect_on_cpu=False, already_sorted=False):
         if self.sent_layer is None:
             raise RuntimeError("Sent layer is absent in this model")
         encoder = self.sent_layer.cast_to_base()
-        return self._encode_sents_impl(sents, encoder, collect_on_cpu=collect_on_cpu)
+        input_data = self._prepare_input_data(sents, already_sorted=already_sorted)
+        return encode_input_data(
+            input_data,
+            encoder,
+            collect_on_cpu=collect_on_cpu,
+            split_data=True,
+            max_chunk_size=self._conf.max_sents,
+            max_tokens_in_chunk=self._conf.max_tokens,
+        )
 
     def encode_docs(self, docs: list[list[list[int]]], doc_lengths: list[list[int]]):
         """Each doc is a list of tokenized sequences."""
         all_segments = [s for d in docs for s in d]
-        return self._encode_docs_impl(all_segments, doc_lengths, split_sents=False)
+        return self._encode_docs_impl(
+            all_segments,
+            doc_lengths,
+            split_input=True,
+            max_chunk_size=self._conf.max_sents,
+            max_tokens_in_chunk=self._conf.max_tokens,
+        )
 
     def forward(self, docs, doc_lengths):
         return self.encode_docs(docs, doc_lengths)

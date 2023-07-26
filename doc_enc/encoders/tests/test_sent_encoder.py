@@ -4,7 +4,7 @@ from typing import Any
 
 import torch
 
-from doc_enc.encoders.sent_encoder import split_sents_and_embed, SentEncoder
+from doc_enc.encoders.sent_encoder import split_sents_and_embed
 
 
 class DummyResponse:
@@ -15,7 +15,6 @@ class DummyResponse:
 class DummyEncoder:
     def __init__(self) -> None:
         self.enforce_sorted = None
-        self.pad_to_multiple_of = 0
 
     def __call__(self, sent_tensor, *args: Any, enforce_sorted=None, **kwds: Any) -> Any:
         self.enforce_sorted = enforce_sorted
@@ -121,13 +120,13 @@ def test_with_padding():
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
     encoder = DummyEncoder()
-    encoder.pad_to_multiple_of = 4
     r = split_sents_and_embed(
         encoder,
         test_tensor,
         length_tensor,
         max_chunk_size=1,
         max_tokens_in_chunk=15,
+        pad_to_multiple_of=4,
     )
     assert r[0].tolist() == [4, 1, 8]
     assert r[1].tolist() == [7, 1, 8]

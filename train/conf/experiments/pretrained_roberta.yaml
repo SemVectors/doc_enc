@@ -3,6 +3,7 @@
 defaults:
   - /base_config
   - override /text_proc/tokenizer: transformers_auto
+  - override /model/embed: null
   - override /model/sent: null
   - override /model/fragment: transformers_auto
   - override /model/doc: averaging
@@ -13,5 +14,5 @@ text_proc:
 
 model:
   fragment:
-    transformers_auto_name: roberta-base
+    transformers_auto_name: xlm-roberta-basexlm-roberta-base
     transformers_fix_pretrained_params: true

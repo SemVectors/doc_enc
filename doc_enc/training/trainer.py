@@ -118,12 +118,12 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
                 yield p
 
     param_groups = []
-    if models.sent_model is not None:
+    if models.doc_model.embed is not None:
         param_groups = param_groups + [
             _init_gr(
                 {
                     'name': 'emb',
-                    'params': _no_decay_params(models.sent_model.encoder.emb_named_params(), True),
+                    'params': _no_decay_params(models.doc_model.embed.named_parameters(), True),
                 },
                 conf,
                 conf.emb,
@@ -131,16 +131,22 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             _init_gr(
                 {
                     'name': 'emb.no_decay',
-                    'params': _no_decay_params(models.sent_model.encoder.emb_named_params()),
+                    'params': _no_decay_params(models.doc_model.embed.named_parameters()),
                 },
                 conf,
                 conf.emb,
                 no_decay=True,
             ),
+        ]
+
+    if models.sent_model is not None and models.sent_model.sent_layer is not None:
+        param_groups = param_groups + [
             _init_gr(
                 {
                     'name': 'sent',
-                    'params': _no_decay_params(models.sent_model.encoder.enc_named_params(), True),
+                    'params': _no_decay_params(
+                        models.sent_model.sent_layer.named_parameters(), True
+                    ),
                 },
                 conf,
                 conf.sent,
@@ -148,7 +154,7 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
             _init_gr(
                 {
                     'name': 'sent.no_decay',
-                    'params': _no_decay_params(models.sent_model.encoder.enc_named_params()),
+                    'params': _no_decay_params(models.sent_model.sent_layer.named_parameters()),
                 },
                 conf,
                 conf.sent,
@@ -417,8 +423,11 @@ class BaseTrainerUtils:
             'doc_enc': self._local_models.doc_model.doc_layer.state_dict(),
         }
 
-        if self._local_models.sent_model is not None:
-            state_dict['sent_enc'] = self._local_models.sent_model.encoder.state_dict()
+        if self._local_models.doc_model.embed is not None:
+            state_dict['embed'] = self._local_models.doc_model.embed.state_dict()
+
+        if (sm := self._local_models.sent_model) is not None and sm.sent_layer is not None:
+            state_dict['sent_enc'] = sm.sent_layer.state_dict()
             sl = self._local_models.doc_model.sent_layer
             if sl is not None and sl.doc_mode_encoder is not None:
                 state_dict['sent_for_doc'] = sl.doc_mode_encoder.state_dict()
@@ -1014,7 +1023,7 @@ class Trainer(BaseTrainerUtils):
         self._local_models.doc_model.load_state_dict(state['model'])
         if self._local_models.sent_model is not None:
             assert self._local_models.doc_model.sent_layer is not None
-            self._local_models.sent_model.encoder = (
+            self._local_models.sent_model.sent_layer = (
                 self._local_models.doc_model.sent_layer.cast_to_base()
             )
         if isinstance(self._doc_model, DDP):
