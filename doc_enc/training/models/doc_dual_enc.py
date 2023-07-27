@@ -12,8 +12,8 @@ from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.models.base_doc_model import BaseDocModel
 from doc_enc.training.types import DocsBatch
 from doc_enc.embs.token_embed import TokenEmbedding
-from doc_enc.encoders.sent_encoder import SentForDocEncoder
-from doc_enc.encoders.emb_seq_encoder import SeqEncoder
+from doc_enc.encoders.sent_for_doc_encoder import SentForDocEncoder
+from doc_enc.encoders.seq_encoder import SeqEncoder
 from doc_enc.training.models.base_model import DualEncModelOutput
 from doc_enc.training.dist_util import dist_gather_target_embs
 

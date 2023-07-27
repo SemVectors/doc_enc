@@ -10,7 +10,7 @@ from doc_enc.encoders.pad_utils import create_padded_tensor
 
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.encoders.enc_factory import create_sent_encoder, create_seq_encoder
-from doc_enc.encoders.emb_seq_encoder import SeqEncoderConf
+from doc_enc.encoders.seq_encoder import SeqEncoderConf
 from doc_enc.text_processor import TextProcessor, TextProcessorConf
 
 

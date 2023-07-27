@@ -11,7 +11,7 @@ from doc_enc.tokenizer import AbcTokenizer
 from doc_enc.training.models.model_conf import SentModelConf, DocModelConf, ModelKind
 
 from doc_enc.encoders.enc_factory import create_seq_encoder, create_encoder
-from doc_enc.encoders.sent_encoder import SentForDocEncoder
+from doc_enc.encoders.sent_for_doc_encoder import SentForDocEncoder
 
 from doc_enc.training.models.sent_dual_enc import SentDualEncoder
 from doc_enc.training.models.doc_dual_enc import DocDualEncoder

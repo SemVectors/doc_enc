@@ -3,7 +3,7 @@
 import torch
 from doc_enc.doc_encoder import BaseSentEncodeModule
 from doc_enc.embs.token_embed import TokenEmbedding
-from doc_enc.encoders.emb_seq_encoder import SeqEncoder
+from doc_enc.encoders.seq_encoder import SeqEncoder
 from doc_enc.training.models.model_conf import SentModelConf
 
 from doc_enc.training.models.base_model import DualEncModelOutput

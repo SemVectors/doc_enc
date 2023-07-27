@@ -10,7 +10,7 @@ from doc_enc.encoders.enc_config import (
     SeqEncoderConf,
 )
 
-from doc_enc.encoders.emb_seq_encoder import SeqEncoder
+from doc_enc.encoders.seq_encoder import SeqEncoder
 from doc_enc.encoders.base_lstm import LSTMEncoder, GRUEncoder
 from doc_enc.encoders.base_transformer import TransformerEncoder
 from doc_enc.encoders.base_fnet import FNetEncoder

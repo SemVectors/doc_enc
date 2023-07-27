@@ -4,8 +4,8 @@ import torch
 
 from doc_enc.doc_encoder import BaseEncodeModule
 from doc_enc.embs.token_embed import TokenEmbedding
-from doc_enc.encoders.sent_encoder import SentForDocEncoder
-from doc_enc.encoders.emb_seq_encoder import SeqEncoder
+from doc_enc.encoders.sent_for_doc_encoder import SentForDocEncoder
+from doc_enc.encoders.seq_encoder import SeqEncoder
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.types import DocsBatch
 

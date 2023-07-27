@@ -10,7 +10,7 @@ from torch import nn
 from doc_enc.encoders import enc_out
 from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_config import SeqEncoderConf
-from doc_enc.encoders.emb_seq_encoder import SeqEncoder
+from doc_enc.encoders.seq_encoder import SeqEncoder
 
 
 class SentForDocEncoder(SeqEncoder):
