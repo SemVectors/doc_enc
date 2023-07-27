@@ -6,7 +6,7 @@ import logging
 import torch
 
 
-from doc_enc.training.base_batch_generator import create_padded_tensor
+from doc_enc.encoders.pad_utils import create_padded_tensor
 
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.encoders.enc_factory import create_sent_encoder, create_seq_encoder

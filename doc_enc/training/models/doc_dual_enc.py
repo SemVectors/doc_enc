@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 
 import contextlib
-import logging
+import logging  # noqa: F401
 from typing import Any
 
 import torch

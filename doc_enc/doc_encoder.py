@@ -20,13 +20,15 @@ from doc_enc.encoders.enc_config import BaseEncoderConf
 
 
 from doc_enc.text_processor import TextProcessor, TextProcessorConf
-from doc_enc.training.base_batch_generator import create_padded_tensor
 
 from doc_enc.encoders.enc_factory import (
     create_encoder,
     create_seq_encoder,
 )
-from doc_enc.encoders.sent_encoder import split_sents_and_embed, SentForDocEncoder
+
+from doc_enc.encoders.pad_utils import create_padded_tensor
+from doc_enc.encoders.split_input import split_input_and_embed
+from doc_enc.encoders.sent_encoder import SentForDocEncoder
 from doc_enc.encoders.emb_seq_encoder import SeqEncoder
 from doc_enc.training.models.model_conf import DocModelConf
 
@@ -317,7 +319,7 @@ def encode_input_data(
 
     enc_cb = input_data.create_callback_for_split_input(encoder)
 
-    return split_sents_and_embed(
+    return split_input_and_embed(
         enc_cb,
         input_data.input_tensor(),
         input_data.lengths(),

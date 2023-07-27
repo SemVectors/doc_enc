@@ -4,7 +4,7 @@ from typing import Any
 
 import torch
 
-from doc_enc.encoders.sent_encoder import split_sents_and_embed
+from doc_enc.encoders.split_input import split_input_and_embed
 
 
 class DummyResponse:
@@ -35,7 +35,7 @@ def test_split_sents():
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
     encoder = DummyEncoder()
-    r = split_sents_and_embed(
+    r = split_input_and_embed(
         encoder, test_tensor, length_tensor, max_chunk_size=5, max_tokens_in_chunk=15
     )
 
@@ -46,7 +46,7 @@ def test_split_sents():
     assert r[4].tolist() == [13, 3, 4]
     assert encoder.enforce_sorted is True
 
-    r = split_sents_and_embed(
+    r = split_input_and_embed(
         encoder, test_tensor, length_tensor, max_chunk_size=2, max_tokens_in_chunk=85
     )
 
@@ -64,7 +64,7 @@ def test_empty_tensor():
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([])
     encoder = DummyEncoder()
-    r = split_sents_and_embed(
+    r = split_input_and_embed(
         encoder, test_tensor, length_tensor, max_chunk_size=5, max_tokens_in_chunk=15
     )
     assert r.numel() == 0
@@ -78,7 +78,7 @@ def test_fast_path():
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
     encoder = DummyEncoder()
-    r = split_sents_and_embed(
+    r = split_input_and_embed(
         encoder, test_tensor, length_tensor, max_chunk_size=5, max_tokens_in_chunk=15
     )
     assert r[0].tolist() == [1, 2, 5]
@@ -96,7 +96,7 @@ def test_already_sorted():
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
     encoder = DummyEncoder()
-    r = split_sents_and_embed(
+    r = split_input_and_embed(
         encoder,
         test_tensor,
         length_tensor,
@@ -120,7 +120,7 @@ def test_with_padding():
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
     encoder = DummyEncoder()
-    r = split_sents_and_embed(
+    r = split_input_and_embed(
         encoder,
         test_tensor,
         length_tensor,

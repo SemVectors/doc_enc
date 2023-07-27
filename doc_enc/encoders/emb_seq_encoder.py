@@ -11,8 +11,6 @@ from doc_enc.embs.pos_emb import PositionalEmbedding
 from doc_enc.encoders.enc_config import SeqEncoderConf
 from doc_enc.encoders.base_encoder import BaseEncoder
 
-from doc_enc.training.base_batch_generator import create_padded_tensor
-
 
 class SeqEncoder(nn.Module):
     def __init__(
