@@ -1,7 +1,7 @@
 {
   description = "Encoding texts as dense vectors";
 
-  inputs.nixpkgs.url = "nixpkgs";
+  inputs.nixpkgs.url = "nixpkgs/d0c7a8f1c9a2ebfebd3d99960cdb7c4eec442dc9";
 
   outputs = { self, nixpkgs }:
     let cuda-overlay = final: prev:{
@@ -54,11 +54,13 @@
         pkgs.mkShell {
           inputsFrom = [ pypkgs.doc_enc_train ];
           buildInputs = [
+            pkgs.enchant
             pkgs.nodePackages.pyright
             pkgs.nodePackages.bash-language-server
             pkgs.shellcheck
             pkgs.yamllint
-            pypkgs.pylint
+            pypkgs.ruff-lsp
+            #pypkgs.pylint
             pypkgs.black
             # pypkgs.debugpy
             pypkgs.ipykernel
