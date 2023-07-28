@@ -35,7 +35,7 @@ class DocRetrievalConf:
     sim_kind: SimKind = SimKind.COS
     topk: List[int] = dataclasses.field(default_factory=lambda: [3, 5, 10, 20])
 
-    use_gpu: Optional[int] = None
+    use_gpu: int = -1
 
 
 def _load_gold_data(meta_path, query_dir, query_data, other_dir, other_data):
@@ -215,7 +215,9 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     query_data = ([_make_key(query_text_dir, i) for i in query_ids], query_inv_idx)
 
     max_k = max(conf.topk) + 1
-    _, indexes = calc_sim(conf.sim_kind, max_k, query_doc_embs, other_doc_embs)
+    _, indexes = calc_sim(
+        conf.sim_kind, max_k, query_doc_embs, other_doc_embs, use_gpu=conf.use_gpu
+    )
 
     gold_data = _load_gold_data(
         base_dir / dsconf.meta, query_text_dir, query_data, other_text_dir, other_data

@@ -27,7 +27,7 @@ class SentRetrievalConf:
     topk: List[int] = dataclasses.field(default_factory=lambda: [1, 20])
     thresholds: List[float] = dataclasses.field(default_factory=lambda: [0.4, 0.5, 0.6, 0.7, 0.8])
 
-    use_gpu: Optional[int] = None
+    use_gpu: int = -1
 
 
 def _read_sents(sent_file):
@@ -80,7 +80,7 @@ def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEn
     logging.info("shape of encoded sents: %s", tgt_embs.shape)
 
     max_k = max(conf.topk)
-    msim, indexes = calc_sim(conf.sim_kind, max_k, src_embs, tgt_embs)
+    msim, indexes = calc_sim(conf.sim_kind, max_k, src_embs, tgt_embs, use_gpu=conf.use_gpu)
     gold = load_gold_data(base_dir / ds_conf.meta)
     metrics = []
     for k in conf.topk:

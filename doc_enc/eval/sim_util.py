@@ -7,10 +7,11 @@ import faiss
 import numpy as np
 
 
-def gpu_knn(src_embs, tgt_embs, topk):
-    # faiss is built with no gpu support
+def gpu_knn(src_embs, tgt_embs, topk, device_num=-1):
     res = faiss.StandardGpuResources()
-    d, i = faiss.knn_gpu(res, src_embs, tgt_embs, topk, metric=faiss.METRIC_INNER_PRODUCT)
+    d, i = faiss.knn_gpu(
+        res, src_embs, tgt_embs, topk, metric=faiss.METRIC_INNER_PRODUCT, device=device_num
+    )
     return d, i
 
 
@@ -22,9 +23,9 @@ def cpu_knn(src_embs, tgt_embs, topk):
     return d, i
 
 
-def knn(src_embs, tgt_embs, topk: int, use_gpu=False):
-    if use_gpu:
-        return gpu_knn(src_embs, tgt_embs, topk)
+def knn(src_embs, tgt_embs, topk: int, use_gpu=-1):
+    if use_gpu != -1:
+        return gpu_knn(src_embs, tgt_embs, topk, device_num=use_gpu)
     return cpu_knn(src_embs, tgt_embs, topk)
 
 
@@ -41,11 +42,13 @@ def score_candidates_by_margin_crit(x, y, candidate_inds, fwd_mean, bwd_mean, ma
     return scores
 
 
-def margin_criterion(topk: int, src_embs, tgt_embs):
-    x2y_sim, x2y_ind = knn(src_embs, tgt_embs, topk)
+def margin_criterion(topk: int, src_embs, tgt_embs, use_gpu=-1):
+    x2y_sim, x2y_ind = knn(src_embs, tgt_embs, topk, use_gpu)
     x2y_mean = x2y_sim.mean(axis=1)
 
-    y2x_sim, _y2x_ind = knn(tgt_embs, src_embs, topk)  # pylint: disable=arguments-out-of-order
+    y2x_sim, _y2x_ind = knn(
+        tgt_embs, src_embs, topk, use_gpu
+    )  # pylint: disable=arguments-out-of-order
     y2x_mean = y2x_sim.mean(axis=1)
 
     margin = lambda a, b: a / b
@@ -68,16 +71,16 @@ class SimKind(Enum):
     MARGIN = 2
 
 
-def calc_sim(sim_kind: SimKind, topk: int, src_embs, tgt_embs):
+def calc_sim(sim_kind: SimKind, topk: int, src_embs, tgt_embs, use_gpu=-1):
     src_embs = src_embs.astype(np.float32, copy=False)
     tgt_embs = tgt_embs.astype(np.float32, copy=False)
     faiss.normalize_L2(src_embs)
     faiss.normalize_L2(tgt_embs)
 
     if sim_kind == SimKind.COS:
-        return knn(src_embs, tgt_embs, topk)
+        return knn(src_embs, tgt_embs, topk, use_gpu=use_gpu)
     if sim_kind == SimKind.MARGIN:
         logging.info("use margin sim")
-        return margin_criterion(topk, src_embs, tgt_embs)
+        return margin_criterion(topk, src_embs, tgt_embs, use_gpu)
 
     raise RuntimeError(f"Unsupported sim_kind {sim_kind}")
