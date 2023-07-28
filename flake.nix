@@ -8,10 +8,19 @@
           #enable cuda support
           nvidia-thrust = prev.nvidia-thrust.override{deviceSystem="CUDA";};
           faiss = prev.faiss.override{cudaSupport=true;};
-        } ;
+        };
+        reduce-deps-overlay = final: prev: {
+          sentence-transformers = prev.sentence-transformers.overridePythonAttrs(old: {
+            # we use pytorch-bin do not pull full torch distribution
+            propagatedBuildInputs = pkgs.lib.subtractLists
+              [prev.torch prev.torchvision prev.tqdm prev.nltk prev.scikit-learn prev.scipy]
+              old.propagatedBuildInputs;
+
+          });
+        };
         pkgs = import nixpkgs {
           system = "x86_64-linux";
-          overlays = [ cuda-overlay self.overlays.default ];
+          overlays = [ cuda-overlay reduce-deps-overlay self.overlays.default ];
           config = {allowUnfree = true;};
         };
         python-overlay = pyfinal: pyprev: {

@@ -14,6 +14,8 @@ import collections.abc
 import numpy as np
 import torch
 from torch.cuda.amp.autocast_mode import autocast
+
+
 from doc_enc.embs.emb_factory import create_emb_layer
 from doc_enc.embs.token_embed import TokenEmbedding
 from doc_enc.encoders.enc_config import BaseEncoderConf
@@ -546,7 +548,8 @@ class EncodeModule(BaseEncodeModule):
         if mc.sent is not None:
             _adjust_enc_config(mc.sent.encoder)
             base_sent_enc = create_seq_encoder(mc.sent.encoder, prev_output_size=emb_dim)
-            base_sent_enc.load_state_dict(state_dict['sent_enc'])
+            if sent_enc_state := state_dict.get('sent_enc'):
+                base_sent_enc.load_state_dict(sent_enc_state)
             sent_for_doc_layer = None
             if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
                 sent_for_doc_layer = create_encoder(mc.sent_for_doc)

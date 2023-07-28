@@ -8,6 +8,7 @@
   pytorch-bin,
   hydra-core,
   transformers,
+  sentence-transformers,
   faiss,
   pytest,
   with-training-pkgs ? false,
@@ -27,6 +28,7 @@ buildPythonPackage {
     sentencepiece
     hydra-core
     transformers
+    sentence-transformers
   ]
   ++ lib.optionals with-training-pkgs [
     faiss

@@ -1,0 +1,4 @@
+defaults:
+  - base_sent_encoder_config
+
+encoder_kind: SBERT_AUTO

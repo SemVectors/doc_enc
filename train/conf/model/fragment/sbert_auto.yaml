@@ -1,0 +1,4 @@
+defaults:
+  - base_frag_encoder_config
+
+encoder_kind: SBERT_AUTO

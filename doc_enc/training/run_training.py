@@ -20,7 +20,7 @@ from torch.multiprocessing.spawn import spawn as mp_spawn
 from doc_enc.common_types import EncoderKind
 from doc_enc.embs.emb_config import BaseEmbConf
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
-from doc_enc.tokenizer import TokenizerConf, TokenizerType
+from doc_enc.tokenizer import TokenizerConf, TokenizerType, SbertTokenizer
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
 
 from doc_enc.training.train_conf import TrainerConf, OptimConf
@@ -121,7 +121,7 @@ def _is_training_required(conf: Config):
     def _train_enc(c: BaseEncoderConf | None):
         if c is None or (
             (
-                c.encoder_kind == EncoderKind.TRANSFORMERS_AUTO
+                c.encoder_kind in (EncoderKind.TRANSFORMERS_AUTO, EncoderKind.SBERT_AUTO)
                 and c.transformers_fix_pretrained_params
             )
             or c.encoder_kind == EncoderKind.AVERAGING
@@ -142,7 +142,7 @@ def _adjust_config(conf: Config):
     def _get_auto_model_name(c: BaseEncoderConf | None):
         if c is None:
             return None
-        if c.encoder_kind == EncoderKind.TRANSFORMERS_AUTO:
+        if c.encoder_kind in (EncoderKind.TRANSFORMERS_AUTO, EncoderKind.SBERT_AUTO):
             if not c.transformers_auto_name:
                 raise RuntimeError(
                     "Encoder kind is TRANSFORMERS_AUTO, but transformers_auto_name is not set"
@@ -161,7 +161,7 @@ def _adjust_config(conf: Config):
     # propagate configs of a model to tokenizer if tokenizer is TRANSFORMERS_AUTO
     tok_conf = conf.text_proc.tokenizer
     if (
-        tok_conf.tokenizer_type == TokenizerType.TRANSFORMERS_AUTO
+        tok_conf.tokenizer_type in (TokenizerType.TRANSFORMERS_AUTO, TokenizerType.SBERT_AUTO)
         and not tok_conf.transformers_auto_name
     ):
         # find first transformes auto model and use its name
@@ -210,6 +210,21 @@ def _check_training_tasks(conf: Config):
             ]
 
 
+def _prepare_sbert_tokenizer(conf: Config):
+    # There is no analogue of AutoTokenizer in sentence-transformers.
+    # I had to extract tokenizer from the instantiated model.
+    # When instantiating SentenceTransformer in forked environment, it will hang.
+    # So I need to determine which AutoTokenizer is needed and switch tokenizer to TRANSFORMERS_AUTO type.
+    tok_conf = conf.text_proc.tokenizer
+    if tok_conf.tokenizer_type != TokenizerType.SBERT_AUTO:
+        return
+
+    tok = SbertTokenizer(tok_conf)
+    conf.text_proc.tokenizer = tok.create_conf_for_transformers_tok()
+    if conf.text_proc.split_into_sents and (max_len := tok.get_max_seq_length()) is not None:
+        conf.text_proc.max_sent_len = max_len
+
+
 def _run_train(local_rank, local_world_size, conf: Config):
     if not _is_training_required(conf):
         logging.info("Training is not required (using all pretrained models), just saving model")
@@ -218,6 +233,7 @@ def _run_train(local_rank, local_world_size, conf: Config):
         return
 
     _check_training_tasks(conf)
+    _prepare_sbert_tokenizer(conf)
 
     logging.info("local_rank=%s", local_rank)
     rank, world_size = _init_proc(local_rank, local_world_size, conf)
@@ -364,6 +380,7 @@ def repack_cli(conf: Config) -> None:
     _adjust_config(conf)
     if _is_training_required(conf):
         raise RuntimeError("Training is required for a given config")
+    _prepare_sbert_tokenizer(conf)
 
     BaseTrainerUtils(conf.trainer, conf.model, conf.text_proc).save_model()
 

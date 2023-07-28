@@ -19,6 +19,7 @@ class EncoderKind(Enum):
     LOCAL_ATTN_TRANSFORMER = 6
     TRANSFORMERS_AUTO = 7
     AVERAGING = 8
+    SBERT_AUTO = 9
 
 
 class PoolingStrategy(Enum):

@@ -16,7 +16,11 @@ from doc_enc.encoders.base_transformer import TransformerEncoder
 from doc_enc.encoders.base_fnet import FNetEncoder
 from doc_enc.encoders.base_longformer import LongformerEncoder
 from doc_enc.encoders.base_local_transformer import LocalAttnEncoder
-from doc_enc.encoders.transformers_encoder import TransformersAutoModel, TransformersLongformer
+from doc_enc.encoders.transformers_encoder import (
+    TransformersAutoModel,
+    TransformersLongformer,
+    SbertAutoModel,
+)
 from doc_enc.encoders.averaging_encoder import AveragingEncoder
 
 
@@ -52,6 +56,8 @@ def create_encoder(conf: BaseEncoderConf):
         return TransformersAutoModel(conf)
     if conf.encoder_kind == EncoderKind.AVERAGING:
         return AveragingEncoder(conf)
+    if conf.encoder_kind == EncoderKind.SBERT_AUTO:
+        return SbertAutoModel(conf)
 
     raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 

@@ -7,7 +7,6 @@ import math
 import random
 import logging
 
-import torch
 from hydra.core.utils import configure_log
 
 from doc_enc.utils import calc_line_cnt

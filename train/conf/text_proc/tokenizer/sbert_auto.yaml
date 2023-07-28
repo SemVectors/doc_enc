@@ -1,0 +1,3 @@
+defaults:
+  - base_tokenizer_config
+tokenizer_type: SBERT_AUTO
