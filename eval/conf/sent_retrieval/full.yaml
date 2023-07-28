@@ -3,6 +3,9 @@
 sim_kind: COS
 ds_base_dir: /train/data/sents
 datasets:
+  - name: paral-test
+    meta: paral/test.gold
+    sents: paral/test
   - name: essay1-dev
     meta: essay1/dev.gold
     sents: essay1/dev
