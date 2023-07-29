@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 import logging
-from typing import List, Optional
+from typing import List
 import dataclasses
 from pathlib import Path
+import collections
 
 from doc_enc.utils import open_file, find_file
 from doc_enc.eval.sim_util import calc_sim, SimKind
@@ -57,14 +58,45 @@ def make_predictions(threshold, msim, midx, src_ids, tgt_ids):
     return predictions
 
 
+def _calc_map(predictions, gold_set):
+    cum_ap = 0.0
+    tp = 0
+    ap = 0.0
+    rank = 0
+
+    gold_cnt_dict = collections.Counter()
+    for src_id, _ in gold_set:
+        gold_cnt_dict[src_id] += 1
+
+    cur_src_id = predictions[0][0]
+    for src_id, tgt_id in predictions:
+        if cur_src_id != src_id:
+            cum_ap += ap / gold_cnt_dict[src_id]
+            tp = 0
+            ap = 0.0
+            rank = 0
+            cur_src_id = src_id
+        rel = int((src_id, tgt_id) in gold_set)
+        tp += rel
+        ap += rel * tp / (rank + 1)
+        rank += 1
+    cum_ap += ap / gold_cnt_dict[cur_src_id]
+
+    return cum_ap / len(gold_cnt_dict)
+
+
 def calc_metrics(predictions, gold):
-    ncorrect = len(frozenset(predictions) & frozenset(gold))
+    if not predictions:
+        return {}
+    gold_set = frozenset(gold)
+    ncorrect = len(frozenset(predictions) & gold_set)
     if not ncorrect:
         return {}
+
     recall = ncorrect / len(gold)
     precision = ncorrect / len(predictions)
     f1 = 2 * recall * precision / (recall + precision)
-    return {'rec': recall, 'prec': precision, 'f1': f1}
+    return {'MAP': _calc_map(predictions, gold_set), 'rec': recall, 'prec': precision, 'f1': f1}
 
 
 def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEncoder):
