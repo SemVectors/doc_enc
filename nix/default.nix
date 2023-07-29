@@ -2,7 +2,7 @@
   src,
   lib,
   buildPythonPackage,
-  scikitlearn,
+  scikit-learn,
   numpy,
   sentencepiece,
   pytorch-bin,
@@ -22,7 +22,7 @@ buildPythonPackage {
 
   buildInputs = [];
   propagatedBuildInputs=[
-    scikitlearn
+    scikit-learn
     numpy
     pytorch-bin
     sentencepiece

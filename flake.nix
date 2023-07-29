@@ -9,46 +9,20 @@
           nvidia-thrust = prev.nvidia-thrust.override{deviceSystem="CUDA";};
           faiss = prev.faiss.override{cudaSupport=true;};
         };
-        reduce-deps-overlay = final: prev: {
-          sentence-transformers = prev.sentence-transformers.overridePythonAttrs(old: {
-            # we use pytorch-bin do not pull full torch distribution
-            propagatedBuildInputs = pkgs.lib.subtractLists
-              [prev.torch prev.torchvision prev.tqdm prev.nltk prev.scikit-learn prev.scipy]
-              old.propagatedBuildInputs;
-
-          });
-        };
         pkgs = import nixpkgs {
           system = "x86_64-linux";
-          overlays = [ cuda-overlay reduce-deps-overlay self.overlays.default ];
+          overlays = [ cuda-overlay self.overlays.default ];
           config = {allowUnfree = true;};
-        };
-        python-overlay = pyfinal: pyprev: {
-          doc_enc = pyfinal.callPackage ./nix {
-            src=self;
           };
-          doc_enc_train = pyfinal.callPackage ./nix {
-            src=self;
-            with-training-pkgs=true;
-          };
-        };
-        overridePython = py-overlay: final: prev: (
-          prev.python310.override (old: {
-            self = pkgs.python;
-            packageOverrides = final.lib.composeExtensions
-              (old.packageOverrides or (_: _: { }))
-              py-overlay;
-          })
-        );
-        pypkgs = pkgs.python.pkgs;
+        pypkgs = pkgs.python310Packages;
     in {
       overlays.default = final: prev: {
-        python = overridePython python-overlay final prev;
+        python310Packages = prev.python310Packages.overrideScope (
+          import ./nix/python-overlay.nix {inherit self pkgs;}
+        );
       };
 
       packages.x86_64-linux = {
-        inherit (pkgs)
-          python;
         default = pypkgs.doc_enc;
         train = pypkgs.doc_enc_train;
       };
