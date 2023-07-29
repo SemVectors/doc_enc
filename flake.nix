@@ -63,7 +63,6 @@
         pkgs.mkShell {
           inputsFrom = [ pypkgs.doc_enc_train ];
           buildInputs = [
-            pkgs.enchant
             pkgs.nodePackages.pyright
             pkgs.nodePackages.bash-language-server
             pkgs.shellcheck
