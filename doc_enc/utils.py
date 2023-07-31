@@ -50,7 +50,7 @@ def find_file(fp: Union[Path, str], throw_if_not_exist=True):
     return fp
 
 
-def calc_line_cnt(fp, limit):
+def file_line_cnt(fp, limit=0):
     with open_bin_file(fp) as f:
         if limit == 0:
             filler = itertools.repeat(None)

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 import logging
-from typing import List
 import dataclasses
 from pathlib import Path
 import collections
+
 
 from doc_enc.utils import open_file, find_file
 from doc_enc.eval.sim_util import calc_sim, SimKind
@@ -21,12 +21,12 @@ class DatasetConf:
 @dataclasses.dataclass
 class SentRetrievalConf:
     ds_base_dir: str
-    datasets: List[DatasetConf]
-    enabled_ds: List = dataclasses.field(default_factory=list)
+    datasets: list[DatasetConf]
+    enabled_ds: list = dataclasses.field(default_factory=list)
 
     sim_kind: SimKind = SimKind.COS
-    topk: List[int] = dataclasses.field(default_factory=lambda: [1, 20])
-    thresholds: List[float] = dataclasses.field(default_factory=lambda: [0.4, 0.5, 0.6, 0.7, 0.8])
+    topk: list[int] = dataclasses.field(default_factory=lambda: [1, 20])
+    thresholds: list[float] = dataclasses.field(default_factory=lambda: [0.4, 0.5, 0.6, 0.7, 0.8])
 
     use_gpu: int = -1
 
@@ -101,15 +101,20 @@ def calc_metrics(predictions, gold):
 
 def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEncoder):
     base_dir = Path(conf.ds_base_dir)
-    src_sent_ids, src_sents = _read_sents(base_dir / (ds_conf.sents + ".src"))
-    logging.info("loaded %d src sents", len(src_sent_ids))
-    src_embs = doc_encoder.encode_sents(src_sents)
-    logging.info("shape of encoded sents: %s", src_embs.shape)
 
-    tgt_sent_ids, tgt_sents = _read_sents(base_dir / (ds_conf.sents + ".tgt"))
-    logging.info("loaded %d tgt sents", len(tgt_sent_ids))
-    tgt_embs = doc_encoder.encode_sents(tgt_sents)
-    logging.info("shape of encoded sents: %s", tgt_embs.shape)
+    src_file_path = base_dir / (ds_conf.sents + ".src")
+    logging.info("encoding src")
+    src_sent_ids, src_embs = doc_encoder.encode_sents_from_file(
+        src_file_path, first_column_is_id=True
+    )
+    logging.info("shape of encoded src sents: %s", src_embs.shape)
+
+    tgt_file_path = base_dir / (ds_conf.sents + ".tgt")
+    logging.info("encoding tgt")
+    tgt_sent_ids, tgt_embs = doc_encoder.encode_sents_from_file(
+        tgt_file_path, first_column_is_id=True
+    )
+    logging.info("shape of encoded tgt sents: %s", src_embs.shape)
 
     max_k = max(conf.topk)
     msim, indexes = calc_sim(conf.sim_kind, max_k, src_embs, tgt_embs, use_gpu=conf.use_gpu)

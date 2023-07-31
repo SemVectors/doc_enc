@@ -10,7 +10,7 @@ import faiss
 import numpy as np
 
 from doc_enc.doc_encoder import DocEncoder, DocEncoderConf
-from doc_enc.utils import calc_line_cnt
+from doc_enc.utils import file_line_cnt
 
 from doc_enc.training.index.index_train_conf import IndexTrainConf
 from doc_enc.training.sents_batch_generator import SentsBatchGeneratorConf
@@ -49,11 +49,11 @@ def hn_sents_generator(sent_file, last_id, added_ids):
             if target_sent_id in added_ids:
                 continue
             added_ids.add(target_sent_id)
-            yield sent, target_sent_id
+            yield target_sent_id, sent
 
 
 def sents_sample_generator(inp_file, sample_ratio, limit=0):
-    sents_cnt = calc_line_cnt(inp_file, limit)
+    sents_cnt = file_line_cnt(inp_file, limit)
     sample_size = int(sents_cnt * sample_ratio)
     logging.info("%d sents in input file, sample %d from them", sents_cnt, sample_size)
 
@@ -69,7 +69,7 @@ def sents_sample_generator(inp_file, sample_ratio, limit=0):
             if idx < next_sent_idx:
                 continue
             sent_id, sent = l.rstrip().split('\t', 1)
-            yield sent, int(sent_id)
+            yield int(sent_id), sent
 
             cur_sample_idx += 1
             if cur_sample_idx >= len(sampled_idxs):
@@ -88,12 +88,6 @@ def _create_doc_enc(model_conf: BaseModelConf):
     conf = DocEncoderConf(model_path=str(model_path), use_gpu=0)
     doc_encoder = DocEncoder(conf)
     return doc_encoder
-
-
-def sent_embs_generator(doc_encoder: DocEncoder, sents):
-    for _, batch_embs, misc in doc_encoder.encode_sents_stream(sents, sents_batch_size=128 * 4):
-        sent_ids = [m[0] for m in misc]
-        yield sent_ids, batch_embs
 
 
 def collect_vectors(vecs_generator, normalize_l2=True):
@@ -162,8 +156,16 @@ def prepare_sent_index(
     logging.info("Starting faiss index training")
     doc_encoder = _create_doc_enc(model_conf)
     train_file = sents_conf.input_dir + '/train.tgt'
-    sents_gen = sents_sample_generator(train_file, index_conf.train_sample, sents_conf.sents_limit)
-    vec_gen = sent_embs_generator(doc_encoder, sents_gen)
+
+    def _create_gen_func():
+        def _gen():
+            yield from sents_sample_generator(
+                train_file, index_conf.train_sample, sents_conf.sents_limit
+            )
+
+        return _gen
+
+    vec_gen = doc_encoder.encode_sents_from_generators([_create_gen_func()])
     index = create_and_train_index(index_conf, vec_gen, doc_encoder.enc_module().sent_embs_dim())
     logging.info("Train of index was ended")
 
@@ -198,12 +200,14 @@ def _add_sent_vectors_impl(
 
     train_file = sents_conf.input_dir + f'/{split}.tgt'
 
-    sents_gen = sents_generator(train_file, sents_conf.sents_limit)
-
     logging.info("Add vectors to Index")
     added_ids = set()
     last_id = 0
-    for ids, embs in sent_embs_generator(doc_encoder, sents_gen):
+    gen = doc_encoder.generate_sent_embs_from_file(
+        train_file, lines_limit=sents_conf.sents_limit, first_column_is_id=True
+    )
+    for ids, embs in gen:
+        ids = [int(i) for i in ids]
         _add(ids, embs)
         added_ids.update(ids)
         last_id = ids[-1]
@@ -213,9 +217,15 @@ def _add_sent_vectors_impl(
         return
 
     # add also hard negatives
-    sents_gen = hn_sents_generator(sents_conf.input_dir + f'/{split}.hn', last_id, added_ids)
+
+    def _create_gen_func():
+        def _gen():
+            yield from hn_sents_generator(sents_conf.input_dir + f'/{split}.hn', last_id, added_ids)
+
+        return _gen
+
     hn_added = 0
-    for ids, embs in sent_embs_generator(doc_encoder, sents_gen):
+    for ids, embs in doc_encoder.encode_sents_from_generators([_create_gen_func()]):
         hn_added += len(ids)
         _add(ids, embs)
     logging.info("add from %s.hn: added_cnt=%d", split, hn_added)

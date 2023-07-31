@@ -9,7 +9,7 @@ import logging
 
 from hydra.core.utils import configure_log
 
-from doc_enc.utils import calc_line_cnt
+from doc_enc.utils import file_line_cnt
 
 
 def _split_between_nproc(n, start_offs, line_cnt):
@@ -93,7 +93,7 @@ class BaseBatchIterator:
         self._queue = multiprocessing.Queue(4 * self._opts.async_generators)
 
     def _get_line_offs_for_rank(self, filepath, limit):
-        line_cnt = calc_line_cnt(filepath, limit)
+        line_cnt = file_line_cnt(filepath, limit)
 
         if not line_cnt or self._world_size == -1:
             return 0, line_cnt

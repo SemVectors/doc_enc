@@ -8,8 +8,6 @@ import faiss
 
 from doc_enc.doc_encoder import DocEncoder, DocEncoderConf
 
-from doc_enc.training.index.prepare_index_util import sents_generator, sent_embs_generator
-
 
 def _create_mapping(opts):
     mapping = {}
@@ -62,8 +60,11 @@ def run_eval_index_cli(args):
     levels = [int(l) for l in args.levels]
     scores = [0] * len(levels)
     total = 0
-    gen = sents_generator(args.input_file, args.lines_limit)
-    for ids, embs in sent_embs_generator(doc_encoder, gen):
+    gen = doc_encoder.generate_sent_embs_from_file(
+        args.input_file, lines_limit=args.lines_limit, first_column_is_id=True
+    )
+    for ids, embs in gen:
+        ids = [int(i) for i in ids]
         embs = embs.astype(np.float32, copy=False)
         faiss.normalize_L2(embs)
         D, I = index.search(embs, args.topk)

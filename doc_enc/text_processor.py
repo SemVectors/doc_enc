@@ -107,15 +107,19 @@ class TextProcessor:
             sent_gen = (l.rstrip() for l in f)
             return self.prepare_text(sent_gen)
 
+    def prepare_sent(self, sent_str):
+        tokens = self._tokenizer(sent_str)
+        tokens = tokens[: self._conf.max_sent_len]
+        return tokens
+
     def prepare_sents(self, sent_strs):
-        sent_ids = []
+        sent_tokens = []
         for s in sent_strs:
-            tokens = self._tokenizer(s)
-            tokens = tokens[: self._conf.max_sent_len]
+            tokens = self.prepare_sent(s)
             if not tokens:
                 tokens = [self.vocab().pad_idx()]
-            sent_ids.append(tokens)
-        return sent_ids
+            sent_tokens.append(tokens)
+        return sent_tokens
 
     def state_dict(self):
         return {'tok': self._tokenizer.state_dict()}
