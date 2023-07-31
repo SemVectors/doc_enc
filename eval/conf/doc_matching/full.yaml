@@ -7,12 +7,17 @@ datasets:
   - name: gwiki-test
     meta: GWikiMatch/test.csv
     texts: GWikiMatch/texts
-  - name: gwiki-dev
-    meta: GWikiMatch/dev.csv
-    texts: GWikiMatch/texts
-  - name: srw
-    meta: SimRuWiki/test.csv
+  - name: srw-limited-10k
+    meta: SimRuWiki/test_10k_doc1.csv
     texts: SimRuWiki/texts
-  - name: sew
-    meta: SimEnWiki/test.csv
+  - name: sew-limited-10k
+    meta: SimEnWiki/test_10k_doc1.csv
     texts: SimEnWiki/texts
+  - name: srw-balanced
+    meta: SimRuWiki/test_20k_balanced.csv
+    texts: SimRuWiki/texts
+    balance_pos_and_neg_examples: false
+  - name: sew-balanced
+    meta: SimEnWiki/test_20k_balanced.csv
+    texts: SimEnWiki/texts
+    balance_pos_and_neg_examples: false

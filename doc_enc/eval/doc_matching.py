@@ -18,6 +18,7 @@ class DatasetConf:
     name: str
     meta: str
     texts: str
+    balance_pos_and_neg_examples: bool = True
 
 
 @dataclasses.dataclass
@@ -28,11 +29,10 @@ class DocMatchingConf:
 
     threshold: float = 0.0
     choose_threshold: bool = True
-    balance_pos_and_neg_examples: bool = True
     seed: int = 2022 * 55
 
 
-def _finalize_gold(conf: DocMatchingConf, src_id, positives, negatives, stat):
+def _finalize_gold(conf: DatasetConf, src_id, positives, negatives, stat):
     if conf.balance_pos_and_neg_examples:
         min_len = min(len(positives), len(negatives))
         if min_len == 0:
@@ -49,10 +49,10 @@ def _finalize_gold(conf: DocMatchingConf, src_id, positives, negatives, stat):
     return examples
 
 
-def _load_gold_data(conf: DocMatchingConf, meta_path):
+def _load_gold_data(base_dir, conf: DatasetConf, meta_path):
     gold = []
     stat = [0, 0]
-    with open(conf.ds_base_dir + '/' + meta_path, 'r', encoding='utf8') as fp:
+    with open(base_dir + '/' + meta_path, 'r', encoding='utf8') as fp:
         reader = csv.reader(fp)
         next(reader)
         cur_src_id = ''
@@ -118,13 +118,13 @@ def _calc_metrics(threshold, gold, inv_idx, doc_embs):
     return good / total, f1
 
 
-def _eval_impl(conf: DocMatchingConf, doc_encoder, meta_path, texts_dir):
+def _eval_impl(conf: DocMatchingConf, ds_conf: DatasetConf, doc_encoder, meta_path, texts_dir):
     base_dir = Path(conf.ds_base_dir)
     full_texts_dir = base_dir / texts_dir
     if not full_texts_dir.exists():
         raise RuntimeError(f'{full_texts_dir} does not exist')
 
-    gold = _load_gold_data(conf, meta_path)
+    gold = _load_gold_data(conf.ds_base_dir, ds_conf, meta_path)
     all_ids = set()
     for src_id, tgt_id, _ in gold:
         all_ids.add(src_id)
@@ -160,6 +160,6 @@ def doc_matching_eval(conf: DocMatchingConf, doc_encoder: DocEncoder):
     for dataset in conf.datasets:
         if conf.enabled_ds and dataset.name not in conf.enabled_ds:
             continue
-        m = _eval_impl(conf, doc_encoder, meta_path=dataset.meta, texts_dir=dataset.texts)
+        m = _eval_impl(conf, dataset, doc_encoder, meta_path=dataset.meta, texts_dir=dataset.texts)
         results.append((dataset.name, m))
     return results

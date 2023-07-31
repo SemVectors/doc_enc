@@ -1,0 +1,7 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /doc_matching: quick
+  - override /doc_retrieval: quick
+  - override /sent_retrieval: quick
+  - _self_

@@ -2,31 +2,13 @@
 defaults:
   - base_doc_matching
 
-ds_base_dir: /eval/datasets
-# balance_pos_and_neg_examples: false
+ds_base_dir: /train/data/docs
 datasets:
-  - name: gwiki-test
-    meta: GWikiMatch/test.csv
-    texts: GWikiMatch/texts
-  - name: gwiki-dev
-    meta: GWikiMatch/dev.csv
-    texts: GWikiMatch/texts
-  - name: srw-mini
-    meta: SimRuWiki/test_mini.csv
+  - name: srw-balanced
+    meta: SimRuWiki/test_20k_balanced.csv
     texts: SimRuWiki/texts
-  - name: sew-mini
-    meta: SimEnWiki/test_mini.csv
+    balance_pos_and_neg_examples: false
+  - name: sew-balanced
+    meta: SimEnWiki/test_20k_balanced.csv
     texts: SimEnWiki/texts
-  - name: srw-limited
-    meta: SimRuWiki/test_10k_doc1.csv
-    texts: SimRuWiki/texts
-  - name: sew-limited
-    meta: SimEnWiki/test_10k_doc1.csv
-    texts: SimEnWiki/texts
-
-  # - name: srw-balanced
-  #   meta: SimRuWiki/test_20k_balanced.csv
-  #   texts: SimRuWiki/texts
-  # - name: sew-balanced
-  #   meta: SimEnWiki/test_20k_balanced.csv
-  #   texts: SimEnWiki/texts
+    balance_pos_and_neg_examples: false
