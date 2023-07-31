@@ -842,6 +842,9 @@ class DocEncoder:
         self._enc_module.train(not eval_mode)
         self._eval_mode = eval_mode
 
+    def sent_encoding_supported(self):
+        return self._enc_module.sent_encoding_supported()
+
     def enc_module(self):
         return self._enc_module
 

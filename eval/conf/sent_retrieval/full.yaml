@@ -2,6 +2,15 @@
 
 sim_kind: COS
 ds_base_dir: /train/data/sents
+topk:
+  - 1
+  - 5
+  - 20
+  - 100
+thresholds:
+  - 0.0
+  - 0.4
+
 datasets:
   - name: paral-test
     meta: paral/test.gold

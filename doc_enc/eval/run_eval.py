@@ -92,7 +92,7 @@ def _print_results(conf: Config, results, **extra):
         logging.info(m)
 
 
-def _eval(conf, doc_encoder, **extra):
+def _eval(conf, doc_encoder: DocEncoder, **extra):
     if conf.print_as_csv:
         printer = _print_results_as_csv
     else:
@@ -109,9 +109,14 @@ def _eval(conf, doc_encoder, **extra):
         printer(conf, results, **extra)
 
     if conf.eval_sent_retrieval:
-        results = sent_retrieval_eval(conf.sent_retrieval, doc_encoder)
-        logging.info("sent retrieval results")
-        printer(conf, results, **extra)
+        if not doc_encoder.sent_encoding_supported():
+            logging.warning(
+                "Sent encoding is not supported by this model! Skip evaling sent retrieval"
+            )
+        else:
+            results = sent_retrieval_eval(conf.sent_retrieval, doc_encoder)
+            logging.info("sent retrieval results")
+            printer(conf, results, **extra)
 
 
 @hydra.main(config_path=None, config_name="config", version_base=None)
