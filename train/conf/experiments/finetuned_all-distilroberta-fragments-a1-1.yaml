@@ -4,11 +4,15 @@ defaults:
   - /base_config
   - override /trainer: full
   - override /trainer/optim: adam_with_one_cycle
-  - override /text_proc/tokenizer: transformers_auto
+  - override /text_proc/tokenizer: sbert_auto
+  - override /model/embed: null
   - override /model/sent: null
-  - override /model/fragment: null
-  - override /model/doc: transformers_auto
+  - override /model/fragment: sbert_auto
+  - override /model/doc: averaging
   - _self_
+
+text_proc:
+  fragment_size: 16
 
 trainer:
   tasks:
@@ -20,14 +24,15 @@ trainer:
     lr_scheduler_kwargs:
       div_factor: 10
       final_div_factor: 1
-    doc:
+    fragment:
       lr: 0.00002
 
 model:
   scale: 40
   margin: 0.2
-  doc:
-    transformers_auto_name: allenai/longformer-base-4096
+  max_tokens_in_chunk: 10000
+  fragment:
+    transformers_auto_name: all-distilroberta-v1
     transformers_cache_dir: /train/transformers_cache
 
 batches:
@@ -42,7 +47,7 @@ batches:
       - SimRuWiki
     batch_generator_conf:
       input_dir: /train/data/docs
-      batch_total_tokens_cnt: 36000
+      batch_total_tokens_cnt: 69000
       batch_docs_cnt: 384
       negatives_per_doc:
         - 0
@@ -50,3 +55,4 @@ batches:
       positives_per_doc:
         - 1
         - 1
+

@@ -2,12 +2,13 @@
 
 defaults:
   - /base_config
-  - override /trainer: full
+  - override /trainer: full_doc_2gpu
   - override /trainer/optim: adam_with_one_cycle
   - override /text_proc/tokenizer: transformers_auto
+  - override /model/embed: null
   - override /model/sent: null
   - override /model/fragment: transformers_auto
-  - override /model/doc: transformer
+  - override /model/doc: averaging
   - _self_
 
 text_proc:
@@ -25,22 +26,14 @@ trainer:
       final_div_factor: 1
     fragment:
       lr: 0.00002
-    doc:
-      lr: 0.00005
-
 
 model:
   scale: 40
   margin: 0.2
+  max_tokens_in_chunk: 10000
   fragment:
-    transformers_auto_name: xlm-roberta-base
+    transformers_auto_name: distilbert-base-multilingual-cased
     transformers_cache_dir: /train/transformers_cache
-
-  doc:
-    add_beg_seq_token: true
-    num_layers: 3
-    full_intermediate: true
-    hidden_size: 768
 
 batches:
   reinit_last_iter: false
@@ -62,3 +55,4 @@ batches:
       positives_per_doc:
         - 1
         - 1
+

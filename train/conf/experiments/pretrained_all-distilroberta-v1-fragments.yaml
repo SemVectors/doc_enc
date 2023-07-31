@@ -1,0 +1,18 @@
+# @package _global_
+
+defaults:
+  - /base_config
+  - override /text_proc/tokenizer: sbert_auto
+  - override /model/embed: null
+  - override /model/sent: null
+  - override /model/fragment: sbert_auto
+  - override /model/doc: averaging
+  - _self_
+
+text_proc:
+  fragment_size: 16
+
+model:
+  fragment:
+    transformers_auto_name: all-distilroberta-v1
+    transformers_fix_pretrained_params: true
