@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 
 from doc_enc.doc_encoder import DocEncoder, SentEncodeStat, DocEncodeStat
+from doc_enc.eval.caching_doc_encoder import CachingDocEncoder
 
 
 @dataclasses.dataclass
@@ -158,16 +159,21 @@ def _run_bench_on_docs(
         paths = list(text_dir.iterdir())
         paths.sort()
 
+    kwargs = {}
+    if isinstance(doc_encoder, CachingDocEncoder):
+        kwargs['dont_cache'] = True
+
     for _ in range(conf.repeat_times):
         stat = DocEncodeStat()
         with stats_recorder:
-            doc_encoder.encode_docs_from_path_list(paths, stat=stat)
+            doc_encoder.encode_docs_from_path_list(paths, stat=stat, **kwargs)
 
             stats_recorder.set_texts_cnt(stat.docs_cnt)
-            stats_recorder.set_extra_stat(
-                avg_doc_len_tokens=stat.total_tokens_cnt / stat.docs_cnt,
-                avg_doc_len_sents=stat.total_sents_cnt / stat.docs_cnt,
-            )
+            if stat.docs_cnt:
+                stats_recorder.set_extra_stat(
+                    avg_doc_len_tokens=stat.total_tokens_cnt / stat.docs_cnt,
+                    avg_doc_len_sents=stat.total_sents_cnt / stat.docs_cnt,
+                )
 
 
 def bench_docs_encoding(config: BenchConf, doc_encoder: DocEncoder):

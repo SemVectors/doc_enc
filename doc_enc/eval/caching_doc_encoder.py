@@ -148,7 +148,12 @@ class CachingDocEncoder(DocEncoder):
             out_embs[idxs_to_compute] = embs
         return out_embs
 
-    def encode_docs_from_path_list(self, path_list, stat: DocEncodeStat | None = None):
+    def encode_docs_from_path_list(
+        self, path_list, stat: DocEncodeStat | None = None, dont_cache=False
+    ):
+        if dont_cache:
+            return super().encode_docs_from_path_list(path_list, stat=stat)
+
         cached_idxs_dict = collections.defaultdict(lambda: tuple([[], []]))
         compute_idxs_dict = collections.defaultdict(list)
         for i, path in enumerate(path_list):
