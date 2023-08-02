@@ -48,7 +48,7 @@ batches:
       - SimRuWiki
     batch_generator_conf:
       input_dir: /train/data/docs
-      batch_total_tokens_cnt: 120000
+      batch_total_tokens_cnt: 130000
       batch_docs_cnt: 384
       negatives_per_doc:
         - 0
