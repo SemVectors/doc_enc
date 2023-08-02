@@ -36,8 +36,8 @@ class Config:
 
     eval_checkpoints: List[str] = dataclasses.field(default_factory=list)
 
-    bench_doc_encoding: bool = True
-    bench_sents_encoding: bool = False
+    bench_doc_encoding: bool = False
+    bench_sent_encoding: bool = False
     bench: BenchConf = MISSING
 
 
@@ -124,7 +124,7 @@ def _eval_and_bench(conf: Config, doc_encoder: DocEncoder, **extra):
             logging.info("sent retrieval results")
             printer(conf, results, **extra)
 
-    if conf.bench_sents_encoding:
+    if conf.bench_sent_encoding:
         results = bench_sents_encoding(conf.bench, doc_encoder)
         logging.info("sents encoding bench results")
         printer(conf, results, **extra)
