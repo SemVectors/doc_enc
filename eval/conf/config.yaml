@@ -9,6 +9,7 @@ defaults:
   - doc_matching: full
   - doc_retrieval: full
   - sent_retrieval: full
+  - bench: basic
   - _self_
 
 cache_embeddings: false

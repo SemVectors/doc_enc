@@ -14,6 +14,7 @@ from doc_enc.eval.caching_doc_encoder import CachingDocEncoder
 from doc_enc.eval.doc_matching import DocMatchingConf, doc_matching_eval
 from doc_enc.eval.doc_retrieval import DocRetrievalConf, doc_retrieval_eval
 from doc_enc.eval.sent_retrieval import SentRetrievalConf, sent_retrieval_eval
+from doc_enc.eval.bench_model import run_bench, BenchConf
 
 
 @dataclasses.dataclass
@@ -35,13 +36,17 @@ class Config:
 
     eval_checkpoints: List[str] = dataclasses.field(default_factory=list)
 
+    bench_model: bool = False
+    bench: BenchConf = MISSING
+
 
 cs = ConfigStore.instance()
 cs.store(name="base_config", node=Config)
+cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 cs.store(name="base_doc_matching", group="doc_matching", node=DocMatchingConf)
 cs.store(name="base_doc_retrieval", group="doc_retrieval", node=DocRetrievalConf)
 cs.store(name="base_sent_retrieval", group="sent_retrieval", node=SentRetrievalConf)
-cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
+cs.store(name="base_bench", group="bench", node=BenchConf)
 
 
 def _print_row(ds, metrics_dict, model_id=None, **extra):
@@ -92,7 +97,7 @@ def _print_results(conf: Config, results, **extra):
         logging.info(m)
 
 
-def _eval(conf, doc_encoder: DocEncoder, **extra):
+def _eval_and_bench(conf: Config, doc_encoder: DocEncoder, **extra):
     if conf.print_as_csv:
         printer = _print_results_as_csv
     else:
@@ -118,6 +123,11 @@ def _eval(conf, doc_encoder: DocEncoder, **extra):
             logging.info("sent retrieval results")
             printer(conf, results, **extra)
 
+    if conf.bench_model:
+        results = run_bench(conf.bench, doc_encoder)
+        logging.info("bench results")
+        printer(conf, results, **extra)
+
 
 @hydra.main(config_path=None, config_name="config", version_base=None)
 def eval_cli(conf: Config) -> None:
@@ -129,7 +139,7 @@ def eval_cli(conf: Config) -> None:
         doc_encoder = DocEncoder(conf.doc_encoder)
 
     if not conf.eval_checkpoints:
-        return _eval(conf, doc_encoder)
+        return _eval_and_bench(conf, doc_encoder)
 
     base_dir = Path(conf.doc_encoder.model_path).parent
     for p in conf.eval_checkpoints:
@@ -137,7 +147,7 @@ def eval_cli(conf: Config) -> None:
         for cp in checkpoints:
             logging.info("loading parameters from: %s", cp)
             doc_encoder.load_params_from_checkpoint(cp)
-            _eval(conf, doc_encoder, checkpoint=cp.with_suffix('').name)
+            _eval_and_bench(conf, doc_encoder, checkpoint=cp.with_suffix('').name)
 
 
 if __name__ == "__main__":

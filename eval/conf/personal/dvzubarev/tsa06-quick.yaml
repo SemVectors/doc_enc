@@ -23,3 +23,9 @@ doc_retrieval:
 
 sent_retrieval:
   ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent
+
+bench:
+  sent_ds_base_dir: >-
+    /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent
+  doc_ds_base_dir: >-
+    /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc

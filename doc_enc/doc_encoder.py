@@ -813,6 +813,20 @@ class EncodeModule(BaseEncodeModule):
 # * Main classes
 
 
+class SentEncodeStat:
+    def __init__(self) -> None:
+        self.total_tokens_cnt = 0
+        self.sents_cnt = 0
+
+
+class DocEncodeStat:
+    def __init__(self) -> None:
+        self.total_tokens_cnt = 0
+        self.total_sents_cnt = 0
+
+        self.docs_cnt = 0
+
+
 def file_path_fetcher(paths):
     for idx, path in enumerate(paths):
         with open(path, 'r', encoding='utf8', errors='ignore') as fp:
@@ -916,7 +930,7 @@ class DocEncoder:
             embs = self.encode_sents(sents_batch)
             yield sents_batch, embs, sents_misc
 
-    def encode_sents_from_generators(self, generator_funcs):
+    def encode_sents_from_generators(self, generator_funcs, stat: SentEncodeStat | None = None):
         """low level function that utilizes async batch preparation to speed up encoding for some cases.
         You can pass up to async_batch_gen generator functions.
         Each function should produce a unique set of tuples: (sent_id, sent_text).
@@ -939,12 +953,21 @@ class DocEncoder:
         batch_iterator.start_workers(generator_funcs)
 
         for sent_tokens, sent_ids in batch_iterator.batches():
+            if stat is not None:
+                stat.total_tokens_cnt += sum(len(s) for s in sent_tokens)
+                stat.sents_cnt += len(sent_tokens)
+
             sent_embs = self._encode_sents(sent_tokens)
             sent_embs = sent_embs.to(device='cpu').numpy()
             yield sent_ids, sent_embs
 
     def generate_sent_embs_from_file(
-        self, file_path, lines_limit=0, first_column_is_id=False, sep='\t'
+        self,
+        file_path,
+        lines_limit=0,
+        first_column_is_id=False,
+        sep='\t',
+        stat: SentEncodeStat | None = None,
     ):
         """Generator of embeddings from the given file.
         File is split on async_batch_gen parts.
@@ -960,14 +983,21 @@ class DocEncoder:
             for offs in range(0, line_cnt, per_proc)
         ]
 
-        for ids, embs in self.encode_sents_from_generators(gens):
+        for ids, embs in self.encode_sents_from_generators(gens, stat=stat):
             yield ids, embs
 
-    def encode_sents_from_file(self, file_path, lines_limit=0, first_column_is_id=False, sep='\t'):
+    def encode_sents_from_file(
+        self,
+        file_path,
+        lines_limit=0,
+        first_column_is_id=False,
+        sep='\t',
+        stat: SentEncodeStat | None = None,
+    ):
         sent_ids = []
         sent_embs = []
         for ids, embs in self.generate_sent_embs_from_file(
-            file_path, lines_limit, first_column_is_id, sep
+            file_path, lines_limit, first_column_is_id, sep, stat=stat
         ):
             sent_ids.extend(ids)
             sent_embs.append(embs)
@@ -976,7 +1006,14 @@ class DocEncoder:
         assert len(sent_ids) == stacked.shape[0], "Missaligned data 83292"
         return sent_ids, stacked
 
-    def encode_docs_from_path_list(self, path_list) -> np.ndarray:
+    def _update_doc_stat(self, docs: list[list[list[int]]], stat: DocEncodeStat):
+        stat.docs_cnt += len(docs)
+        stat.total_sents_cnt += sum(len(d) for d in docs)
+        stat.total_tokens_cnt += sum(len(s) for d in docs for s in d)
+
+    def encode_docs_from_path_list(
+        self, path_list: list[str] | list[Path], stat: DocEncodeStat | None = None
+    ) -> np.ndarray:
         """This method encodes a texts from a path_list into vectors and returns them.
         Texts should be presegmented, i.e. each sentence should be placed on separate line.
         """
@@ -986,6 +1023,8 @@ class DocEncoder:
 
         batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
         for docs, doc_lengths, idxs in batch_iter.batches():
+            if stat is not None:
+                self._update_doc_stat(docs, stat)
             doc_embs = self._encode_docs(docs, doc_lengths)
             embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
             embs_idxs.extend(idxs)
@@ -1001,16 +1040,20 @@ class DocEncoder:
         reordered_embs = stacked.index_select(0, initial_order_idxs)
         return reordered_embs.numpy()
 
-    def encode_docs_from_dir(self, path: Path) -> tuple[list[Path], np.ndarray]:
+    def encode_docs_from_dir(
+        self, path: Path, stat: DocEncodeStat | None = None
+    ) -> tuple[list[Path], np.ndarray]:
         """This method iterates over files in the directory and returns a tuple of paths
         and vector representation of texts.
         Texts should be presegmented, i.e. each sentence should be placed on separate line.
         """
         paths = list(path.iterdir())
         paths.sort()
-        return paths, self.encode_docs_from_path_list(paths)
+        return paths, self.encode_docs_from_path_list(paths, stat=stat)
 
-    def encode_docs(self, docs: list[list[str] | str]) -> np.ndarray:
+    def encode_docs(
+        self, docs: list[list[str] | str], stat: DocEncodeStat | None = None
+    ) -> np.ndarray:
         """Encode a list of documents into vector representation. A doc is eiher
         a list of sentences or a text where each sentence is placed on a new
         line."""
@@ -1022,6 +1065,8 @@ class DocEncoder:
 
         batch_generator = self._enc_module.create_batch_generator()
         for batch, doc_lengths, _ in batch_generator.batches(docs, fetcher=dummy_fetcher):
+            if stat is not None:
+                self._update_doc_stat(batch, stat)
             doc_embs = self._encode_docs(batch, doc_lengths)
             embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
         stacked = torch.vstack(embs)
@@ -1029,7 +1074,7 @@ class DocEncoder:
         return stacked.numpy()
 
     def encode_docs_stream(
-        self, doc_id_generator, fetcher, batch_size: int = 10
+        self, doc_id_generator, fetcher, batch_size: int = 10, stat: DocEncodeStat | None = None
     ) -> collections.abc.Iterable[tuple[list[Any], np.ndarray]]:
         """The most general method that accepts a generator of document ids and a function `fetcher`.
         `fetcher` will be invoked on a batch of ids to get a text of a documents.
@@ -1053,5 +1098,7 @@ class DocEncoder:
             doc_id_generator, fetcher=fetcher, batch_size=batch_size
         )
         for docs, doc_lengths, ids in batch_iter.batches():
+            if stat is not None:
+                self._update_doc_stat(docs, stat)
             doc_embs = self._encode_docs(docs, doc_lengths)
             yield ids, doc_embs.to(device='cpu', dtype=torch.float32).numpy()
