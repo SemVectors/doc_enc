@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /doc_matching: quick
+  - override /doc_retrieval: quick
+  - override /sent_retrieval: quick
+  - _self_
+
+cache_embeddings: true
+
+doc_encoder:
+  use_gpu: 0
+  max_tokens: 24_000
+  async_batch_gen: 4
+
+doc_matching:
+  ds_base_dir: /srv/apps/doc-enc-testing/docs
+
+doc_retrieval:
+  sim_kind: COS
+  ds_base_dir: /srv/apps/doc-enc-testing/docs
+
+sent_retrieval:
+  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent

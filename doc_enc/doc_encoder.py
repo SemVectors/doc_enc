@@ -33,7 +33,6 @@ from doc_enc.encoders.pad_utils import create_padded_tensor
 from doc_enc.encoders.split_input import split_input_and_embed
 from doc_enc.encoders.sent_for_doc_encoder import SentForDocEncoder
 from doc_enc.encoders.seq_encoder import SeqEncoder
-from doc_enc.training.base_batch_generator import skip_to_line
 from doc_enc.training.models.model_conf import DocModelConf
 
 
