@@ -14,7 +14,7 @@ from doc_enc.eval.caching_doc_encoder import CachingDocEncoder
 from doc_enc.eval.doc_matching import DocMatchingConf, doc_matching_eval
 from doc_enc.eval.doc_retrieval import DocRetrievalConf, doc_retrieval_eval
 from doc_enc.eval.sent_retrieval import SentRetrievalConf, sent_retrieval_eval
-from doc_enc.eval.bench_model import run_bench, BenchConf
+from doc_enc.eval.bench_model import BenchConf, bench_sents_encoding, bench_docs_encoding
 
 
 @dataclasses.dataclass
@@ -36,7 +36,8 @@ class Config:
 
     eval_checkpoints: List[str] = dataclasses.field(default_factory=list)
 
-    bench_model: bool = False
+    bench_doc_encoding: bool = True
+    bench_sents_encoding: bool = False
     bench: BenchConf = MISSING
 
 
@@ -123,9 +124,14 @@ def _eval_and_bench(conf: Config, doc_encoder: DocEncoder, **extra):
             logging.info("sent retrieval results")
             printer(conf, results, **extra)
 
-    if conf.bench_model:
-        results = run_bench(conf.bench, doc_encoder)
-        logging.info("bench results")
+    if conf.bench_sents_encoding:
+        results = bench_sents_encoding(conf.bench, doc_encoder)
+        logging.info("sents encoding bench results")
+        printer(conf, results, **extra)
+
+    if conf.bench_doc_encoding:
+        results = bench_docs_encoding(conf.bench, doc_encoder)
+        logging.info("doc encoding bench results")
         printer(conf, results, **extra)
 
 

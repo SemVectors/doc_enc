@@ -32,6 +32,7 @@ class BenchConf:
     doc_datasets: list[DocDatasetConf] = dataclasses.field(default_factory=list)
     sent_ds_base_dir: str = ''
     sent_datasets: list[SentDatasetConf] = dataclasses.field(default_factory=list)
+    bench_sents_encoding: bool = False
 
     keep_full_stats: bool = False
 
@@ -125,7 +126,7 @@ def _run_bench_on_sents_file(
             stats_recorder.set_extra_stat(avg_sent_len=stat.total_tokens_cnt / stat.sents_cnt)
 
 
-def _bench_sents_encoding(config: BenchConf, doc_encoder: DocEncoder):
+def bench_sents_encoding(config: BenchConf, doc_encoder: DocEncoder):
     if not doc_encoder.sent_encoding_supported():
         logging.warning("Sent encoding is not supported by this model! Skip benching sent encoding")
         return []
@@ -169,22 +170,11 @@ def _run_bench_on_docs(
             )
 
 
-def _bench_docs_encoding(config: BenchConf, doc_encoder: DocEncoder):
+def bench_docs_encoding(config: BenchConf, doc_encoder: DocEncoder):
     results = []
     for ds_conf in config.doc_datasets:
         stats_recorder = StatsRecorder(doc_encoder.enc_module().device)
         _run_bench_on_docs(config.doc_ds_base_dir, ds_conf, doc_encoder, stats_recorder)
         results.append((ds_conf.name, stats_recorder.finalize_stats(config.keep_full_stats)))
 
-    return results
-
-
-def run_bench(config: BenchConf, doc_encoder: DocEncoder):
-    results = []
-    if config.sent_datasets:
-        sent_results = _bench_sents_encoding(config, doc_encoder)
-        results.extend(sent_results)
-    if config.doc_datasets:
-        doc_results = _bench_docs_encoding(config, doc_encoder)
-        results.extend(doc_results)
     return results
