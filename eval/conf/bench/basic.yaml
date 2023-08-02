@@ -1,0 +1,21 @@
+---
+
+defaults:
+  - base_bench
+
+
+sent_ds_base_dir: /train/data/sents
+sent_datasets:
+  - name: 100k-sents-ru
+    sents_file: paral/test.src
+  - name: 100k-sents-en
+    sents_file: paral/test.tgt
+
+doc_ds_base_dir: /train/data/docs
+doc_datasets:
+  - name: wiki-ru
+    paths_file: ParalWiki/ru_bench_paths.txt
+  - name: wiki-en
+    paths_file: ParalWiki/en_bench_paths.txt
+  - name: sci-en
+    paths_file: SimEnSci/sci_bench_paths_5k.txt
