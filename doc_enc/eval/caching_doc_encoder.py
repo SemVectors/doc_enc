@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from doc_enc.doc_encoder import DocEncoderConf, DocEncoder
+from doc_enc.doc_encoder import DocEncoderConf, DocEncoder, DocEncodeStat
 from doc_enc.eval.eval_utils import paths_to_ids
 
 
@@ -127,7 +127,9 @@ class CachingDocEncoder(DocEncoder):
             embs_arr[required_idxs] = cache.get_embs()[cached_idxs]
         return embs_arr
 
-    def _compute_embs(self, compute_idxs_dict, path_list, out_embs):
+    def _compute_embs(
+        self, compute_idxs_dict, path_list, out_embs, stat: DocEncodeStat | None = None
+    ):
         for cache_key, idxs_to_compute in compute_idxs_dict.items():
             cache: _Cache = self._caches[cache_key]
             if len(path_list) == len(idxs_to_compute):
@@ -137,7 +139,7 @@ class CachingDocEncoder(DocEncoder):
                 this_cache_paths = [path_list[i] for i in idxs_to_compute]
                 logging.info("computing %s paths for %s cache", len(this_cache_paths), cache_key)
 
-            embs = super().encode_docs_from_path_list(this_cache_paths)
+            embs = super().encode_docs_from_path_list(this_cache_paths, stat=stat)
             cache.add_embs(this_cache_paths, embs)
             self._save_cache_to_disk(cache_key)
             if id(this_cache_paths) == id(path_list):
@@ -146,7 +148,7 @@ class CachingDocEncoder(DocEncoder):
             out_embs[idxs_to_compute] = embs
         return out_embs
 
-    def encode_docs_from_path_list(self, path_list):
+    def encode_docs_from_path_list(self, path_list, stat: DocEncodeStat | None = None):
         cached_idxs_dict = collections.defaultdict(lambda: tuple([[], []]))
         compute_idxs_dict = collections.defaultdict(list)
         for i, path in enumerate(path_list):
@@ -169,4 +171,4 @@ class CachingDocEncoder(DocEncoder):
             return self._assign_embs(cached_idxs_dict, len(path_list))
 
         out_embs = self._assign_embs(cached_idxs_dict, len(path_list))
-        return self._compute_embs(compute_idxs_dict, path_list, out_embs)
+        return self._compute_embs(compute_idxs_dict, path_list, out_embs, stat=stat)
