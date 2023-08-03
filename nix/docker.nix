@@ -1,4 +1,4 @@
-{ pkgs, doc-enc-pkg, name-suffix ? "", private-repo ? ""}:
+{ pkgs, doc-enc-pkg, version, name-suffix ? "", private-repo ? ""}:
 let pypkgs = pkgs.python.pkgs;
     py-env = pkgs.python.buildEnv.override{
       extraLibs = [doc-enc-pkg pypkgs.pip];
@@ -6,7 +6,7 @@ let pypkgs = pkgs.python.pkgs;
 in
 pkgs.dockerTools.streamLayeredImage {
   name = "${private-repo}semvectors/doc_enc${name-suffix}";
-  tag = pypkgs.doc_enc_train.version;
+  tag = version;
 
   maxLayers = 110;
   contents = [

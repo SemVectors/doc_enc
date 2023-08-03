@@ -20,6 +20,7 @@
         python310Packages = prev.python310Packages.overrideScope (
           import ./nix/python-overlay.nix {inherit self pkgs;}
         );
+        python = prev.python310;
       };
 
       packages.x86_64-linux = {
@@ -29,9 +30,11 @@
 
       trainDockerImage =  import ./nix/docker.nix {inherit pkgs;
                                                    doc-enc-pkg = pypkgs.doc_enc_train;
+                                                   version=pypkgs.doc_enc_train.version;
                                                    name-suffix="_train";};
       inferenceDockerImage = import ./nix/docker.nix {inherit pkgs;
-                                                      doc-enc-pkg = pypkgs.doc_enc;};
+                                                      doc-enc-pkg = pypkgs.doc_enc;
+                                                      version=pypkgs.doc_enc.version;};
 
       devShells.x86_64-linux.default =
         pkgs.mkShell {
