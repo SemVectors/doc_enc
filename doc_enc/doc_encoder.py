@@ -745,10 +745,13 @@ class EncodeModule(BaseEncodeModule):
 
     def load_params_from_checkpoint(self, checkpoint_path):
         state = torch.load(checkpoint_path)
+        embed_state_dict = {}
         sent_state_dict = {}
         doc_state_dict = {}
         frag_state_dict = {}
         for k, v in state['model'].items():
+            if k.startswith('embed'):
+                embed_state_dict[k.removeprefix('embed.')] = v
             if k.startswith('sent_layer'):
                 sent_state_dict[k.removeprefix('sent_layer.')] = v
             elif k.startswith('doc_layer'):
@@ -757,6 +760,9 @@ class EncodeModule(BaseEncodeModule):
                 frag_state_dict[k.removeprefix('frag_layer.')] = v
 
         self._load_layer(self.doc_layer, doc_state_dict, self.device)
+        if embed_state_dict:
+            self._load_layer(self.embed, embed_state_dict, self.device)
+
         if sent_state_dict:
             self._load_layer(self.sent_layer, sent_state_dict, self.device)
 
