@@ -792,8 +792,12 @@ class Trainer(BaseTrainerUtils):
         if any_max_grad_norm or self._conf.emb_grad_scale:
             self._scaler.unscale_(self._optimizer)
 
-            if self._conf.emb_grad_scale and self._local_models.sent_model is not None:
-                wgrad = self._local_models.sent_model.encoder.embed.embed_tokens.weight.grad
+            if (
+                self._conf.emb_grad_scale
+                and (sm := self._local_models.sent_model) is not None
+                and sm.embed is not None
+            ):
+                wgrad = sm.embed.embed_tokens.weight.grad
                 if wgrad is not None:
                     wgrad *= self._conf.emb_grad_scale
 
