@@ -133,10 +133,20 @@ def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEn
     return metrics
 
 
+def _check_ds(conf: SentRetrievalConf, dsconf: DatasetConf):
+    base_dir = Path(conf.ds_base_dir)
+    if not (base_dir / dsconf.meta).exists():
+        logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.meta)
+        return False
+    return True
+
+
 def sent_retrieval_eval(conf: SentRetrievalConf, doc_encoder: DocEncoder):
     results = []
     for dataset in conf.datasets:
-        if conf.enabled_ds and dataset.name not in conf.enabled_ds:
+        if (conf.enabled_ds and dataset.name not in conf.enabled_ds) or (
+            not _check_ds(conf, dataset)
+        ):
             continue
         logging.info("Evaling sent retrieval on %s", dataset.name)
         m = _eval_impl(conf, dataset, doc_encoder)

@@ -14,7 +14,7 @@ from doc_enc.eval.caching_doc_encoder import CachingDocEncoder
 @dataclasses.dataclass
 class DocDatasetConf:
     name: str
-    texts: str
+    texts: str | None = None
     paths_file: str | None = None
     repeat_times: int = 3
 
@@ -127,16 +127,26 @@ def _run_bench_on_sents_file(
             stats_recorder.set_extra_stat(avg_sent_len=stat.total_tokens_cnt / stat.sents_cnt)
 
 
-def bench_sents_encoding(config: BenchConf, doc_encoder: DocEncoder):
+def _check_sent_ds(conf: BenchConf, dsconf: SentDatasetConf):
+    base_dir = Path(conf.sent_ds_base_dir)
+    if not (base_dir / dsconf.sents_file).exists():
+        logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.sents_file)
+        return False
+    return True
+
+
+def bench_sents_encoding(conf: BenchConf, doc_encoder: DocEncoder):
     if not doc_encoder.sent_encoding_supported():
         logging.warning("Sent encoding is not supported by this model! Skip benching sent encoding")
         return []
 
     results = []
-    for ds_conf in config.sent_datasets:
+    for dsconf in conf.sent_datasets:
+        if not _check_sent_ds(conf, dsconf):
+            continue
         stats_recorder = StatsRecorder(doc_encoder.enc_module().device)
-        _run_bench_on_sents_file(config.sent_ds_base_dir, ds_conf, doc_encoder, stats_recorder)
-        results.append((ds_conf.name, stats_recorder.finalize_stats(config.keep_full_stats)))
+        _run_bench_on_sents_file(conf.sent_ds_base_dir, dsconf, doc_encoder, stats_recorder)
+        results.append((dsconf.name, stats_recorder.finalize_stats(conf.keep_full_stats)))
 
     return results
 
@@ -176,11 +186,29 @@ def _run_bench_on_docs(
                 )
 
 
-def bench_docs_encoding(config: BenchConf, doc_encoder: DocEncoder):
+def _check_doc_ds(conf: BenchConf, dsconf: DocDatasetConf):
+    base_dir = Path(conf.doc_ds_base_dir)
+
+    if dsconf.texts is not None:
+        path = dsconf.texts
+    elif dsconf.paths_file is not None:
+        path = dsconf.paths_file
+    else:
+        raise RuntimeError("Pass either texts or paths_file")
+
+    if not (base_dir / path).exists():
+        logging.warning("%s does not exist. Skip this dataset", base_dir / path)
+        return False
+    return True
+
+
+def bench_docs_encoding(conf: BenchConf, doc_encoder: DocEncoder):
     results = []
-    for ds_conf in config.doc_datasets:
+    for dsconf in conf.doc_datasets:
+        if not _check_doc_ds(conf, dsconf):
+            continue
         stats_recorder = StatsRecorder(doc_encoder.enc_module().device)
-        _run_bench_on_docs(config.doc_ds_base_dir, ds_conf, doc_encoder, stats_recorder)
-        results.append((ds_conf.name, stats_recorder.finalize_stats(config.keep_full_stats)))
+        _run_bench_on_docs(conf.doc_ds_base_dir, dsconf, doc_encoder, stats_recorder)
+        results.append((dsconf.name, stats_recorder.finalize_stats(conf.keep_full_stats)))
 
     return results

@@ -229,11 +229,22 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     return metrics
 
 
+def _check_ds(conf: DocRetrievalConf, dsconf: DatasetConf):
+    base_dir = Path(conf.ds_base_dir)
+    if not (base_dir / dsconf.meta).exists():
+        logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.meta)
+        return False
+    return True
+
+
 def doc_retrieval_eval(conf: DocRetrievalConf, doc_encoder: DocEncoder):
     results = []
     for dataset in conf.datasets:
-        if conf.enabled_ds and dataset.name not in conf.enabled_ds:
+        if (conf.enabled_ds and dataset.name not in conf.enabled_ds) or (
+            not _check_ds(conf, dataset)
+        ):
             continue
+
         logging.info("Evaling doc retrieval on %s", dataset.name)
         m = _eval_impl(conf, dataset, doc_encoder)
         results.append((dataset.name, m))

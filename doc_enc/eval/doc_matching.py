@@ -154,11 +154,21 @@ def _eval_impl(conf: DocMatchingConf, ds_conf: DatasetConf, doc_encoder, meta_pa
     return {"acc": acc, "f1": f1}
 
 
+def _check_ds(conf: DocMatchingConf, dsconf: DatasetConf):
+    base_dir = Path(conf.ds_base_dir)
+    if not (base_dir / dsconf.meta).exists():
+        logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.meta)
+        return False
+    return True
+
+
 def doc_matching_eval(conf: DocMatchingConf, doc_encoder: DocEncoder):
     random.seed(conf.seed)
     results = []
     for dataset in conf.datasets:
-        if conf.enabled_ds and dataset.name not in conf.enabled_ds:
+        if (conf.enabled_ds and dataset.name not in conf.enabled_ds) or (
+            not _check_ds(conf, dataset)
+        ):
             continue
         m = _eval_impl(conf, dataset, doc_encoder, meta_path=dataset.meta, texts_dir=dataset.texts)
         results.append((dataset.name, m))
