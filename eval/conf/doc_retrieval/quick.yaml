@@ -8,7 +8,6 @@ datasets:
     other_texts_limit: 50_000
     meta: ParalWiki/test.csv
     texts: ParalWiki/texts
-    eval_for_len_groups: true
   - name: ses
     meta: SimEnSci/test.csv
     texts: SimEnSci/texts
