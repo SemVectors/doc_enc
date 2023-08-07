@@ -345,6 +345,7 @@ def test_iterator_two_generators(FakeTrainingData):
     res = list(biter.batches())
     print(res[0])
     assert len(res) == 2
+    res.sort(key=lambda t: t[0].src_ids[0])
     batch1, labels1 = res[0]
     assert batch1.src_ids == [15, 3]
     assert batch1.info['src_docs_cnt'] == 2

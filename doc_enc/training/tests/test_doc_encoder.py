@@ -33,6 +33,7 @@ def test_batch_iter_1():
 
     batches = list(batch_iter.batches())
     assert len(batches) == 2
+    batches.sort(key=lambda t: t[-1][0])
     sents_tokens1, _, idxs1 = batches[0]
     assert len(sents_tokens1) == 2
     assert sents_tokens1[0] == [[111, 112], [121], [131]]

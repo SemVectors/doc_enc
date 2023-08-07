@@ -185,6 +185,7 @@ def test_iterator_two_generators(FakeTrainingData):
     biter.init_epoch(1)
     res = list(biter.batches())
     assert len(res) == 2
+    res.sort(key=lambda t: t[0].src_id[0])
     batch1, _ = res[0]
     assert batch1.info['bs'] == 4
     assert batch1.src_id == [1, 2, 4, 3]
