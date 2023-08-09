@@ -74,7 +74,8 @@ class BaseSentsBatchGenerator:
                 tokens = [self._tp.vocab().pad_idx()]
 
             if sents and (
-                (self._conf.max_sents and len(sents) + 1 > m * self._conf.max_sents)
+                self._tp.conf().split_into_sents
+                and (self._conf.max_sents and len(sents) + 1 > m * self._conf.max_sents)
                 or (
                     self._conf.max_tokens
                     and cur_token_cnt + len(tokens) > m * self._conf.max_tokens
