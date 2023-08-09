@@ -409,10 +409,20 @@ class _InputData:
             }
         raise RuntimeError("Logic error 1940")
 
-    def create_callback_for_split_input(self, encoder: SeqEncoder):
+    def create_callback_for_split_input(
+        self, encoder: SeqEncoder, embed: TokenEmbedding | None = None
+    ):
         if self._tokens_tensor is not None:
 
             def _enc_cb(chunk, chunk_lengths, **kwargs):
+                if embed is not None:
+                    embs = embed(chunk)
+                    return encoder(
+                        input_embs=embs,
+                        input_seq_lengths=chunk_lengths,
+                        padded_seq_len=chunk.shape[1],
+                        **kwargs,
+                    )
                 return encoder(input_token_ids=chunk, input_seq_lengths=chunk_lengths, **kwargs)
 
             return _enc_cb
@@ -436,16 +446,17 @@ class _InputData:
 def encode_input_data(
     input_data: _InputData,
     encoder: SeqEncoder,
+    embed: TokenEmbedding | None = None,
     collect_on_cpu=False,
     split_data=True,
     max_chunk_size=1024,
     max_tokens_in_chunk=48_000,
 ):
+    enc_cb = input_data.create_callback_for_split_input(encoder, embed)
+
     if not split_data:
         # TODO handle collect_on_cpu == True ??
-        return encoder(**input_data.as_kwargs()).pooled_out
-
-    enc_cb = input_data.create_callback_for_split_input(encoder)
+        return enc_cb(input_data.input_tensor(), input_data.lengths()).pooled_out
 
     return split_input_and_embed(
         enc_cb,
@@ -491,11 +502,6 @@ class BaseSentEncodeModule(torch.nn.Module):
             pad_to_multiple_of=self._first_encode_layer().pad_to_multiple_of,
         )
 
-        if self.embed is not None:
-            embs = self.embed(tokens_tensor)
-            return _InputData(
-                emb_tensor=embs, lengths_tensor=lengths_tensor, already_sorted=already_sorted
-            )
         return _InputData(
             tokens_tensor=tokens_tensor,
             lengths_tensor=lengths_tensor,
@@ -516,6 +522,7 @@ class BaseSentEncodeModule(torch.nn.Module):
         return encode_input_data(
             input_data,
             self.sent_layer,
+            embed=self.embed,
             collect_on_cpu=collect_on_cpu,
             split_data=split_sents,
             max_chunk_size=max_chunk_size,
@@ -582,6 +589,7 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 sent_embs = encode_input_data(
                     input_data,
                     self.sent_layer,
+                    embed=self.embed,
                     split_data=split_input,
                     max_chunk_size=max_chunk_size,
                     max_tokens_in_chunk=max_tokens_in_chunk,
@@ -622,6 +630,7 @@ class BaseEncodeModule(BaseSentEncodeModule):
             embs = encode_input_data(
                 input_data,
                 self.frag_layer,
+                embed=self.embed,
                 split_data=split_input,
                 max_chunk_size=max_chunk_size,
                 max_tokens_in_chunk=max_tokens_in_chunk,
@@ -634,8 +643,7 @@ class BaseEncodeModule(BaseSentEncodeModule):
             return doc_embs
 
         # 3. document is a sequence of tokens
-        doc_embs = self.doc_layer(**input_data.as_kwargs()).pooled_out
-        return doc_embs
+        return encode_input_data(input_data, self.doc_layer, self.embed, split_data=False)
 
 
 def _adjust_enc_config(config: BaseEncoderConf):
@@ -794,6 +802,7 @@ class EncodeModule(BaseEncodeModule):
         return encode_input_data(
             input_data,
             encoder,
+            embed=self.embed,
             collect_on_cpu=collect_on_cpu,
             split_data=True,
             max_chunk_size=self._conf.max_sents,
