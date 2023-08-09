@@ -14,7 +14,7 @@ eval_model(){
     local model_name="models.$model_id.pt"
     if [ ! -e "$MODELS_DIR/$model_name" ]; then
         echo "downloading $model_id"
-        wget http://dn11.isa.ru:8080/doc-enc-data/"$model_name" -O "$MODELS_DIR"
+        wget http://dn11.isa.ru:8080/doc-enc-data/"$model_name" -O "$MODELS_DIR/$model_name"
     fi
 
     local batch_size=${BATCH_SIZE_PER_MODEL[default]}
@@ -60,6 +60,7 @@ dl_data(){
 }
 
 
+set -e
 
 MODELS_DIR=""
 DATA_DIR=""
@@ -86,7 +87,8 @@ fi
 if [ ${#EVAL_MODELS[@]} -eq 0 ]; then
     EVAL_MODELS=(distilbert_a1-4 longformer_a1-1 xlm_roberta_a1-1
                  distilroberta-a1-1 distilroberta-fragments-a1-1
-                 distiluse-a1-2 distiluse-fragments-a1-2)
+                 distiluse-a1-2 distiluse-fragments-a1-2
+                 doc_trans_full1-9-4)
 fi
 
 if [ -z "$MODELS_DIR" ]; then
@@ -99,12 +101,12 @@ if [ -z "$DATA_DIR" ]; then
 fi
 mkdir -p "$DATA_DIR"
 
-echo "Download models to $MODELS_DIR"
-echo "Download data to $DATA_DIR"
-
 declare -A BATCH_SIZE_PER_MODEL
 BATCH_SIZE_PER_MODEL[default]=128_000
 BATCH_SIZE_PER_MODEL[longformer_a1-1]=8_000
+echo "Download models to $MODELS_DIR"
+echo "Download data to $DATA_DIR"
+dl_data
 
 for model_id in "${EVAL_MODELS[@]}"; do
     [[ " ${EXCLUDE_MODELS[*]} " =~ " $model_id " ]] && continue
