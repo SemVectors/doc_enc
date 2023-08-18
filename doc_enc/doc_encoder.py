@@ -644,7 +644,14 @@ class BaseEncodeModule(BaseSentEncodeModule):
             return doc_embs
 
         # 3. document is a sequence of tokens
-        return encode_input_data(input_data, self.doc_layer, self.embed, split_data=False)
+        return encode_input_data(
+            input_data,
+            self.doc_layer,
+            self.embed,
+            split_data=split_input,
+            max_chunk_size=max_chunk_size,
+            max_tokens_in_chunk=max_tokens_in_chunk,
+        )
 
 
 def _adjust_enc_config(config: BaseEncoderConf):
