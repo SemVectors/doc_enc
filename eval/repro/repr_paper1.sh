@@ -20,6 +20,19 @@ eval_model(){
     local batch_size=${BATCH_SIZE_PER_MODEL[default]}
     [[ -n ${BATCH_SIZE_PER_MODEL["$model_id"]} ]] && batch_size=${BATCH_SIZE_PER_MODEL["$model_id"]}
 
+    local cp_arg_value="[]"
+    if [[ -n ${MODEL_CHECKPOINTS["$model_id"]} ]]; then
+
+        local cp_name=${MODEL_CHECKPOINTS["$model_id"]}
+        local cp_full_name="models.cp.$cp_name.pt"
+
+        if [ ! -e "$MODELS_DIR/$cp_full_name" ]; then
+            echo "downloading $cp_full_name"
+            wget http://dn11.isa.ru:8080/doc-enc-data/"$cp_full_name" -O "$MODELS_DIR/$cp_full_name"
+        fi
+        cp_arg_value="[$cp_full_name]"
+    fi
+
     docker run  --gpus=1  --rm  \
         -v "$DATA_DIR":/data/ -v "$MODELS_DIR":/models -v "$(pwd)"/eval:/eval/ \
         -e CURL_CA_BUNDLE="" \
@@ -33,6 +46,7 @@ eval_model(){
         eval_sent_retrieval=false \
         bench_doc_encoding=true \
         doc_encoder.model_path="/models/$model_name" \
+        eval_checkpoints="$cp_arg_value" \
         doc_encoder.async_batch_gen=4 \
         doc_encoder.max_sents=6000 \
         doc_encoder.max_tokens="$batch_size" | tee -a paper1_results.txt
@@ -103,7 +117,12 @@ mkdir -p "$DATA_DIR"
 
 declare -A BATCH_SIZE_PER_MODEL
 BATCH_SIZE_PER_MODEL[default]=128_000
-BATCH_SIZE_PER_MODEL[longformer_a1-1]=8_000
+BATCH_SIZE_PER_MODEL[longformer_a1-1]=64_000
+
+declare -A MODEL_CHECKPOINTS
+MODEL_CHECKPOINTS[doc_trans_full1-9-4]=doc_trans_full1-9-4_180k
+
+
 echo "Download models to $MODELS_DIR"
 echo "Download data to $DATA_DIR"
 dl_data
