@@ -31,6 +31,7 @@ model:
   scale: 40
   margin: 0.2
   max_tokens_in_chunk: 10000
+  cross_device_sample: true
   fragment:
     transformers_auto_name: distilbert-base-multilingual-cased
     transformers_cache_dir: /train/transformers_cache
