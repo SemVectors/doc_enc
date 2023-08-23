@@ -14,13 +14,17 @@
           overlays = [ cuda-overlay self.overlays.default ];
           config = {allowUnfree = true;};
           };
-        pypkgs = pkgs.python310Packages;
+        pypkgs = pkgs.pythonPackages;
     in {
       overlays.default = final: prev: {
-        python310Packages = prev.python310Packages.overrideScope (
-          import ./nix/python-overlay.nix {inherit self pkgs;}
-        );
-        python = prev.python310;
+
+        python = prev.python310 // {
+          pkgs = prev.python310.pkgs.overrideScope (
+            import ./nix/python-overlay.nix {inherit self pkgs;}
+          );
+        };
+        pythonPackages = final.python.pkgs;
+
       };
 
       packages.x86_64-linux = {
