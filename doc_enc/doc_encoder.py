@@ -393,22 +393,30 @@ class _InputData:
     def lengths(self):
         return self._lengths_tensor
 
+    def _update_kwargs(self, kwargs):
+        if 'enforce_sorted' not in kwargs:
+            kwargs['enforce_sorted'] = self._already_sorted
+
+    def input_sorted(self):
+        return self._already_sorted
+
     def as_kwargs(self):
         if self._tokens_tensor is not None:
-            return {
+            kwargs = {
                 'input_token_ids': self._tokens_tensor,
                 'input_seq_lengths': self._lengths_tensor,
-                'enforce_sorted': self._already_sorted,
             }
 
-        if self._emb_tensor is not None:
-            return {
+        elif self._emb_tensor is not None:
+            kwargs = {
                 'input_embs': self._emb_tensor,
                 'input_seq_lengths': self._lengths_tensor,
                 'padded_seq_len': self._emb_tensor.shape[1],
-                'enforce_sorted': self._already_sorted,
             }
-        raise RuntimeError("Logic error 1940")
+        else:
+            raise RuntimeError("Logic error 1940")
+        self._update_kwargs(kwargs)
+        return kwargs
 
     def create_callback_for_split_input(
         self, encoder: SeqEncoder, embed: TokenEmbedding | None = None
@@ -416,6 +424,7 @@ class _InputData:
         if self._tokens_tensor is not None:
 
             def _enc_cb(chunk, chunk_lengths, **kwargs):
+                self._update_kwargs(kwargs)
                 if embed is not None:
                     embs = embed(chunk)
                     return encoder(
@@ -431,6 +440,7 @@ class _InputData:
         if self._emb_tensor is not None:
 
             def _enc_cb(chunk, chunk_lengths, **kwargs):
+                self._update_kwargs(kwargs)
                 padded_seq_len = chunk.shape[1]
                 return encoder(
                     input_embs=chunk,
@@ -467,6 +477,7 @@ def encode_input_data(
         max_tokens_in_chunk=max_tokens_in_chunk,
         collect_on_cpu=collect_on_cpu,
         pad_to_multiple_of=encoder.pad_to_multiple_of,
+        already_sorted=input_data.input_sorted(),
     )
 
 

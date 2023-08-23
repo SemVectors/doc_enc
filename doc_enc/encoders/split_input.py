@@ -16,30 +16,30 @@ def _encoder_res_finalize(res: BaseEncoderOut, collect_on_cpu=False):
 
 def split_input_and_embed(
     encoder: Callable,
-    sents: torch.Tensor,
-    sent_lengths: torch.Tensor,
+    input: torch.Tensor,
+    input_lengths: torch.Tensor,
     max_chunk_size: int,
     max_tokens_in_chunk: int,
     collect_on_cpu: bool = False,
     already_sorted: bool = False,
     pad_to_multiple_of: int = 0,
 ) -> torch.Tensor:
-    if not sent_lengths.numel():
+    if not input_lengths.numel():
         return torch.FloatTensor()
 
-    max_len = torch.max(sent_lengths).item()
-    sents_cnt = sents.size(0)
+    max_len = torch.max(input_lengths).item()
+    sents_cnt = input.size(0)
     if sents_cnt <= max_chunk_size and max_len * sents_cnt < max_tokens_in_chunk:
-        res = encoder(sents, sent_lengths, enforce_sorted=False)
+        res = encoder(input, input_lengths, enforce_sorted=already_sorted)
         return _encoder_res_finalize(res, collect_on_cpu)
 
     if not already_sorted:
-        sorted_lengths, sorted_indices = torch.sort(sent_lengths, descending=True)
-        sorted_indices = sorted_indices.to(sent_lengths.device)
-        sorted_sents = sents[sorted_indices]
+        sorted_lengths, sorted_indices = torch.sort(input_lengths, descending=True)
+        sorted_indices = sorted_indices.to(input_lengths.device)
+        sorted_sents = input[sorted_indices]
     else:
-        sorted_sents = sents
-        sorted_lengths = sent_lengths
+        sorted_sents = input
+        sorted_lengths = input_lengths
         sorted_indices = None
 
     embs = []
@@ -51,7 +51,7 @@ def split_input_and_embed(
             " or max sentence size is too big"
         )
 
-    if pad_to_multiple_of and sents.size(1) % pad_to_multiple_of != 0:
+    if pad_to_multiple_of and input.size(1) % pad_to_multiple_of != 0:
         raise RuntimeError(f"Sents should be padded in batch generator to {pad_to_multiple_of}")
 
     while beg_offs < sents_cnt:
@@ -82,5 +82,5 @@ def split_input_and_embed(
 
         embeddings = embeddings.index_select(0, unsorted_indices)
 
-    assert len(sents) == len(embeddings), "assert wrong size of tgt after concat"
+    assert len(input) == len(embeddings), "assert wrong size of tgt after concat"
     return embeddings
