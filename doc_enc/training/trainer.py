@@ -1003,7 +1003,10 @@ class Trainer(BaseTrainerUtils):
                 break
 
             if self._scheduler is not None:
-                self._scheduler.step()
+                try:
+                    self._scheduler.step()
+                except Exception as e:
+                    logging.warning("Exception on step of scheduler: %s", e)
 
             if self._sync_quiting(train_iter.empty()):
                 break
