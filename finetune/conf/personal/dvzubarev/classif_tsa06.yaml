@@ -3,10 +3,16 @@ defaults:
   - /base_classif_config
   - _self_
 
-model_path: /home/dvzubarev/Workspace/projects/semvectors/doc_enc/outputs/2023-04-12/17-00-40/model.pt
+model_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/tuning/trans/doc_trans_full1-9-4/model.pt
 use_gpu: 0
-train_meta_path: /tmp/classif/train.csv
-dev_meta_path: /tmp/classif/dev.csv
-data_dir: /tmp/classif/data/
-save_path: /tmp/classif/model.pt
+train_meta_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/train.csv
+dev_meta_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/dev.csv
+data_dir: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/data
+save_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/models/classif_model.pt
 nlabels: 2
+nepoch: 1

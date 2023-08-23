@@ -5,6 +5,7 @@ import logging
 import dataclasses
 import csv
 import os
+from pathlib import Path
 
 
 import hydra
@@ -56,7 +57,7 @@ class DocClassifier(nn.Module):
         self.encoder = encoder
 
         self.classif_layer = nn.Linear(encoder.doc_embs_dim(), classif_nlabels)
-        self.classif_layer = self.classif_layer.to(device=self.encoder.device())
+        self.classif_layer = self.classif_layer.to(device=self.encoder.device)
 
     def forward(self, docs, doc_fragments):
         embeddings = self.encoder(docs, doc_fragments)
@@ -77,7 +78,7 @@ class ClassifBatchIterator:
         with open(meta_path, 'r', encoding='utf8') as infp:
             reader = csv.reader(infp)
             for row in reader:
-                fp = base_data_dir + row[0]
+                fp = Path(base_data_dir) / row[0]
                 self._path_list.append(fp)
                 self._labels_list.append(int(row[1]))
 
@@ -101,7 +102,7 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
         conf.train_meta_path,
         conf.data_dir,
         doc_encoder.create_batch_iterator(eval_mode=False),
-        device=doc_encoder.device(),
+        device=doc_encoder.device,
     )
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=conf.lr)
@@ -138,7 +139,7 @@ def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier):
         conf.dev_meta_path,
         conf.data_dir,
         model.encoder.create_batch_iterator(eval_mode=True),
-        device=model.encoder.device(),
+        device=model.encoder.device,
     )
 
     nlbl = conf.nlabels
@@ -158,6 +159,9 @@ def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier):
             cls_total[i] += (labels == i).int().sum().cpu()
             tp[i] += (predicted[(labels == i)] == i).int().sum().cpu()
 
+    if total == 0:
+        return {}
+
     rec = tp / cls_total
     prec = tp / cls_predicted
 
@@ -174,10 +178,13 @@ def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier):
 
 def _save_model_if_best(conf: FineTuneConf, model: DocClassifier, metrics, best_metric):
     if conf.validation_metric == 'acc':
-        m = metrics['acc']
+        m = metrics.get('acc', 0)
     elif conf.validation_metric.startswith('F1'):
         cls_num = int(conf.validation_metric.split('_')[-1])
-        m = metrics['F1'][cls_num]
+        if f1m := metrics.get('F1'):
+            m = f1m[cls_num]
+        else:
+            m = 0
     else:
         raise RuntimeError(f"Unknown validation metric: {conf.validation_metric}")
 

@@ -11,7 +11,7 @@ class ClassifDoc(DocEncoder):
     def __init__(self, conf: DocEncoderConf) -> None:
         super().__init__(conf)
 
-        d = self.enc_module().device()
+        d = self.enc_module().device
         state_dict = torch.load(conf.model_path, map_location=d)
 
         if 'fine_tune_cfg' not in state_dict:
