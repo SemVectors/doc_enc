@@ -717,8 +717,12 @@ class Trainer(BaseTrainerUtils):
         if not self._verbose:
             return
         if task == TaskType.SENT_RETR:
-            logging.debug('src sents shape: %s', batch.src.size())
-            logging.debug('tgt sents shape: %s', batch.tgt.size())
+            sl = len(batch.src)
+            sm = max(batch.src_len)
+            tl = len(batch.tgt)
+            tm = max(batch.tgt_len)
+            logging.debug('src sents shape: %s', (sl, sm))
+            logging.debug('tgt sents shape: %s', (tl, tm))
             if self._conf.print_batches:
                 logging.debug('src_len: %s', batch.src_len)
                 logging.debug('tgt_len: %s', batch.tgt_len)
