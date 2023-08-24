@@ -338,11 +338,15 @@ class BatchIterator:
         if not logging.getLogger().isEnabledFor(logging.DEBUG):
             return
         docs, *_ = batch
+        doc_max_len = max([len(d) for d in docs])
+        sent_max_len = max([len(s) for d in docs for s in d])
         logging.debug(
-            "docs_cnt=%s, segments_cnt=%s, tokens_cnt=%s",
+            "docs_cnt=%s, segments_cnt=%s, tokens_cnt=%s; doc_max_len=%s, sent_max_len=%s",
             len(docs),
             sum(len(d) for d in docs),
             sum(len(s) for d in docs for s in d),
+            doc_max_len,
+            sent_max_len,
         )
 
     def batches(self):

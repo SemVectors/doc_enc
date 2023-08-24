@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+  /srv/apps/patent-classification/models.doc_trans_full1-9-4.pt
+use_gpu: 0
+train_meta_path: >-
+  /srv/apps/patent-classification/patents-ru/train.csv
+dev_meta_path: >-
+  /srv/apps/patent-classification/patents-ru/dev.csv
+data_dir: >-
+  /srv/apps/patent-classification/ru_patents_dataset.segmented
+save_path: >-
+  /srv/apps/patent-classification/models/ru-patent-classif.pt
+nepoch: 4
+async_batch_gen: 4
+max_sents: 2048
+max_tokens: 96_000

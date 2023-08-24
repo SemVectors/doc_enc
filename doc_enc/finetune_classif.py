@@ -10,7 +10,7 @@ from pathlib import Path
 
 import hydra
 from hydra.core.config_store import ConfigStore
-from omegaconf import MISSING
+from omegaconf import MISSING, OmegaConf
 
 import torch
 from torch import nn
@@ -68,7 +68,9 @@ class DocClassifier(nn.Module):
 
 
 class ClassifBatchIterator:
-    def __init__(self, meta_path, base_data_dir, docs_iter: BatchIterator, device=None) -> None:
+    def __init__(
+        self, meta_path, base_data_dir, docs_iter: BatchIterator, labels_mapping, device=None
+    ) -> None:
         self._docs_iter = docs_iter
 
         self._path_list = []
@@ -80,7 +82,10 @@ class ClassifBatchIterator:
             for row in reader:
                 fp = Path(base_data_dir) / row[0]
                 self._path_list.append(fp)
-                self._labels_list.append(int(row[1]))
+                label = row[1]
+                if label not in labels_mapping:
+                    raise RuntimeError(f"Unknown label: {label}")
+                self._labels_list.append(labels_mapping[label])
 
     def batches(self):
         self._docs_iter.start_workers_for_item_list(self._path_list, file_path_fetcher)
@@ -95,19 +100,41 @@ class ClassifBatchIterator:
 # * Train loop
 
 
+def _create_label_mapping(meta_path):
+    unique_labels = []
+    labels_mapping = {}
+    with open(meta_path, 'r', encoding='utf8') as infp:
+        reader = csv.reader(infp)
+        for row in reader:
+            label = row[1]
+            if label not in labels_mapping:
+                labels_mapping[label] = len(unique_labels)
+                unique_labels.append(label)
+    return unique_labels, labels_mapping
+
+
 def classif_fine_tune(conf: ClassifFineTuneConf):
+    labels_index, labels_mapping = _create_label_mapping(conf.train_meta_path)
+    if OmegaConf.is_missing(conf, 'nlabels'):
+        conf.nlabels = len(labels_index)
+    logging.info("Found %s unique labels, first 20: %s", len(labels_index), labels_index[:20])
     doc_encoder = EncodeModule(conf)
     model = DocClassifier(doc_encoder, conf.nlabels)
     train_iter = ClassifBatchIterator(
         conf.train_meta_path,
         conf.data_dir,
         doc_encoder.create_batch_iterator(eval_mode=False),
+        labels_mapping=labels_mapping,
         device=doc_encoder.device,
     )
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=conf.lr)
     scaler = GradScaler(enabled=True)
     best_metric = 0.0
+    running_loss = 0.0
+    update_nums = 0
+    running_correct = 0
+    running_examples_num = 0
     for epoch in range(conf.nepoch):
         loss_epoch = 0.0
         for docs, doc_fragments, labels in train_iter.batches():
@@ -124,21 +151,45 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
             scaler.step(optimizer)
             scaler.update()
             loss_epoch += loss.item()
+            running_loss += loss.item()
+            _, predicted = torch.max(outputs, 1)
+            running_correct += (predicted == labels).int().sum().cpu().item()
+            running_examples_num += labels.size(0)
+            update_nums += 1
+
+            if update_nums % 100 == 0:
+                logging.info(
+                    "#%d, avg loss: %.3f, acc: %.3f",
+                    update_nums,
+                    running_loss / 100,
+                    running_correct / running_examples_num,
+                )
+                running_loss = 0
+                running_correct = 0
+                running_examples_num = 0
 
         logging.info('Ep %s | loss %s', epoch, loss_epoch)
 
         with torch.no_grad():
-            metrics = eval_on_dataset(conf, model)
+            metrics = eval_on_dataset(conf, model, labels_mapping=labels_mapping)
 
-        best_metric = _save_model_if_best(conf, model, metrics, best_metric)
+        best_metric = _save_model_if_best(
+            conf,
+            model,
+            metrics,
+            best_metric,
+            labels_index=labels_index,
+            labels_mapping=labels_mapping,
+        )
 
 
-def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier):
+def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier, labels_mapping):
     model.eval()
     dev_iter = ClassifBatchIterator(
         conf.dev_meta_path,
         conf.data_dir,
         model.encoder.create_batch_iterator(eval_mode=True),
+        labels_mapping=labels_mapping,
         device=model.encoder.device,
     )
 
@@ -176,7 +227,9 @@ def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier):
     return metrics
 
 
-def _save_model_if_best(conf: FineTuneConf, model: DocClassifier, metrics, best_metric):
+def _save_model_if_best(
+    conf: FineTuneConf, model: DocClassifier, metrics, best_metric, labels_index, labels_mapping
+):
     if conf.validation_metric == 'acc':
         m = metrics.get('acc', 0)
     elif conf.validation_metric.startswith('F1'):
@@ -200,6 +253,8 @@ def _save_model_if_best(conf: FineTuneConf, model: DocClassifier, metrics, best_
         d = model.encoder.to_dict()
         d['fine_tune_cfg'] = conf
         d['classif_layer'] = model.classif_layer.state_dict()
+        d['labels_index'] = labels_index
+        d['labels_mapping'] = labels_mapping
 
         save_path = conf.save_path
         if not save_path:
