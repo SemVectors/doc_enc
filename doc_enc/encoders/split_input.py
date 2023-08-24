@@ -54,8 +54,9 @@ def split_input_and_embed(
     if pad_to_multiple_of and input.size(1) % pad_to_multiple_of != 0:
         raise RuntimeError(f"Sents should be padded in batch generator to {pad_to_multiple_of}")
 
+    sorted_lengths_list = sorted_lengths.tolist()
     while beg_offs < sents_cnt:
-        max_len = sorted_lengths[beg_offs].item()
+        max_len = sorted_lengths_list[beg_offs]
         if pad_to_multiple_of and max_len % pad_to_multiple_of != 0:
             max_len = ((max_len // pad_to_multiple_of) + 1) * pad_to_multiple_of
 
