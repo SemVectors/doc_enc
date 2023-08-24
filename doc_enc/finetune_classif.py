@@ -87,6 +87,9 @@ class ClassifBatchIterator:
                     raise RuntimeError(f"Unknown label: {label}")
                 self._labels_list.append(labels_mapping[label])
 
+    def destroy(self):
+        self._docs_iter.destroy()
+
     def batches(self):
         self._docs_iter.start_workers_for_item_list(self._path_list, file_path_fetcher)
 
@@ -127,6 +130,21 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
         labels_mapping=labels_mapping,
         device=doc_encoder.device,
     )
+    try:
+        _train_loop(
+            conf, train_iter, model, labels_index=labels_index, labels_mapping=labels_mapping
+        )
+    finally:
+        train_iter.destroy()
+
+
+def _train_loop(
+    conf: ClassifFineTuneConf,
+    train_iter: ClassifBatchIterator,
+    model: DocClassifier,
+    labels_index,
+    labels_mapping,
+):
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=conf.lr)
     scaler = GradScaler(enabled=True)

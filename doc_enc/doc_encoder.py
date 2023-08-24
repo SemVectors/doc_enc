@@ -989,14 +989,17 @@ class DocEncoder:
         batch_iterator = self._enc_module.create_sents_batch_iterator()
         batch_iterator.start_workers(generator_funcs)
 
-        for sent_tokens, sent_ids in batch_iterator.batches():
-            if stat is not None:
-                stat.total_tokens_cnt += sum(len(s) for s in sent_tokens)
-                stat.sents_cnt += len(sent_tokens)
+        try:
+            for sent_tokens, sent_ids in batch_iterator.batches():
+                if stat is not None:
+                    stat.total_tokens_cnt += sum(len(s) for s in sent_tokens)
+                    stat.sents_cnt += len(sent_tokens)
 
-            sent_embs = self._encode_sents(sent_tokens)
-            sent_embs = sent_embs.to(device='cpu').numpy()
-            yield sent_ids, sent_embs
+                sent_embs = self._encode_sents(sent_tokens)
+                sent_embs = sent_embs.to(device='cpu').numpy()
+                yield sent_ids, sent_embs
+        finally:
+            batch_iterator.destroy()
 
     def generate_sent_embs_from_file(
         self,
@@ -1059,23 +1062,26 @@ class DocEncoder:
         batch_iter = self._enc_module.create_batch_iterator()
 
         batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
-        for docs, doc_lengths, idxs in batch_iter.batches():
-            if stat is not None:
-                self._update_doc_stat(docs, stat)
-            doc_embs = self._encode_docs(docs, doc_lengths)
-            embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
-            embs_idxs.extend(idxs)
+        try:
+            for docs, doc_lengths, idxs in batch_iter.batches():
+                if stat is not None:
+                    self._update_doc_stat(docs, stat)
+                doc_embs = self._encode_docs(docs, doc_lengths)
+                embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
+                embs_idxs.extend(idxs)
 
-        stacked = torch.vstack(embs)
-        assert stacked.shape[0] == len(
-            path_list
-        ), f"Missaligned data: {stacked.shape[0]} != {len(path_list)}"
+            stacked = torch.vstack(embs)
+            assert stacked.shape[0] == len(
+                path_list
+            ), f"Missaligned data: {stacked.shape[0]} != {len(path_list)}"
 
-        embs_idxs = torch.tensor(embs_idxs)
-        initial_order_idxs = torch.empty_like(embs_idxs)
-        initial_order_idxs.scatter_(0, embs_idxs, torch.arange(0, embs_idxs.numel()))
-        reordered_embs = stacked.index_select(0, initial_order_idxs)
-        return reordered_embs.numpy()
+            embs_idxs = torch.tensor(embs_idxs)
+            initial_order_idxs = torch.empty_like(embs_idxs)
+            initial_order_idxs.scatter_(0, embs_idxs, torch.arange(0, embs_idxs.numel()))
+            reordered_embs = stacked.index_select(0, initial_order_idxs)
+            return reordered_embs.numpy()
+        finally:
+            batch_iter.destroy()
 
     def encode_docs_from_dir(
         self, path: Path, stat: DocEncodeStat | None = None
@@ -1134,8 +1140,11 @@ class DocEncoder:
         batch_iter.start_workers_for_stream(
             doc_id_generator, fetcher=fetcher, batch_size=batch_size
         )
-        for docs, doc_lengths, ids in batch_iter.batches():
-            if stat is not None:
-                self._update_doc_stat(docs, stat)
-            doc_embs = self._encode_docs(docs, doc_lengths)
-            yield ids, doc_embs.to(device='cpu', dtype=torch.float32).numpy()
+        try:
+            for docs, doc_lengths, ids in batch_iter.batches():
+                if stat is not None:
+                    self._update_doc_stat(docs, stat)
+                doc_embs = self._encode_docs(docs, doc_lengths)
+                yield ids, doc_embs.to(device='cpu', dtype=torch.float32).numpy()
+        finally:
+            batch_iter.destroy()
