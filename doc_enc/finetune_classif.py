@@ -277,6 +277,10 @@ def _save_model_if_best(
         save_path = conf.save_path
         if not save_path:
             save_path = os.path.join(os.getcwd(), 'model.pt')
+
+        if not (p := Path(save_path).parent).exists():
+            p.mkdir(parents=True)
+
         torch.save(d, save_path)
         logging.info("new best model was saved")
         return m
