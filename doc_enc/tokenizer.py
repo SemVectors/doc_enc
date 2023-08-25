@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
+import logging
+import time
 import json
 from pathlib import Path
 import dataclasses
 from enum import Enum
 
 
+import requests
 from transformers import AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import sentencepiece as spm
@@ -180,10 +183,22 @@ class BaseTransformersTokenizer(AbcTokenizer):
 
 class TransformersTokenizer(BaseTransformersTokenizer):
     def __init__(self, conf: TokenizerConf, inference_mode=False) -> None:
-        tokenizer = AutoTokenizer.from_pretrained(
-            conf.transformers_auto_name,
-            cache_dir=conf.transformers_cache_dir,
-        )
+        tries = 0
+        while True:
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(
+                    conf.transformers_auto_name,
+                    cache_dir=conf.transformers_cache_dir,
+                )
+                if tries > 0:
+                    logging.warning("Eventually connected!")
+                break
+            except requests.exceptions.SSLError:
+                # annoying error that pops up very often.
+                # this library always tries to connect to smth online, even if all models are cached...
+                logging.warning("Huggingface cant connect to its resources, waiting a bit..")
+                tries += 1
+                time.sleep(1)
         super().__init__(tokenizer, inference_mode=inference_mode)
 
 
