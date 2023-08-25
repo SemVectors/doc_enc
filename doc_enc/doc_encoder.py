@@ -48,6 +48,9 @@ class DocEncoderConf:
 
     bucket_multiplier: int = 2
 
+    # truncate docs that are excessively long
+    truncate_long_docs: bool = False
+
 
 # * Batch helpers
 
@@ -185,15 +188,19 @@ class BaseBatchGenerator:
         cur_segments_cnt = 0
         batch_idx_list = []
         m = self._conf.bucket_multiplier
+        truncate_length = m * self._conf.max_tokens if self._conf.truncate_long_docs else 0
         for idx, doc in fetcher(items):
             if isinstance(doc, str):
                 doc = doc.split('\n')
 
-            segmented_text, doc_segments_length = self._tp.prepare_text(doc)
+            segmented_text, doc_segments_length = self._tp.prepare_text(
+                doc, truncate_length_in_tokens=truncate_length
+            )
             token_cnt = sum(len(s) for s in segmented_text)
             if not token_cnt:
                 segmented_text = [[self._tp.vocab().pad_idx()]]
                 doc_segments_length = [1]
+                token_cnt = 1
 
             if docs and (
                 (

@@ -55,12 +55,15 @@ class TextProcessor:
 
         return False
 
-    def prepare_text(self, text_sents: Iterable[str]) -> tuple[list[list[int]], list[int]]:
+    def prepare_text(
+        self, text_sents: Iterable[str], truncate_length_in_tokens: int = 0
+    ) -> tuple[list[list[int]], list[int]]:
         segmented_text: list[list[int]] = []
         doc_segments_length: list[int] = []
 
         if self._conf.split_into_sents:
             # 1. document is a sequence of sentences (maybe grouped into fragments)
+            cur_len_in_tokens = 0
             for sent in text_sents:
                 if not sent.strip():
                     continue
@@ -70,6 +73,9 @@ class TextProcessor:
                     if self._conf.max_sent_len:
                         tokens = tokens[: self._conf.max_sent_len]
                     segmented_text.append(tokens)
+                    cur_len_in_tokens += len(tokens)
+                    if truncate_length_in_tokens and cur_len_in_tokens > truncate_length_in_tokens:
+                        break
 
             if self._conf.split_into_fragments:
                 # document is a sequence of fragments
@@ -86,16 +92,23 @@ class TextProcessor:
                 text_sents = list(text_sents)
             fragment_lengths = split_into_fragments_by_len(text_sents, self._conf.fragment_size)
             offset = 0
+            cur_len_in_tokens = 0
             for frag_len in fragment_lengths:
                 tokens = self._tokenizer('\n'.join(text_sents[offset : offset + frag_len]))
                 offset += frag_len
                 segmented_text.append(tokens)
+                cur_len_in_tokens += len(tokens)
+                if truncate_length_in_tokens and cur_len_in_tokens > truncate_length_in_tokens:
+                    break
+
             # save number of fragments for this doc
-            doc_segments_length.append(len(fragment_lengths))
+            doc_segments_length.append(len(segmented_text))
         else:
             # 3. document is a sequence of tokens
             text = '\n'.join(text_sents)
             tokens = self._tokenizer(text)
+            if truncate_length_in_tokens and len(tokens) > truncate_length_in_tokens:
+                tokens = tokens[:truncate_length_in_tokens]
             segmented_text.append(tokens)
             # document is one sequence
             doc_segments_length.append(1)
