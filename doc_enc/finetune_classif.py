@@ -31,6 +31,7 @@ class FineTuneConf(DocEncoderConf):
     data_dir: str = MISSING
     save_path: str = ''
 
+    dropout: float = 0.1
     lr: float = 0.0002
     nepoch: int = 5
 
@@ -54,15 +55,20 @@ cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 
 class DocClassifier(nn.Module):
-    def __init__(self, encoder: EncodeModule, classif_nlabels=0):
+    def __init__(self, encoder: EncodeModule, conf: ClassifFineTuneConf):
         super().__init__()
         self.encoder = encoder
 
-        self.classif_layer = nn.Linear(encoder.doc_embs_dim(), classif_nlabels)
+        self.dropout = None
+        if conf.dropout > 0.0:
+            self.dropout = nn.Dropout(conf.dropout)
+        self.classif_layer = nn.Linear(encoder.doc_embs_dim(), conf.nlabels)
         self.classif_layer = self.classif_layer.to(device=self.encoder.device)
 
     def forward(self, docs, doc_fragments):
         embeddings = self.encoder(docs, doc_fragments)
+        if self.dropout is not None:
+            embeddings = self.dropout(embeddings)
         return self.classif_layer(embeddings)
 
 
@@ -73,7 +79,7 @@ def _create_model(conf: ClassifFineTuneConf):
         and (ft_cfg := doc_encoder._state_dict.get('fine_tune_cfg')) is not None
     ):
         conf.nlabels = ft_cfg.nlabels
-    model = DocClassifier(doc_encoder, conf.nlabels)
+    model = DocClassifier(doc_encoder, conf)
     if 'classif_layer' in doc_encoder._state_dict:
         model.classif_layer.load_state_dict(doc_encoder._state_dict['classif_layer'])
     return model
@@ -138,6 +144,7 @@ def _train_classif(conf: ClassifFineTuneConf):
     logging.info("Found %s unique labels, first 20: %s", len(labels_index), labels_index[:20])
 
     model = _create_model(conf)
+    logging.info("Model:\n%s", model)
 
     train_iter = ClassifBatchIterator(
         conf.train_meta_path,
