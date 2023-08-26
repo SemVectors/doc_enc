@@ -233,12 +233,14 @@ def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier, labels_mapp
 
     rec = tp / cls_total
     prec = tp / cls_predicted
+    f1 = 2 * rec * prec / (rec + prec)
 
     metrics = {
         'acc': correct.item() / total,
+        'macro_F1': f1.mean().item(),
         'recall': rec.tolist(),
         'precision': prec.tolist(),
-        'F1': (2 * rec * prec / (rec + prec)).tolist(),
+        'F1': f1.tolist(),
         'predictions_per_cls': [c.item() / total for c in cls_predicted],
     }
 
