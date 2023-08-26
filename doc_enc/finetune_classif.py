@@ -32,8 +32,8 @@ class FineTuneConf(DocEncoderConf):
     save_path: str = ''
 
     eval_every: int = 1000
-    dropout: float = 0.1
-    lr: float = 0.0002
+    dropout: float = 0.5
+    lr: float = 0.0003
     lr_scheduler_kwargs: dict = dataclasses.field(default_factory=dict)
     max_updates: int = 5000
 
