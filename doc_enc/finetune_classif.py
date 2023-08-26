@@ -211,7 +211,7 @@ def _train_loop(
     labels_mapping,
 ):
     criterion = nn.CrossEntropyLoss().cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=conf.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=conf.lr)
 
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
