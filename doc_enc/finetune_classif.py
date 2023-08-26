@@ -226,6 +226,7 @@ def _train_loop(
     update_nums = 0
     running_correct = 0
     running_examples_num = 0
+    docs_total = 0
     epoch = 0
     while update_nums < conf.max_updates:
         epoch += 1
@@ -248,12 +249,14 @@ def _train_loop(
             _, predicted = torch.max(outputs, 1)
             running_correct += (predicted == labels).int().sum().cpu().item()
             running_examples_num += labels.size(0)
+            docs_total += len(docs)
             update_nums += 1
 
             if update_nums % 100 == 0:
                 logging.info(
-                    "#%d, avg loss: %.3f, acc: %.3f, lr:%.5e",
+                    "#%d, docs_per_batch: %.1f, avg loss: %.3f, acc: %.3f, lr:%.5e",
                     update_nums,
+                    docs_total / 100,
                     running_loss / 100,
                     running_correct / running_examples_num,
                     scheduler.get_last_lr()[0],
@@ -261,6 +264,7 @@ def _train_loop(
                 running_loss = 0
                 running_correct = 0
                 running_examples_num = 0
+                docs_total = 0
 
             if update_nums % conf.eval_every == 0:
                 best_metric = _eval_on_dev_and_maybe_save(
