@@ -36,6 +36,8 @@ class FineTuneConf(DocEncoderConf):
 
     validation_metric: str = 'acc'
 
+    only_eval_test: bool = False
+
 
 @dataclasses.dataclass
 class ClassifFineTuneConf(FineTuneConf):
@@ -62,6 +64,19 @@ class DocClassifier(nn.Module):
     def forward(self, docs, doc_fragments):
         embeddings = self.encoder(docs, doc_fragments)
         return self.classif_layer(embeddings)
+
+
+def _create_model(conf: ClassifFineTuneConf):
+    doc_encoder = EncodeModule(conf)
+    if (
+        OmegaConf.is_missing(conf, 'nlabels')
+        and (ft_cfg := doc_encoder._state_dict.get('fine_tune_cfg')) is not None
+    ):
+        conf.nlabels = ft_cfg.nlabels
+    model = DocClassifier(doc_encoder, conf.nlabels)
+    if 'classif_layer' in doc_encoder._state_dict:
+        model.classif_layer.load_state_dict(doc_encoder._state_dict['classif_layer'])
+    return model
 
 
 # * Data Iterators
@@ -116,19 +131,20 @@ def _create_label_mapping(meta_path):
     return unique_labels, labels_mapping
 
 
-def classif_fine_tune(conf: ClassifFineTuneConf):
+def _train_classif(conf: ClassifFineTuneConf):
     labels_index, labels_mapping = _create_label_mapping(conf.train_meta_path)
     if OmegaConf.is_missing(conf, 'nlabels'):
         conf.nlabels = len(labels_index)
     logging.info("Found %s unique labels, first 20: %s", len(labels_index), labels_index[:20])
-    doc_encoder = EncodeModule(conf)
-    model = DocClassifier(doc_encoder, conf.nlabels)
+
+    model = _create_model(conf)
+
     train_iter = ClassifBatchIterator(
         conf.train_meta_path,
         conf.data_dir,
-        doc_encoder.create_batch_iterator(eval_mode=False),
+        model.encoder.create_batch_iterator(eval_mode=False),
         labels_mapping=labels_mapping,
-        device=doc_encoder.device,
+        device=model.encoder.device,
     )
     try:
         _train_loop(
@@ -136,6 +152,28 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
         )
     finally:
         train_iter.destroy()
+
+
+def classif_fine_tune(conf: ClassifFineTuneConf):
+    if not conf.only_eval_test:
+        _train_classif(conf)
+
+    if not OmegaConf.is_missing(conf, 'test_meta_path'):
+        if not conf.only_eval_test:
+            conf.model_path = conf.save_path
+
+        logging.info("Evaling on test:")
+        logging.info("Loading saved model from %s", conf.model_path)
+
+        model = _create_model(conf)
+        labels_mapping = model.encoder._state_dict['labels_mapping']
+        with torch.inference_mode():
+            metrics = eval_on_dataset(
+                conf, conf.test_meta_path, model, labels_mapping=labels_mapping
+            )
+        print(metrics)
+        print('Acc,macro_F1')
+        print(f'{metrics["acc"]:.3f},{metrics["macro_F1"]:.3f}')
 
 
 def _train_loop(
@@ -189,7 +227,9 @@ def _train_loop(
         logging.info('Ep %s | loss %s', epoch, loss_epoch)
 
         with torch.no_grad():
-            metrics = eval_on_dataset(conf, model, labels_mapping=labels_mapping)
+            metrics = eval_on_dataset(
+                conf, conf.dev_meta_path, model, labels_mapping=labels_mapping
+            )
 
         best_metric = _save_model_if_best(
             conf,
@@ -201,10 +241,10 @@ def _train_loop(
         )
 
 
-def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier, labels_mapping):
+def eval_on_dataset(conf: ClassifFineTuneConf, meta_path, model: DocClassifier, labels_mapping):
     model.eval()
-    dev_iter = ClassifBatchIterator(
-        conf.dev_meta_path,
+    test_iter = ClassifBatchIterator(
+        meta_path,
         conf.data_dir,
         model.encoder.create_batch_iterator(eval_mode=True),
         labels_mapping=labels_mapping,
@@ -217,8 +257,9 @@ def eval_on_dataset(conf: ClassifFineTuneConf, model: DocClassifier, labels_mapp
     cls_total = torch.zeros(nlbl, dtype=torch.int32)
     cls_predicted = torch.zeros(nlbl, dtype=torch.int32)
     tp = torch.zeros(nlbl, dtype=torch.int32)
-    for docs, doc_fragments, labels in dev_iter.batches():
-        output = model(docs, doc_fragments)
+    for docs, doc_fragments, labels in test_iter.batches():
+        with autocast():
+            output = model(docs, doc_fragments)
         _, predicted = torch.max(output, 1)
 
         total += labels.size(0)
@@ -276,14 +317,13 @@ def _save_model_if_best(
         d['labels_index'] = labels_index
         d['labels_mapping'] = labels_mapping
 
-        save_path = conf.save_path
-        if not save_path:
-            save_path = os.path.join(os.getcwd(), 'model.pt')
+        if not conf.save_path:
+            conf.save_path = os.path.join(os.getcwd(), 'model.pt')
 
-        if not (p := Path(save_path).parent).exists():
+        if not (p := Path(conf.save_path).parent).exists():
             p.mkdir(parents=True)
 
-        torch.save(d, save_path)
+        torch.save(d, conf.save_path)
         logging.info("new best model was saved")
         return m
     return best_metric

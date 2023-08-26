@@ -16,5 +16,8 @@ save_path: >-
   /srv/apps/patent-classification/models/ru-patent-classif.pt
 nepoch: 4
 async_batch_gen: 4
-max_sents: 2048
-max_tokens: 96_000
+max_sents: 4096
+max_tokens: 160_000
+bucket_multiplier: 3
+lr: 0.00007
+truncate_long_docs: true

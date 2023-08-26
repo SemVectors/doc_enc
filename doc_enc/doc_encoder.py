@@ -707,7 +707,6 @@ class EncodeModule(BaseEncodeModule):
         emb_dim = 0
         if 'embed' in state_dict and mc.embed is not None:
             embed = create_emb_layer(mc.embed, vocab.vocab_size(), vocab.pad_idx())
-            self._load_layer(embed, state_dict['embed'], device)
             emb_dim = mc.embed.emb_dim
 
         sent_layer: SentForDocEncoder | None = None
@@ -715,16 +714,12 @@ class EncodeModule(BaseEncodeModule):
         if mc.sent is not None:
             _adjust_enc_config(mc.sent.encoder)
             base_sent_enc = create_seq_encoder(mc.sent.encoder, prev_output_size=emb_dim)
-            if sent_enc_state := state_dict.get('sent_enc'):
-                base_sent_enc.load_state_dict(sent_enc_state)
             sent_for_doc_layer = None
             if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
                 sent_for_doc_layer = create_encoder(mc.sent_for_doc)
-                sent_for_doc_layer.load_state_dict(state_dict['sent_for_doc'])
             sent_layer = SentForDocEncoder.from_base(
                 base_sent_enc, sent_for_doc_layer, freeze_base_sents_layer=False
             )
-            sent_layer = sent_layer.to(device=device)
             logging.debug("sent layer\n%s", sent_layer)
             sent_embs_out_size = sent_layer.out_embs_dim()
 
@@ -735,7 +730,6 @@ class EncodeModule(BaseEncodeModule):
                 mc.fragment,
                 prev_output_size=sent_embs_out_size,
             )
-            frag_layer = self._load_layer(frag_layer, state_dict['frag_enc'], device)
             doc_input_size = frag_layer.out_embs_dim()
             logging.debug("fragment layer\n:%s", frag_layer)
         else:
@@ -746,7 +740,6 @@ class EncodeModule(BaseEncodeModule):
             mc.doc,
             prev_output_size=doc_input_size,
         )
-        doc_layer = self._load_layer(doc_layer, state_dict['doc_enc'], device)
 
         logging.debug("doc layer\n:%s", doc_layer)
 
@@ -758,28 +751,47 @@ class EncodeModule(BaseEncodeModule):
             sent_layer=sent_layer,
             frag_layer=frag_layer,
         )
+        self.load_params_from_state_dict(state_dict)
 
-    def _load_layer(self, module, state_dict, device):
+    def _load_layer(self, module, state_dict):
         if state_dict:
             module.load_state_dict(state_dict)
-        return module.to(device=device)
+        return module.to(device=self.device)
 
     def to_dict(self):
         # module weights may have changed; update them
         state_dict = copy.copy(self._state_dict)
         state_dict['doc_enc'] = self.doc_layer.state_dict()
+        if self.embed is not None:
+            state_dict['embed'] = self.embed.state_dict()
         if self.sent_layer is not None:
             state_dict['sent_enc'] = self.sent_layer.cast_to_base().state_dict()
-            if 'sent_for_doc' in state_dict and self.sent_layer.doc_mode_encoder is not None:
+            if self.sent_layer.doc_mode_encoder is not None:
                 state_dict['sent_for_doc'] = self.sent_layer.doc_mode_encoder.state_dict()
 
-        if 'frag_enc' in state_dict and self.frag_layer is not None:
+        if self.frag_layer is not None:
             state_dict['frag_enc'] = self.frag_layer.state_dict()
 
         return state_dict
 
     def tp(self):
         return self._tp
+
+    def load_params_from_state_dict(self, state_dict):
+        self.embed = self._load_layer(self.embed, state_dict['embed'])
+        if self.sent_layer is not None:
+            if (sent_enc_state := state_dict.get('sent_enc')) is not None:
+                self.sent_layer.cast_to_base().load_state_dict(sent_enc_state)
+
+            if self.sent_layer.doc_mode_encoder is not None:
+                self.sent_layer.doc_mode_encoder.load_state_dict(state_dict['sent_for_doc'])
+
+            self.sent_layer = self.sent_layer.to(device=self.device)
+
+        if self.frag_layer is not None:
+            self.frag_layer = self._load_layer(self.frag_layer, state_dict['frag_enc'])
+
+        self.doc_layer = self._load_layer(self.doc_layer, state_dict['doc_enc'])
 
     def load_params_from_checkpoint(self, checkpoint_path):
         state = torch.load(checkpoint_path)

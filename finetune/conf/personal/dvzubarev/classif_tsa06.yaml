@@ -10,6 +10,8 @@ train_meta_path: >-
   /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/train.csv
 dev_meta_path: >-
   /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/dev.csv
+test_meta_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/dev.csv
 data_dir: >-
   /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/data
 save_path: >-
