@@ -31,6 +31,7 @@ class FineTuneConf(DocEncoderConf):
     data_dir: str = MISSING
     save_path: str = ''
 
+    eval_every: int = 1000
     dropout: float = 0.1
     lr: float = 0.0002
     nepoch: int = 5
@@ -183,6 +184,21 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
         print(f'{metrics["acc"]:.3f},{metrics["macro_F1"]:.3f}')
 
 
+def _eval_on_dev_and_maybe_save(conf, model, best_metric, labels_index, labels_mapping):
+    with torch.no_grad():
+        metrics = eval_on_dataset(conf, conf.dev_meta_path, model, labels_mapping=labels_mapping)
+
+    best_metric = _save_model_if_best(
+        conf,
+        model,
+        metrics,
+        best_metric,
+        labels_index=labels_index,
+        labels_mapping=labels_mapping,
+    )
+    return best_metric
+
+
 def _train_loop(
     conf: ClassifFineTuneConf,
     train_iter: ClassifBatchIterator,
@@ -231,21 +247,14 @@ def _train_loop(
                 running_correct = 0
                 running_examples_num = 0
 
+            if update_nums % conf.eval_every == 0:
+                best_metric = _eval_on_dev_and_maybe_save(
+                    conf, model, best_metric, labels_index, labels_mapping
+                )
+
         logging.info('Ep %s | loss %s', epoch, loss_epoch)
 
-        with torch.no_grad():
-            metrics = eval_on_dataset(
-                conf, conf.dev_meta_path, model, labels_mapping=labels_mapping
-            )
-
-        best_metric = _save_model_if_best(
-            conf,
-            model,
-            metrics,
-            best_metric,
-            labels_index=labels_index,
-            labels_mapping=labels_mapping,
-        )
+    _eval_on_dev_and_maybe_save(conf, model, best_metric, labels_index, labels_mapping)
 
 
 def eval_on_dataset(conf: ClassifFineTuneConf, meta_path, model: DocClassifier, labels_mapping):
