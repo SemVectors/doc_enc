@@ -778,7 +778,9 @@ class EncodeModule(BaseEncodeModule):
         return self._tp
 
     def load_params_from_state_dict(self, state_dict):
-        self.embed = self._load_layer(self.embed, state_dict['embed'])
+        if self.embed is not None and 'embed' in state_dict:
+            self.embed = self._load_layer(self.embed, state_dict['embed'])
+
         if self.sent_layer is not None:
             if (sent_enc_state := state_dict.get('sent_enc')) is not None:
                 self.sent_layer.cast_to_base().load_state_dict(sent_enc_state)
