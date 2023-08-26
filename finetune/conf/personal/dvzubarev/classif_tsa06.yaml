@@ -17,4 +17,4 @@ data_dir: >-
 save_path: >-
   /home/dvzubarev/Workspace/projects/semvectors/finetune-data/models/classif_model.pt
 nlabels: 2
-nepoch: 1
+max_updates: 1000

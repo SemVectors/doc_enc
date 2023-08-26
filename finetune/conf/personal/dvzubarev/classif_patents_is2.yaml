@@ -14,7 +14,6 @@ data_dir: >-
   /srv/apps/patent-classification/ru_patents_dataset.segmented
 save_path: >-
   /srv/apps/patent-classification/models/ru-patent-classif.pt
-nepoch: 4
 async_batch_gen: 4
 max_sents: 4096
 max_tokens: 160_000

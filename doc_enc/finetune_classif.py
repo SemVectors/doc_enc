@@ -34,7 +34,8 @@ class FineTuneConf(DocEncoderConf):
     eval_every: int = 1000
     dropout: float = 0.1
     lr: float = 0.0002
-    nepoch: int = 5
+    lr_scheduler_kwargs: dict = dataclasses.field(default_factory=dict)
+    max_updates: int = 5000
 
     validation_metric: str = 'acc'
 
@@ -108,6 +109,9 @@ class ClassifBatchIterator:
                 if label not in labels_mapping:
                     raise RuntimeError(f"Unknown label: {label}")
                 self._labels_list.append(labels_mapping[label])
+
+    def examples_cnt(self):
+        return len(self._labels_list)
 
     def destroy(self):
         self._docs_iter.destroy()
@@ -208,14 +212,24 @@ def _train_loop(
 ):
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=conf.lr)
+
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        conf.lr,
+        total_steps=conf.max_updates,
+        **conf.lr_scheduler_kwargs,
+    )
+
     scaler = GradScaler(enabled=True)
     best_metric = 0.0
     running_loss = 0.0
     update_nums = 0
     running_correct = 0
     running_examples_num = 0
-    for epoch in range(conf.nepoch):
-        loss_epoch = 0.0
+    epoch = 0
+    while update_nums < conf.max_updates:
+        epoch += 1
+        logging.info("Starting %s epoch", epoch)
         for docs, doc_fragments, labels in train_iter.batches():
             # zero the parameter gradients
             model.train(mode=True)
@@ -229,7 +243,7 @@ def _train_loop(
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            loss_epoch += loss.item()
+            scheduler.step()
             running_loss += loss.item()
             _, predicted = torch.max(outputs, 1)
             running_correct += (predicted == labels).int().sum().cpu().item()
@@ -238,10 +252,11 @@ def _train_loop(
 
             if update_nums % 100 == 0:
                 logging.info(
-                    "#%d, avg loss: %.3f, acc: %.3f",
+                    "#%d, avg loss: %.3f, acc: %.3f, lr:%.5e",
                     update_nums,
                     running_loss / 100,
                     running_correct / running_examples_num,
+                    scheduler.get_last_lr()[0],
                 )
                 running_loss = 0
                 running_correct = 0
@@ -251,10 +266,8 @@ def _train_loop(
                 best_metric = _eval_on_dev_and_maybe_save(
                     conf, model, best_metric, labels_index, labels_mapping
                 )
-
-        logging.info('Ep %s | loss %s', epoch, loss_epoch)
-
-    _eval_on_dev_and_maybe_save(conf, model, best_metric, labels_index, labels_mapping)
+            if update_nums >= conf.max_updates:
+                break
 
 
 def eval_on_dataset(conf: ClassifFineTuneConf, meta_path, model: DocClassifier, labels_mapping):
