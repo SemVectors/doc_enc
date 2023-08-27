@@ -75,7 +75,8 @@ class DocClassifier(nn.Module):
 
 
 def _create_model(conf: ClassifFineTuneConf):
-    doc_encoder = EncodeModule(conf)
+    doc_encoder = EncodeModule(conf, eval_mode=False)
+
     if (
         OmegaConf.is_missing(conf, 'nlabels')
         and (ft_cfg := doc_encoder._state_dict.get('fine_tune_cfg')) is not None
@@ -254,7 +255,7 @@ def _train_loop(
 
             if update_nums % 100 == 0:
                 logging.info(
-                    "#%d, docs_per_batch: %.1f, avg loss: %.3f, acc: %.3f, lr:%.5e",
+                    "#%d, docs: %.1f, avg loss: %.3f, acc: %.3f, lr:%.5e",
                     update_nums,
                     docs_total / 100,
                     running_loss / 100,

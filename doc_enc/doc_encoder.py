@@ -676,14 +676,17 @@ class BaseEncodeModule(BaseSentEncodeModule):
         )
 
 
-def _adjust_enc_config(config: BaseEncoderConf):
+def _adjust_enc_config(config: BaseEncoderConf, eval_mode: bool):
     # wipe out cacheck dir since it is different from machine on which model was trained
     if config.transformers_cache_dir:
         config.transformers_cache_dir = None
 
+    if not eval_mode:
+        config.transformers_fix_pretrained_params = False
+
 
 class EncodeModule(BaseEncodeModule):
-    def __init__(self, conf: DocEncoderConf) -> None:
+    def __init__(self, conf: DocEncoderConf, eval_mode: bool = True) -> None:
         self._conf = conf
         if conf.use_gpu is not None and torch.cuda.is_available():
             logging.info("Computing on gpu:%s", conf.use_gpu)
@@ -712,7 +715,7 @@ class EncodeModule(BaseEncodeModule):
         sent_layer: SentForDocEncoder | None = None
         sent_embs_out_size = 0
         if mc.sent is not None:
-            _adjust_enc_config(mc.sent.encoder)
+            _adjust_enc_config(mc.sent.encoder, eval_mode)
             base_sent_enc = create_seq_encoder(mc.sent.encoder, prev_output_size=emb_dim)
             sent_for_doc_layer = None
             if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
@@ -725,7 +728,7 @@ class EncodeModule(BaseEncodeModule):
 
         frag_layer = None
         if 'frag_enc' in state_dict and mc.fragment is not None:
-            _adjust_enc_config(mc.fragment)
+            _adjust_enc_config(mc.fragment, eval_mode)
             frag_layer = create_seq_encoder(
                 mc.fragment,
                 prev_output_size=sent_embs_out_size,
@@ -735,7 +738,7 @@ class EncodeModule(BaseEncodeModule):
         else:
             doc_input_size = sent_embs_out_size
 
-        _adjust_enc_config(mc.doc)
+        _adjust_enc_config(mc.doc, eval_mode)
         doc_layer = create_seq_encoder(
             mc.doc,
             prev_output_size=doc_input_size,
@@ -910,7 +913,7 @@ def _create_sents_gen_func(fn, offset, limit, first_column_is_id, sep):
 
 class DocEncoder:
     def __init__(self, conf: DocEncoderConf, eval_mode: bool = True) -> None:
-        self._enc_module = EncodeModule(conf)
+        self._enc_module = EncodeModule(conf, eval_mode)
         self._enc_module.train(not eval_mode)
         self._eval_mode = eval_mode
 
