@@ -234,7 +234,7 @@ def _proc_wrapper_for_item_list(
             batch_idx_list = [offset + i for i in batch_idx_list]
             queue.put((docs, doc_lengths, batch_idx_list))
     except Exception as e:
-        print(type(e), str(e))
+        # print(type(e), str(e))
         logging.exception("Failed to process batches: %s", e)
 
     queue.put(None)
@@ -254,7 +254,7 @@ def _proc_wrapper_for_item_generator(
                 batch_items = [items[i] for i in batch_idx_list]
                 out_queue.put((docs, doc_lengths, batch_items))
     except Exception as e:
-        print(type(e), str(e))
+        # print(type(e), str(e))
         logging.exception("Failed to process batches: %s", e)
 
     out_queue.put(None)
@@ -375,6 +375,7 @@ class BatchIterator:
         self._processes = []
 
         if self._generator_thread is not None:
+            self._in_queue.close()
             self._generator_thread.join()
 
 
@@ -1075,6 +1076,17 @@ class DocEncoder:
         stat.total_sents_cnt += sum(len(d) for d in docs)
         stat.total_tokens_cnt += sum(len(s) for d in docs for s in d)
 
+    def _reorder_collected_arrays(self, stacked_array, idxs):
+        assert stacked_array.shape[0] == len(
+            idxs
+        ), f"Missaligned data: {stacked_array.shape[0]} != {len(idxs)}"
+
+        idxs = torch.tensor(idxs)
+        initial_order_idxs = torch.empty_like(idxs)
+        initial_order_idxs.scatter_(0, idxs, torch.arange(0, idxs.numel()))
+        reordered_embs = stacked_array.index_select(0, initial_order_idxs)
+        return reordered_embs
+
     def encode_docs_from_path_list(
         self, path_list: list[str] | list[Path], stat: DocEncodeStat | None = None
     ) -> np.ndarray:
@@ -1097,12 +1109,9 @@ class DocEncoder:
             stacked = torch.vstack(embs)
             assert stacked.shape[0] == len(
                 path_list
-            ), f"Missaligned data: {stacked.shape[0]} != {len(path_list)}"
+            ), f"Missaligned data with paths: {stacked.shape[0]} != {len(path_list)}"
 
-            embs_idxs = torch.tensor(embs_idxs)
-            initial_order_idxs = torch.empty_like(embs_idxs)
-            initial_order_idxs.scatter_(0, embs_idxs, torch.arange(0, embs_idxs.numel()))
-            reordered_embs = stacked.index_select(0, initial_order_idxs)
+            reordered_embs = self._reorder_collected_arrays(stacked, embs_idxs)
             return reordered_embs.numpy()
         finally:
             batch_iter.destroy()

@@ -7,6 +7,7 @@ import os
 import numpy as np
 
 from doc_enc.doc_encoder import DocEncoder, DocEncoderConf, file_path_fetcher
+from doc_enc.classif_doc import ClassifDoc
 
 
 def _save(args, output_dir, ids, embs, batch_i):
@@ -50,12 +51,39 @@ def _compute_embs(args, doc_encoder: DocEncoder):
         _save(args, output_dir_path, ids, embs, batch_i)
 
 
-def run_compute(args):
+def run_compute_embs(args):
     conf = DocEncoderConf(
-        model_path=args.model_path, use_gpu=args.gpu, max_sents=args.max_sents_per_batch
+        model_path=args.model_path,
+        use_gpu=args.gpu,
+        max_sents=args.max_sents_per_batch,
+        max_tokens=args.max_tokens_per_batch,
     )
     doc_encoder = DocEncoder(conf)
     _compute_embs(args, doc_encoder)
+
+
+def run_classif(args):
+    conf = DocEncoderConf(
+        model_path=args.model_path,
+        use_gpu=args.gpu,
+        max_sents=args.max_sents_per_batch,
+        max_tokens=args.max_tokens_per_batch,
+    )
+    doc_encoder = ClassifDoc(conf)
+    with open(args.output_file, 'w', encoding='utf8') as outf:
+        for batch_paths, predictions in doc_encoder.predict_docs_stream(
+            _paths_gen(args.input_file), fetcher=file_path_fetcher, batch_size=args.batch_size
+        ):
+            for path, pred in zip(batch_paths, predictions):
+                outf.write(f'{path}\t{pred}\n')
+
+
+def _add_common_opts(parser):
+    parser.add_argument("--model_path", "-m", required=True, help="")
+    parser.add_argument("--gpu", "-g", default=0, help='GPU device number ')
+    parser.add_argument("--max_sents_per_batch", "-ms", default=2048)
+    parser.add_argument("--max_tokens_per_batch", "-mt", default=128_000)
+    parser.add_argument("--batch_size", "-b", default=1000)
 
 
 def main():
@@ -64,18 +92,23 @@ def main():
 
     subparsers = parser.add_subparsers(help='sub-command help')
 
-    doc_parser = subparsers.add_parser('docs', help='help of segment')
+    doc_parser = subparsers.add_parser('docs', help='compute embeddings of documents')
 
     doc_parser.add_argument(
         "--input_file", "-i", required=True, help="file with paths to segmented texts"
     )
     doc_parser.add_argument("--output_dir", "-o", required=True, help="")
-    doc_parser.add_argument("--model_path", "-m", required=True, help="")
-    doc_parser.add_argument("--gpu", "-g", default=0, help='GPU device number ')
-    doc_parser.add_argument("--max_sents_per_batch", "-l", default=2048)
-    doc_parser.add_argument("--batch_size", "-b", default=1000)
+    _add_common_opts(doc_parser)
     doc_parser.add_argument("--save_as_fp16", default=False, action='store_true')
-    doc_parser.set_defaults(func=run_compute)
+    doc_parser.set_defaults(func=run_compute_embs)
+
+    classif_parser = subparsers.add_parser('classif', help='Do classification of documents')
+    classif_parser.add_argument(
+        "--input_file", "-i", required=True, help="file with paths to segmented texts"
+    )
+    classif_parser.add_argument("--output_file", "-o", required=True, help="")
+    _add_common_opts(classif_parser)
+    classif_parser.set_defaults(func=run_classif)
 
     args = parser.parse_args()
 
