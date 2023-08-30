@@ -101,15 +101,22 @@ class ClassifBatchIterator:
         self._labels_list = []
         self._device = device
 
+        skipped_examples = 0
         with open(meta_path, 'r', encoding='utf8') as infp:
             reader = csv.reader(infp)
             for row in reader:
                 fp = Path(base_data_dir) / row[0]
-                self._path_list.append(fp)
                 label = row[1]
                 if label not in labels_mapping:
-                    raise RuntimeError(f"Unknown label: {label}")
+                    skipped_examples += 1
+                    continue
+
                 self._labels_list.append(labels_mapping[label])
+                self._path_list.append(fp)
+        if skipped_examples > 0:
+            logging.warning(
+                "Skipped %d examples because they have unknown labels", skipped_examples
+            )
 
     def examples_cnt(self):
         return len(self._labels_list)
@@ -309,12 +316,12 @@ def eval_on_dataset(conf: ClassifFineTuneConf, meta_path, model: DocClassifier, 
     rec = tp / cls_total
     prec = tp / cls_predicted
     f1 = 2 * rec * prec / (rec + prec)
-
+    f1 = f1.nan_to_num()
     metrics = {
         'acc': correct.item() / total,
         'macro_F1': f1.mean().item(),
-        'recall': rec.tolist(),
-        'precision': prec.tolist(),
+        'recall': rec.nan_to_num().tolist(),
+        'precision': prec.nan_to_num().tolist(),
         'F1': f1.tolist(),
         'predictions_per_cls': [c.item() / total for c in cls_predicted],
     }
