@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: /train/models/model.pt
+
+use_gpu: 0
+train_meta_path: /train/classif-mini/train.csv
+dev_meta_path: /train/classif-mini/dev.csv
+test_meta_path: /train/classif-mini/test.csv
+data_dir: /train/classif-mini/data/
+eval_every: 5
+max_updates: 30

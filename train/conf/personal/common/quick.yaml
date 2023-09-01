@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /base_config
+  - override /trainer: quick
+  - override /model/sent/encoder: lstm
+  - override /model/fragment: null
+  - override /model/doc: averaging
+  - _self_
