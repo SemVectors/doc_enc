@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+  /train/init_models/doc_trans_full1-4.pt
+train_meta_path: >-
+    /train/data/finetune_classif/patents-ruen-2lvl/train.csv
+dev_meta_path: >-
+    /train/data/finetune_classif/patents-ruen-2lvl/dev.csv
+test_meta_path: >-
+    /train/data/finetune_classif/patents-ruen-2lvl/test.csv
+data_dir: >-
+    /train/data/finetune_classif/ru_patents_dataset.segmented
+use_gpu: 0
+
+
+max_updates: 24_000
+eval_every: 3000
+async_batch_gen: 4
+max_sents: 4096
+max_tokens: 141_000
+bucket_multiplier: 6
+lr: 0.0001
+dropout: 0.5
+truncate_long_docs: true

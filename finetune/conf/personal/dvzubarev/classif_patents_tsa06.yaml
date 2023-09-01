@@ -13,9 +13,12 @@ test_meta_path: >-
 data_dir: >-
   /home/dvzubarev/Workspace/projects/semvectors/patents-classif/ru_patents_dataset.segmented
 
+# test_meta_path: >-
+#   /home/dvzubarev/Workspace/projects/semvectors/patents-classif/patents-ru-2lvl/test.csv
+
+
 only_eval_test: true
 async_batch_gen: 4
-max_sents: 512
-max_tokens: 10_000
+max_sents: 2048
+max_tokens: 90_000
 bucket_multiplier: 2
-# truncate_long_docs: true

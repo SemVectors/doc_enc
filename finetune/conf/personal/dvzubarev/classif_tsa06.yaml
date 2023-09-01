@@ -7,14 +7,14 @@ model_path: >-
   /home/dvzubarev/Workspace/projects/semvectors/tuning/trans/doc_trans_full1-9-4/model.pt
 use_gpu: 0
 train_meta_path: >-
-  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/train.csv
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif-mini/train.csv
 dev_meta_path: >-
-  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/dev.csv
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif-mini/dev.csv
 test_meta_path: >-
-  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/dev.csv
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif-mini/test.csv
 data_dir: >-
-  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif/data
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif-mini/data
 save_path: >-
-  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/models/classif_model.pt
-nlabels: 2
-max_updates: 1000
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/models/classif-mini-model.pt
+eval_every: 5
+max_updates: 30

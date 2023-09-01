@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+  /train/init_models/xlm-roberta.pt
+train_meta_path: >-
+    /train/data/finetune_classif/patents-ru/train.csv
+dev_meta_path: >-
+    /train/data/finetune_classif/patents-ru/dev.csv
+test_meta_path: >-
+    /train/data/finetune_classif/patents-ru/test.csv
+data_dir: >-
+    /train/data/finetune_classif/ru_patents_dataset.segmented
+use_gpu: 0
+async_batch_gen: 4
+lr: 0.00002
+
+eval_every: 5000
+max_updates: 80_000
+max_sents: 600
+max_tokens: 8000
+bucket_multiplier: 4
+truncate_long_docs: true
+dropout: 0.4
