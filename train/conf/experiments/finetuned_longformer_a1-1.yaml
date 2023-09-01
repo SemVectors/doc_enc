@@ -5,6 +5,7 @@ defaults:
   - override /trainer: full
   - override /trainer/optim: adam_with_one_cycle
   - override /text_proc/tokenizer: transformers_auto
+  - override /model/embed: null
   - override /model/sent: null
   - override /model/fragment: null
   - override /model/doc: transformers_auto

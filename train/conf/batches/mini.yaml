@@ -10,7 +10,7 @@ sents_batch_iterator_conf:
     batch_size: 64
 
 docs_batch_iterator_conf:
-  async_generators: 2
+  async_generators: 4
   exclude_datasets:
     - gwiki
   batch_generator_conf:

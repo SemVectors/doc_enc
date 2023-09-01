@@ -14,5 +14,5 @@ text_proc:
 
 model:
   fragment:
-    transformers_auto_name: xlm-roberta-basexlm-roberta-base
+    transformers_auto_name: xlm-roberta-base
     transformers_fix_pretrained_params: true
