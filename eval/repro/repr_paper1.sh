@@ -36,7 +36,7 @@ eval_model(){
     docker run  --gpus=1  --rm  \
         -v "$DATA_DIR":/data/ -v "$MODELS_DIR":/models -v "$(pwd)"/eval:/eval/ \
         -e CURL_CA_BUNDLE="" \
-        semvectors/doc_enc_train:0.1.0 \
+        semvectors/doc_enc_train:0.1.1 \
         run_eval \
         hydra.job_logging.handlers.console.stream=ext://sys.stderr \
         doc_matching.ds_base_dir=/data doc_retrieval.ds_base_dir=/data \
