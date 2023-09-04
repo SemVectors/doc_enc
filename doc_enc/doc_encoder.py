@@ -815,15 +815,15 @@ class EncodeModule(BaseEncodeModule):
             elif k.startswith('frag_layer'):
                 frag_state_dict[k.removeprefix('frag_layer.')] = v
 
-        self._load_layer(self.doc_layer, doc_state_dict, self.device)
+        self._load_layer(self.doc_layer, doc_state_dict)
         if embed_state_dict:
-            self._load_layer(self.embed, embed_state_dict, self.device)
+            self._load_layer(self.embed, embed_state_dict)
 
         if sent_state_dict:
-            self._load_layer(self.sent_layer, sent_state_dict, self.device)
+            self._load_layer(self.sent_layer, sent_state_dict)
 
         if frag_state_dict:
-            self._load_layer(self.frag_layer, frag_state_dict, self.device)
+            self._load_layer(self.frag_layer, frag_state_dict)
 
     def create_sents_batch_generator(self, eval_mode=True):
         return BaseSentsBatchGenerator(self._tp_conf, self._conf, self._tp_state_dict, eval_mode)
