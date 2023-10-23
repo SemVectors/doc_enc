@@ -2,3 +2,4 @@
 __pycache__/
 /.direnv/
 /doc_enc.egg-info/
+/.dir-locals.el
