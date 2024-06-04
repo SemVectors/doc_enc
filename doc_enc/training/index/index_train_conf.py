@@ -44,5 +44,5 @@ class IndexTrainConf:
 
     dense_weight: float = 1.0
 
-    ivf: IvfConf = IvfConf()
-    pq: PQConf = PQConf()
+    ivf: IvfConf = dataclasses.field(default_factory=IvfConf)
+    pq: PQConf = dataclasses.field(default_factory=PQConf)

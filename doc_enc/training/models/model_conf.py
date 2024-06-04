@@ -35,7 +35,7 @@ class BaseModelConf:
     cross_device_sample: bool = False
 
     # index training
-    index: IndexTrainConf = IndexTrainConf()
+    index: IndexTrainConf = dataclasses.field(default_factory=IndexTrainConf)
 
 
 @dataclasses.dataclass
@@ -57,4 +57,4 @@ class DocModelConf(BaseModelConf):
     grad_src_sents: bool = True
 
     # index training
-    index: IndexTrainConf = IndexTrainConf()
+    index: IndexTrainConf = dataclasses.field(default_factory=IndexTrainConf)

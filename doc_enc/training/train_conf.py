@@ -47,13 +47,13 @@ class OptimConf:
     # LR
     lr: float = MISSING
     final_lr: float = 0.0
-    emb: ParamGroupConf = ParamGroupConf()
-    sent: ParamGroupConf = ParamGroupConf()
-    sent_for_doc: ParamGroupConf = ParamGroupConf()
-    sent_index: ParamGroupConf = ParamGroupConf()
-    fragment: ParamGroupConf = ParamGroupConf()
-    doc: ParamGroupConf = ParamGroupConf()
-    doc_index: ParamGroupConf = ParamGroupConf()
+    emb: ParamGroupConf = dataclasses.field(default_factory=ParamGroupConf)
+    sent: ParamGroupConf = dataclasses.field(default_factory=ParamGroupConf)
+    sent_for_doc: ParamGroupConf = dataclasses.field(default_factory=ParamGroupConf)
+    sent_index: ParamGroupConf = dataclasses.field(default_factory=ParamGroupConf)
+    fragment: ParamGroupConf = dataclasses.field(default_factory=ParamGroupConf)
+    doc: ParamGroupConf = dataclasses.field(default_factory=ParamGroupConf)
+    doc_index: ParamGroupConf = dataclasses.field(default_factory=ParamGroupConf)
 
     lr_scheduler: LRSchedulerKind = LRSchedulerKind.NONE
     lr_scheduler_kwargs: Dict = dataclasses.field(default_factory=dict)
