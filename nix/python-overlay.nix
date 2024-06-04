@@ -1,16 +1,18 @@
 { self, pkgs }:
 pyfinal: pyprev: {
   sentence-transformers = pyprev.sentence-transformers.overridePythonAttrs(old: {
-    # we use pytorch-bin do not pull full torch distribution
-    propagatedBuildInputs = (pkgs.lib.subtractLists
-      [pyprev.torch pyprev.torchvision]
-      old.propagatedBuildInputs
-    ) ++ [pyprev.torch-bin pyprev.pillow];
+    # torchvision is optional dep, we do not use it, so remove it from the closure
+    dependencies = (pkgs.lib.subtractLists
+      [pyprev.torchvision]
+      old.dependencies
+    );
     prePatch = ''
       substituteInPlace setup.py \
       --replace "'torchvision'," ""
     '';
   });
+
+
   doc_enc = pyfinal.callPackage ./default.nix {
     src=self;
   } ;

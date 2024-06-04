@@ -5,7 +5,7 @@
   scikit-learn,
   numpy,
   sentencepiece,
-  pytorch-bin,
+  torch,
   hydra-core,
   transformers,
   sentence-transformers,
@@ -24,7 +24,7 @@ buildPythonPackage {
   propagatedBuildInputs=[
     scikit-learn
     numpy
-    pytorch-bin
+    torch
     sentencepiece
     hydra-core
     transformers

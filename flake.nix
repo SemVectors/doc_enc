@@ -1,31 +1,21 @@
 {
   description = "Encoding texts as dense vectors";
 
-  inputs.nixpkgs.url = "nixpkgs/d0c7a8f1c9a2ebfebd3d99960cdb7c4eec442dc9";
+  inputs.nixpkgs.url = "nixpkgs/7ec74c627b767a23ea23cb0de93c2d1f6a5f09cc";
 
   outputs = { self, nixpkgs }:
-    let cuda-overlay = final: prev:{
-          #enable cuda support
-          nvidia-thrust = prev.nvidia-thrust.override{deviceSystem="CUDA";};
-          faiss = prev.faiss.override{cudaSupport=true;};
+    let
+      pkgs = import nixpkgs {
+        system = "x86_64-linux";
+        overlays = [ self.overlays.default ];
+        config = {
+          allowUnfree = true;
+          cudaSupport=true;
         };
-        pkgs = import nixpkgs {
-          system = "x86_64-linux";
-          overlays = [ cuda-overlay self.overlays.default ];
-          config = {allowUnfree = true;};
-          };
-        pypkgs = pkgs.pythonPackages;
-    in {
-      overlays.default = final: prev: {
-
-        python = prev.python310 // {
-          pkgs = prev.python310.pkgs.overrideScope (
-            import ./nix/python-overlay.nix {inherit self pkgs;}
-          );
-        };
-        pythonPackages = final.python.pkgs;
-
       };
+      pypkgs = pkgs.pythonPackages;
+    in {
+      overlays.default = import ./nix/overlay.nix {inherit self pkgs;};
 
       packages.x86_64-linux = {
         default = pypkgs.doc_enc;
