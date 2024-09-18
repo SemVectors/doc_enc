@@ -1,33 +1,35 @@
-Библиотека ExactusSemVectors для формирования кросс-языковых векторных представлений текстов и их фрагментов на основе глубокого обучения для решения задач информационного поиска и классификации текстовой информации.
+The doc_enc library is devoted to the computation of cross-lingual vector representations of long texts' embeddings applicable in information retrieval and classification tasks.
 
-[Документация](https://semvectors-doc-enc.readthedocs.io/ru/latest/index.html)
+Full documentation in [Russian](https://semvectors-doc-enc.readthedocs.io/ru/latest/index.html)
 
+### Quick start:
+First of all, you should download a small dataset of documents and a pre-trained model:
 
---------------------------------->cut here<-------------------------------------
+``` sh
+curl -O dn11.isa.ru:8080/doc-enc-data/datasets.docs.mini.v1.tar.gz
+tar xf datasets.docs.mini.v1.tar.gz
+find docs-mini/texts/ -name "*.txt" > files.txt
+curl -O http://dn11.isa.ru:8080/doc-enc-data/models.def.pt
+```
 
-Открытая библиотека ExactusSemVectors для формирования кросс-языковых векторных представлений текстов и их фрагментов на основе глубокого обучения может применяться в различных областях для решения задач семантического анализа естественно-языковых текстов,
-в которых требуется преобразование длинного текста в векторное представление (эмбеддинги).
-К числу таких задач относятся:
-- сравнение документов по смыслу (semantic matching);
-- задачи информационного поиска, в которых в качестве запроса выступает документ-образец, для которого необходимо найти похожие документы;
-- текстовая классификация и кластеризация.
+The data is available for downloading by the [link](https://mega.nz/folder/vkghwIDY#3WIHndJIiti5HHrncR8IVg), in case the above links are not working. 
+To start the conversion process, it is convenient to use a pre-built Docker image. 
+Before doing so, ensure that you have installed the NVIDIA Container Toolkit by following the instructions provided in the [NVIDIA Container Toolkit installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#setting-up-nvidia-container-toolkit).
 
-Сферой применения библиотеки могут быть промышленные наукоёмкие решения:
-- поисково-аналитические машины,
-- DLP-системы,
-- системы текстовой аналитики,
-- интеллектуального подбора кадров,
-- динамической контентной фильтрации.
+``` sh
+docker run  --gpus=1  --rm  -v $(pwd):/temp/ -w /temp  \
+  semvectors/doc_enc:0.1.2 \
+  docenccli docs -i /temp/files.txt -o /temp/vecs -m /temp/models.def.pt
+```
 
+Vectors will be stored in the `vecs` directory alongside their corresponding file names using the `numpy.savez` function.
+Below is an  example of how to load the vectors from these files:
 
-Минимальные технические требования для запуска и использования открытой библиотеки
-- Процессор: 
-  + архитектура: x86_64 (не менее);
-  + количество ядер: 4 (не менее) (для обучения 16 не менее);
-  + тактовая частота процессора 2.4 Ггц (не менее).
-- Оперативная память 32 Гбайт, не менее.
-- Дисковая подсистема объемом не менее 500 Гбайт:
-  + скорость записи не менее 100 Мб/с,
-  + скорость чтения не менее 100 Мб/с.
-- Графический вычислитель (GPU) с объёмом оперативной памяти (видеопамяти) 6 Гбайт или более (для обучения 32 Гб или более).
-- Операционная система:  ОС семейства Linux.
+``` python
+import numpy as np
+
+obj = np.load('vecs/0000.npz')
+print(obj['ids'][:2])
+print(obj['embs'][:2])
+```
+
