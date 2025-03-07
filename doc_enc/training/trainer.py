@@ -97,9 +97,9 @@ def _create_optimizer(conf: OptimConf, models: Models, world_size):
                 'lr': default.lr if conf.lr is None else conf.lr,
                 'weight_decay': weight_decay,
                 'momentum': default.momentum if conf.momentum is None else conf.momentum,
-                'max_grad_norm': default.max_grad_norm
-                if conf.max_grad_norm is None
-                else conf.max_grad_norm,
+                'max_grad_norm': (
+                    default.max_grad_norm if conf.max_grad_norm is None else conf.max_grad_norm
+                ),
             }
         )
         return group

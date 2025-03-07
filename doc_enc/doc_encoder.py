@@ -51,6 +51,8 @@ class DocEncoderConf:
     # truncate docs that are excessively long
     truncate_long_docs: bool = False
 
+    enable_amp: bool = True
+
 
 # * Batch helpers
 
@@ -929,12 +931,12 @@ class DocEncoder:
 
     def _encode_docs(self, docs: list[list[list[int]]], doc_lengths: list[list[int]]):
         with torch.inference_mode(self._eval_mode):
-            with autocast():
+            with autocast(enabled=self.conf().enable_amp):
                 return self._enc_module.encode_docs(docs, doc_lengths)
 
     def _encode_sents(self, sents):
         with torch.inference_mode(self._eval_mode):
-            with autocast():
+            with autocast(enabled=self.conf().enable_amp):
                 return self._enc_module.encode_sents(sents, collect_on_cpu=True)
 
     def load_params_from_checkpoint(self, checkpoint_path):
@@ -973,7 +975,7 @@ class DocEncoder:
         sents in a batch of size `sents_batch_size`. Then invokes `encode_sents`
         on each batch.
         This method yields the tuple of sentence tetxt, sent vectors, and extra stuff from the generator.
-        async_batch_gen option is ignored.
+        async_batch_gen option from DocEncoderConf is ignored.
         """
         if not self._enc_module.sent_encoding_supported():
             raise RuntimeError("Sent encoding is unsupported by this model!")
@@ -993,7 +995,7 @@ class DocEncoder:
             yield sents_batch, embs, sents_misc
 
     def encode_sents_from_generators(self, generator_funcs, stat: SentEncodeStat | None = None):
-        """low level function that utilizes async batch preparation to speed up encoding for some cases.
+        """Low level function that utilizes async batch preparation to speed up encoding for some cases.
         You can pass up to async_batch_gen generator functions.
         Each function should produce a unique set of tuples: (sent_id, sent_text).
         Example:
