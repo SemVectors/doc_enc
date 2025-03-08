@@ -908,7 +908,7 @@ def _create_sents_gen_func(fn, offset, limit, first_column_is_id, sep):
                     sent_id, sent = line.rstrip().split(sep, 1)
                     yield sent_id, sent
             else:
-                for i, line in itertools.islice(inpf, offset, offset + limit):
+                for i, line in enumerate(itertools.islice(inpf, offset, offset + limit)):
                     yield i + offset, line.rstrip()
 
     return _gen
