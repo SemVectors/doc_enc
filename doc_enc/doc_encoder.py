@@ -15,6 +15,8 @@ import collections.abc
 import numpy as np
 import torch
 from torch.cuda.amp.autocast_mode import autocast
+import torch.nn.functional as F
+
 
 from doc_enc.utils import file_line_cnt
 from doc_enc.embs.emb_factory import create_emb_layer
@@ -51,6 +53,8 @@ class DocEncoderConf:
     # truncate docs that are excessively long
     truncate_long_docs: bool = False
 
+    # perform l2 normalization on encoded vectors.
+    normalize_vecs: bool = False
     enable_amp: bool = True
 
 
@@ -964,6 +968,9 @@ class DocEncoder:
         stacked = torch.vstack(all_embs)
         assert all_ids == list(range(len(sents))), "Misaligned data 3812"
         assert len(stacked) == len(sents), "Misaligned data 3813"
+        if self.conf().normalize_vecs:
+            stacked = F.normalize(stacked, p=2, dim=1)
+
         return stacked.numpy()
 
     def encode_sents_stream(
@@ -1023,6 +1030,8 @@ class DocEncoder:
                     stat.sents_cnt += len(sent_tokens)
 
                 sent_embs = self._encode_sents(sent_tokens)
+                if self.conf().normalize_vecs:
+                    sent_embs = F.normalize(sent_embs, p=2, dim=1)
                 sent_embs = sent_embs.to(device='cpu').numpy()
                 yield sent_ids, sent_embs
         finally:
@@ -1113,6 +1122,9 @@ class DocEncoder:
                 path_list
             ), f"Missaligned data with paths: {stacked.shape[0]} != {len(path_list)}"
 
+            if self.conf().normalize_vecs:
+                stacked = F.normalize(stacked, p=2, dim=1)
+
             reordered_embs = self._reorder_collected_arrays(stacked, embs_idxs)
             return reordered_embs.numpy()
         finally:
@@ -1149,6 +1161,10 @@ class DocEncoder:
             embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
         stacked = torch.vstack(embs)
         assert len(stacked) == len(docs)
+
+        if self.conf().normalize_vecs:
+            stacked = F.normalize(stacked, p=2, dim=1)
+
         return stacked.numpy()
 
     def encode_docs_stream(
@@ -1180,6 +1196,8 @@ class DocEncoder:
                 if stat is not None:
                     self._update_doc_stat(docs, stat)
                 doc_embs = self._encode_docs(docs, doc_lengths)
+                if self.conf().normalize_vecs:
+                    doc_embs = F.normalize(doc_embs, p=2, dim=1)
                 yield ids, doc_embs.to(device='cpu', dtype=torch.float32).numpy()
         finally:
             batch_iter.destroy()
