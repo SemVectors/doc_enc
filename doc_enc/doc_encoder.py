@@ -14,7 +14,7 @@ import collections.abc
 
 import numpy as np
 import torch
-from torch.cuda.amp.autocast_mode import autocast
+from torch.amp.autocast_mode import autocast
 import torch.nn.functional as F
 
 
@@ -702,7 +702,7 @@ class EncodeModule(BaseEncodeModule):
             logging.info("Computing on cpu")
             device = torch.device('cpu')
 
-        state_dict = torch.load(conf.model_path, map_location=device)
+        state_dict = torch.load(conf.model_path, map_location=device, weights_only=False)
         self._state_dict = state_dict
         self._tp_conf: TextProcessorConf = state_dict['tp_conf']
         self._tp_conf.tokenizer.vocab_path = None
@@ -935,12 +935,12 @@ class DocEncoder:
 
     def _encode_docs(self, docs: list[list[list[int]]], doc_lengths: list[list[int]]):
         with torch.inference_mode(self._eval_mode):
-            with autocast(enabled=self.conf().enable_amp):
+            with autocast(self._enc_module.device.type, enabled=self.conf().enable_amp):
                 return self._enc_module.encode_docs(docs, doc_lengths)
 
     def _encode_sents(self, sents):
         with torch.inference_mode(self._eval_mode):
-            with autocast(enabled=self.conf().enable_amp):
+            with autocast(self._enc_module.device.type, enabled=self.conf().enable_amp):
                 return self._enc_module.encode_sents(sents, collect_on_cpu=True)
 
     def load_params_from_checkpoint(self, checkpoint_path):

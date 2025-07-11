@@ -11,11 +11,11 @@ class FourierTransform(nn.Module):
     def __init__(self, conf: BaseEncoderConf, layer_id=0):
         super().__init__()
 
-    def forward(self, x, key_padding_mask=None):
+    def forward(self, x: torch.Tensor, key_padding_mask=None):
         if key_padding_mask is None:
             raise RuntimeError("key_padding_mask is None")
 
-        with torch.cuda.amp.autocast_mode.autocast(enabled=False):
+        with torch.amp.autocast_mode.autocast(x.device.type, enabled=False):
             x = torch.fft.fft2(x.float(), dim=(0, 2)).real
         x = x.masked_fill(key_padding_mask.t().unsqueeze(-1), 0.0)
         return x

@@ -2,6 +2,7 @@
   src,
   lib,
   buildPythonPackage,
+  setuptools,
   scikit-learn,
   numpy,
   sentencepiece,
@@ -16,8 +17,10 @@
 
 buildPythonPackage {
   pname = "doc_enc";
-  version = "0.1.3";
+  version = "0.1.4";
   inherit src;
+  pyproject = true;
+  build-system = [ setuptools ];
 
 
   buildInputs = [];
@@ -32,7 +35,7 @@ buildPythonPackage {
   ]
   ++ lib.optionals with-training-pkgs [
     faiss
-   ]
+  ]
   ;
 
   nativeCheckInputs = [pytest];

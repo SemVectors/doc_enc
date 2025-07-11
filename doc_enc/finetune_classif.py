@@ -14,8 +14,8 @@ from omegaconf import MISSING, OmegaConf
 
 import torch
 from torch import nn
-from torch.cuda.amp.grad_scaler import GradScaler
-from torch.cuda.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
+from torch.amp.autocast_mode import autocast
 
 
 from doc_enc.doc_encoder import DocEncoderConf, EncodeModule, BatchIterator, file_path_fetcher
@@ -245,7 +245,7 @@ def _train_loop(
             optimizer.zero_grad()
 
             # forward + backward + optimize
-            with autocast(True):
+            with autocast(docs.device.type):
                 outputs = model(docs, doc_fragments)
                 loss = criterion(outputs, labels)
 

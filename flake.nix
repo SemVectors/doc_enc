@@ -1,7 +1,7 @@
 {
   description = "Encoding texts as dense vectors";
 
-  inputs.nixpkgs.url = "nixpkgs/7ec74c627b767a23ea23cb0de93c2d1f6a5f09cc";
+  inputs.nixpkgs.url = "nixpkgs/9b008d60392981ad674e04016d25619281550a9d";
 
   outputs = { self, nixpkgs }:
     let
@@ -10,7 +10,7 @@
         overlays = [ self.overlays.default ];
         config = {
           allowUnfree = true;
-          cudaSupport=true;
+          cudaSupport = true;
         };
       };
       pypkgs = pkgs.pythonPackages;
@@ -34,11 +34,11 @@
         pkgs.mkShell {
           inputsFrom = [ pypkgs.doc_enc_train ];
           buildInputs = [
-            pkgs.nodePackages.pyright
+            pkgs.pyright
             pkgs.nodePackages.bash-language-server
             pkgs.shellcheck
             pkgs.yamllint
-            pypkgs.ruff-lsp
+            pkgs.ruff
             #pypkgs.pylint
             pypkgs.black
             # pypkgs.debugpy

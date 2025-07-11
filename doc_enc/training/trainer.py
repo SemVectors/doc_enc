@@ -22,8 +22,8 @@ import torch.utils.checkpoint
 from torch.distributed.optim.zero_redundancy_optimizer import ZeroRedundancyOptimizer as ZeRoOptim
 from torch.nn.utils.clip_grad import clip_grad_norm_
 
-from torch.cuda.amp.grad_scaler import GradScaler
-from torch.cuda.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
+from torch.amp.autocast_mode import autocast
 
 from torch.distributed.algorithms.join import Join
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -842,7 +842,7 @@ class Trainer(BaseTrainerUtils):
             self._debug_batch(task, batch, labels)
 
             # forward pass
-            with autocast(enabled=self._amp_enabled):
+            with autocast(self._device.type, enabled=self._amp_enabled):
                 self._log_current_mem_usage('before forward')
                 output = self._run_forward(task, batch, labels)
                 self._log_current_mem_usage('after forward')
