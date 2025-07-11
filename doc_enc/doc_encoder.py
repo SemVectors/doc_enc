@@ -55,7 +55,7 @@ class DocEncoderConf:
 
     # perform l2 normalization on encoded vectors.
     normalize_vecs: bool = False
-    enable_amp: bool = True
+    enable_amp: bool = False
 
 
 # * Batch helpers
@@ -695,7 +695,7 @@ def _adjust_enc_config(config: BaseEncoderConf, eval_mode: bool):
 class EncodeModule(BaseEncodeModule):
     def __init__(self, conf: DocEncoderConf, eval_mode: bool = True) -> None:
         self._conf = conf
-        if conf.use_gpu is not None and torch.cuda.is_available():
+        if conf.use_gpu is not None and conf.use_gpu >= 0 and torch.cuda.is_available():
             logging.info("Computing on gpu:%s", conf.use_gpu)
             device = torch.device(f'cuda:{conf.use_gpu}')
         else:
@@ -1114,7 +1114,7 @@ class DocEncoder:
                 if stat is not None:
                     self._update_doc_stat(docs, stat)
                 doc_embs = self._encode_docs(docs, doc_lengths)
-                embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
+                embs.append(doc_embs.to(device='cpu'))
                 embs_idxs.extend(idxs)
 
             stacked = torch.vstack(embs)
@@ -1158,7 +1158,7 @@ class DocEncoder:
             if stat is not None:
                 self._update_doc_stat(batch, stat)
             doc_embs = self._encode_docs(batch, doc_lengths)
-            embs.append(doc_embs.to(device='cpu', dtype=torch.float32))
+            embs.append(doc_embs.to(device='cpu'))
         stacked = torch.vstack(embs)
         assert len(stacked) == len(docs)
 
@@ -1198,6 +1198,6 @@ class DocEncoder:
                 doc_embs = self._encode_docs(docs, doc_lengths)
                 if self.conf().normalize_vecs:
                     doc_embs = F.normalize(doc_embs, p=2, dim=1)
-                yield ids, doc_embs.to(device='cpu', dtype=torch.float32).numpy()
+                yield ids, doc_embs.to(device='cpu').numpy()
         finally:
             batch_iter.destroy()

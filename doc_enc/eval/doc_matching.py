@@ -8,6 +8,7 @@ import csv
 import random
 
 import scipy.spatial.distance as scipy_dist
+import numpy as np
 
 from doc_enc.eval.eval_utils import paths_from_ids
 from doc_enc.doc_encoder import DocEncoder
@@ -94,7 +95,10 @@ def _calc_metrics(threshold, gold, inv_idx, doc_embs):
         if tgt_i is None:
             not_found += 1
             continue
-        sim = 1.0 - scipy_dist.cosine(doc_embs[src_i], doc_embs[tgt_i])
+        sim = 1.0 - scipy_dist.cosine(
+            doc_embs[src_i].astype(np.float32, copy=False),
+            doc_embs[tgt_i].astype(np.float32, copy=False),
+        )
 
         computed_label = 0
         if sim > threshold:

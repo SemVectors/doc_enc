@@ -57,9 +57,41 @@ def run_compute_embs(args):
         use_gpu=args.gpu,
         max_sents=args.max_sents_per_batch,
         max_tokens=args.max_tokens_per_batch,
+        enable_amp=args.enable_amp,
     )
     doc_encoder = DocEncoder(conf)
     _compute_embs(args, doc_encoder)
+
+
+def run_compute_sent_embs(args):
+    conf = DocEncoderConf(
+        model_path=args.model_path,
+        use_gpu=args.gpu,
+        max_sents=args.max_sents_per_batch,
+        max_tokens=args.max_tokens_per_batch,
+        enable_amp=args.enable_amp,
+    )
+    doc_encoder = DocEncoder(conf)
+
+    output_dir_path = args.output_dir
+    if not os.path.exists(output_dir_path):
+        os.mkdir(output_dir_path)
+
+    batch_i = 0
+    embs = []
+    ids = []
+    for batch_ids, batch_embs in doc_encoder.generate_sent_embs_from_file(
+        args.input_file, first_column_is_id=args.first_column_is_id, sep=args.column_sep
+    ):
+        embs.append(batch_embs)
+        ids.extend(batch_ids)
+        if len(ids) >= args.batch_size:
+            _save(args, output_dir_path, ids, embs, batch_i)
+            batch_i += 1
+            embs = []
+            ids = []
+    if ids:
+        _save(args, output_dir_path, ids, embs, batch_i)
 
 
 def run_classif(args):
@@ -68,6 +100,7 @@ def run_classif(args):
         use_gpu=args.gpu,
         max_sents=args.max_sents_per_batch,
         max_tokens=args.max_tokens_per_batch,
+        enable_amp=args.enable_amp,
     )
     doc_encoder = ClassifDoc(conf)
     with open(args.output_file, 'w', encoding='utf8') as outf:
@@ -80,10 +113,13 @@ def run_classif(args):
 
 def _add_common_opts(parser):
     parser.add_argument("--model_path", "-m", required=True, help="")
-    parser.add_argument("--gpu", "-g", default=0, help='GPU device number ')
+    parser.add_argument(
+        "--gpu", "-g", default=0, help='GPU device number, pass -1 to use CPU.', type=int
+    )
     parser.add_argument("--max_sents_per_batch", "-ms", default=2048)
     parser.add_argument("--max_tokens_per_batch", "-mt", default=128_000)
     parser.add_argument("--batch_size", "-b", default=1000)
+    parser.add_argument("--enable_amp", "-amp", default=False, action='store_true')
 
 
 def main():
@@ -93,14 +129,25 @@ def main():
     subparsers = parser.add_subparsers(help='sub-command help')
 
     doc_parser = subparsers.add_parser('docs', help='compute embeddings of documents')
-
     doc_parser.add_argument(
         "--input_file", "-i", required=True, help="file with paths to segmented texts"
     )
     doc_parser.add_argument("--output_dir", "-o", required=True, help="")
     _add_common_opts(doc_parser)
-    doc_parser.add_argument("--save_as_fp16", default=False, action='store_true')
+    doc_parser.add_argument("--save_as_fp16", "-fp16", default=False, action='store_true')
     doc_parser.set_defaults(func=run_compute_embs)
+
+    sent_parser = subparsers.add_parser('sents', help='compute embeddings of sentences')
+
+    sent_parser.add_argument(
+        "--input_file", "-i", required=True, help="File with each sentencen on the new line"
+    )
+    sent_parser.add_argument("--output_dir", "-o", required=True, help="")
+    _add_common_opts(sent_parser)
+    sent_parser.add_argument("--first_column_is_id", default=False, action='store_true')
+    sent_parser.add_argument("--column_sep", default='\t')
+    sent_parser.add_argument("--save_as_fp16", "-fp16", default=False, action='store_true')
+    sent_parser.set_defaults(func=run_compute_sent_embs)
 
     classif_parser = subparsers.add_parser('classif', help='Do classification of documents')
     classif_parser.add_argument(
