@@ -1,0 +1,28 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+max_sents: 2048
+max_tokens: 96_000
+enable_amp: true
+truncate_long_docs: true
+async_batch_gen: 2
+dropout: 0.4
+lr: 0.0001
+
+model_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/tuning/trans/doc_trans_full1-9-4/model.pt
+use_gpu: 0
+train_meta_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/grnti-classif/meta_lvl1.mini/train.csv
+dev_meta_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/grnti-classif/meta_lvl1.mini/dev.csv
+test_meta_path: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/grnti-classif/meta_lvl1.mini/test.csv
+data_dir: >-
+  /home/dvzubarev/Workspace/projects/semvectors/finetune-data/grnti-classif/data_ru.segmented-mini
+
+
+eval_every: 20
+max_updates: 60
