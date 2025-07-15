@@ -311,7 +311,7 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
             metrics = eval_on_dataset(
                 conf, conf.test_meta_path, model, labels_mapping=labels_mapping
             )
-        print(metrics)
+        logging.info("Test metrics:\n%s", metrics)
         print('micro_F1,macro_F1')
         print(f'{metrics["micro_F1"]:.3f},{metrics["macro_F1"]:.3f}')
 
@@ -599,7 +599,7 @@ class MultiLabelTestEvaluator:
             'micro_recall': micro_rec,
             'micro_precision': micro_prec,
             'macro_F1': macro_f1,
-            'macro_recall': macro_prec,
+            'macro_recall': macro_rec,
             'macro_precision': macro_prec,
             'MAP': mean_ap,
         }
@@ -793,7 +793,7 @@ class MultiLabelDevEvaluator:
             'micro_recall': micro_rec[max_m_idx].item(),
             'micro_precision': micro_prec[max_m_idx].item(),
             'macro_F1': macro_f1[max_m_idx].item(),
-            'macro_recall': macro_prec[max_m_idx].item(),
+            'macro_recall': macro_rec[max_m_idx].item(),
             'macro_precision': macro_prec[max_m_idx].item(),
             'MAP': mean_ap[max_m_idx].item(),
             '_threshold_vars': thresh_vars,

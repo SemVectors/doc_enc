@@ -360,8 +360,10 @@ def train_cli(conf: Config) -> None:
         raise RuntimeError("No gpu was found")
 
     _adjust_config(conf)
-    _preproc(conf)
-    _prepare_indexes(conf)
+
+    if _is_training_required(conf):
+        _preproc(conf)
+        _prepare_indexes(conf)
     try:
         mp_spawn(_run_train, args=(gpu_cnt, conf), nprocs=gpu_cnt, join=True)
     except Exception as e:
