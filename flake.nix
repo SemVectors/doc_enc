@@ -14,12 +14,14 @@
         };
       };
       pypkgs = pkgs.pythonPackages;
+      pycu11pkgs = pkgs.pycu11.pkgs;
     in {
       overlays.default = import ./nix/overlay.nix {inherit self pkgs;};
 
       packages.x86_64-linux = {
         default = pypkgs.doc_enc;
-        train = pypkgs.doc_enc_train;
+        doc_enc_train = pypkgs.doc_enc_train;
+        doc_enc_cu11 = pycu11pkgs.doc_enc;
       };
 
       trainDockerImage =  import ./nix/docker.nix {inherit pkgs;
@@ -30,8 +32,8 @@
                                                       doc-enc-pkg = pypkgs.doc_enc;
                                                       version=pypkgs.doc_enc.version;};
 
-      devShells.x86_64-linux.default =
-        pkgs.mkShell {
+      devShells.x86_64-linux = {
+        default = pkgs.mkShell {
           inputsFrom = [ pypkgs.doc_enc_train ];
           buildInputs = [
             pkgs.pyright
@@ -50,6 +52,14 @@
             export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
             '';
         };
+        cu11 = pkgs.mkShell {
+          inputsFrom = [ pycu11pkgs.doc_enc ];
+          shellHook=''
+            export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
+            '';
+        };
+      };
+
     };
 
 }
