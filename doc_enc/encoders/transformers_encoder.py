@@ -38,8 +38,8 @@ class BaseTransformersAutoModel(BaseEncoder):
     def _create_key_padding_mask(self, max_len, src_lengths, device):
         bs = src_lengths.shape[0]
         mask = torch.full((bs, max_len), 0, dtype=torch.float, device=device)
-        for i, l in enumerate(src_lengths):
-            mask[i, 0:l] = 1
+        for i, length in enumerate(src_lengths):
+            mask[i, 0:length] = 1
 
         return mask
 
@@ -84,6 +84,7 @@ class TransformersAutoModel(BaseTransformersAutoModel):
         assert t is not None, "stupid pyright"
         max_len = t.shape[1]
 
+        # B X L
         attention_mask = self._create_key_padding_mask(max_len, lengths, t.device)
 
         if transformers_kwargs is None:
@@ -95,10 +96,32 @@ class TransformersAutoModel(BaseTransformersAutoModel):
             attention_mask=attention_mask,
             **transformers_kwargs,
         )
-        if (pooled_out := getattr(result, 'pooler_output', None)) is None:
-            if isinstance(result, BaseModelOutput):
-                hidden_states = result[0]
-                pooled_out = hidden_states[:, 0]
+        if (
+            self.config.transformers_pooler != 'auto'
+            or (pooled_out := getattr(result, 'pooler_output', None)) is None
+        ):
+
+            if (last_hidden_state := getattr(result, 'last_hidden_state', None)) is not None:
+                # B x L X D
+                if self.config.transformers_pooler == 'first':
+                    pooled_out = last_hidden_state[:, 0]
+
+                elif self.config.transformers_pooler == 'mean':
+                    input_mask_expanded = (
+                        attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
+                    )
+                    pooled_out = torch.sum(
+                        last_hidden_state * input_mask_expanded, 1
+                    ) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                elif self.config.transformers_pooler == 'max':
+                    masked = torch.masked_fill(
+                        last_hidden_state, attention_mask.unsqueeze(-1).logical_not(), float('-inf')
+                    )
+                    pooled_out = torch.max(masked, dim=1)[0]
+                else:
+                    raise RuntimeError(
+                        f"Unsupported transformer_pooler == {self.config.transformers_pooler}"
+                    )
             else:
                 raise RuntimeError(f"Unsupported result type from transformers lib {type(result)} ")
 
