@@ -27,6 +27,7 @@ class TokenizerConf:
     vocab_path: str | None = None
     transformers_auto_name: str = ''
     transformers_cache_dir: str | None = None
+    auto_tokenizer_max_seq_len: int | None = None
 
     add_bos: bool = False
     add_eos: bool = False
@@ -199,7 +200,9 @@ class TransformersTokenizer(BaseTransformersTokenizer):
                 logging.warning("Huggingface cant connect to its resources, waiting a bit..")
                 tries += 1
                 time.sleep(1)
-        super().__init__(tokenizer, inference_mode=inference_mode)
+        super().__init__(
+            tokenizer, max_seq_length=conf.auto_tokenizer_max_seq_len, inference_mode=inference_mode
+        )
 
 
 class SbertTokenizer(BaseTransformersTokenizer):
