@@ -1,0 +1,30 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+  /train/init_models/doc_trans_full1-9-4.pt
+train_meta_path: >-
+    /train/data/grnti_classif/meta_lvl1-2000-3000/train.csv
+dev_meta_path: >-
+    /train/data/grnti_classif/meta_lvl1-2000-3000/dev.csv
+test_meta_path: >-
+    /train/data/grnti_classif/meta_lvl1-2000-3000/test.csv
+data_dir: >-
+    /train/data/grnti_classif/data_ru.segmented
+use_gpu: 0
+
+
+max_updates: 15000
+eval_every: 1000
+
+async_batch_gen: 10
+max_sents: 164000
+max_tokens: 560_000
+bucket_multiplier: 3
+enable_amp: true
+
+lr: 0.0001
+dropout: 0.4
+truncate_long_docs: true
