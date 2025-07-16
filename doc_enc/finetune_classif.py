@@ -398,7 +398,7 @@ def _train_loop(
         **conf.lr_scheduler_kwargs,
     )
 
-    scaler = GradScaler(enabled=True)
+    scaler = GradScaler(enabled=conf.enable_amp)
     best_metrics = {}
     update_nums = 0
     epoch = 0

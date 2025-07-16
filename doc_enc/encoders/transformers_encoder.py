@@ -101,9 +101,10 @@ class TransformersAutoModel(BaseTransformersAutoModel):
             or (pooled_out := getattr(result, 'pooler_output', None)) is None
         ):
 
+            # B x L X D
             if (last_hidden_state := getattr(result, 'last_hidden_state', None)) is not None:
-                # B x L X D
-                if self.config.transformers_pooler == 'first':
+
+                if self.config.transformers_pooler in ('first', 'auto'):
                     pooled_out = last_hidden_state[:, 0]
 
                 elif self.config.transformers_pooler == 'mean':
