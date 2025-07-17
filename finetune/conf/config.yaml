@@ -4,7 +4,7 @@ hydra:
   job:
     chdir: true
 defaults:
-  - base_config
+  - base_classif_config
   - _self_
 
 model_path: /train/models/model.pt
