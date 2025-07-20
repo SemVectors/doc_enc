@@ -9,6 +9,7 @@ from pathlib import Path
 import collections
 import re
 import random
+from enum import Enum
 
 
 import hydra
@@ -46,9 +47,15 @@ class FineTuneConf(DocEncoderConf):
     only_eval_test: bool = False
 
 
+class ClassifHeadType(Enum):
+    LINEAR = 0
+    MLP = 1
+
+
 @dataclasses.dataclass
 class ClassifFineTuneConf(FineTuneConf):
     nlabels: int = MISSING
+    classif_head: ClassifHeadType = ClassifHeadType.LINEAR
 
 
 cs = ConfigStore.instance()
@@ -60,38 +67,82 @@ cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 # * Models
 
 
-class DocClassifier(nn.Module):
-    def __init__(self, encoder: EncodeModule, conf: ClassifFineTuneConf):
+class LinearClassifierHead(nn.Module):
+    def __init__(self, in_dim: int, device: torch.device, conf: ClassifFineTuneConf):
         super().__init__()
-        self.encoder = encoder
 
         self.dropout = None
         if conf.dropout > 0.0:
             self.dropout = nn.Dropout(conf.dropout)
-        self.classif_layer = nn.Linear(encoder.doc_embs_dim(), conf.nlabels)
-        self.classif_layer = self.classif_layer.to(device=self.encoder.device)
+        self.classif_layer = nn.Linear(in_dim, conf.nlabels)
+        self.classif_layer = self.classif_layer.to(device=device)
 
-        self.thresholds: list | None = None
-
-    def forward(self, docs, doc_fragments):
-        embeddings = self.encoder(docs, doc_fragments)
+    def forward(self, embeddings: torch.Tensor):
         if self.dropout is not None:
             embeddings = self.dropout(embeddings)
         return self.classif_layer(embeddings)
 
 
+class MLPClassifierHead(nn.Module):
+    def __init__(self, in_dim: int, device: torch.device, conf: ClassifFineTuneConf):
+        super().__init__()
+
+        self.dense = nn.Linear(in_dim, in_dim, device=device)
+        self.dropout = None
+        if conf.dropout > 0.0:
+            self.dropout = nn.Dropout(conf.dropout)
+
+        self.out_proj = nn.Linear(in_dim, conf.nlabels, device=device)
+
+    def forward(self, embeddings: torch.Tensor):
+        x = embeddings
+        if self.dropout is not None:
+            x = self.dropout(x)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+
+class DocClassifier(nn.Module):
+    def __init__(self, encoder: EncodeModule, conf: ClassifFineTuneConf):
+        super().__init__()
+        self.encoder = encoder
+
+        if conf.classif_head == ClassifHeadType.LINEAR:
+            self.cls_head = LinearClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
+        else:
+            self.cls_head = MLPClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
+
+        self.thresholds: list | None = None
+
+    def forward(self, docs, doc_fragments):
+        embeddings = self.encoder(docs, doc_fragments)
+        return self.cls_head(embeddings)
+
+
 def _create_model(conf: ClassifFineTuneConf):
     doc_encoder = EncodeModule(conf, eval_mode=False)
 
-    if (
-        OmegaConf.is_missing(conf, 'nlabels')
-        and (ft_cfg := doc_encoder._state_dict.get('fine_tune_cfg')) is not None
-    ):
+    if (ft_cfg := doc_encoder._state_dict.get('fine_tune_cfg')) is not None:
+        # update conf's nlabels
         conf.nlabels = ft_cfg.nlabels
+        # uses this loaded config for DocClassifier loading
+        conf = ft_cfg
+
     model = DocClassifier(doc_encoder, conf)
     model.thresholds = doc_encoder._state_dict.get('thresholds')
+    # Compatibility with previous versions
     if 'classif_layer' in doc_encoder._state_dict:
-        model.classif_layer.load_state_dict(doc_encoder._state_dict['classif_layer'])
+        assert isinstance(
+            model.cls_head, LinearClassifierHead
+        ), f"Compat error: expected LinearClassifierHead but ({type(model.cls_head)}) "
+        model.cls_head.classif_layer.load_state_dict(doc_encoder._state_dict['classif_layer'])
+    elif 'cls_head' in doc_encoder._state_dict:
+        model.cls_head.load_state_dict(doc_encoder._state_dict['cls_head'])
+
     return model
 
 
@@ -853,7 +904,7 @@ def eval_on_dataset(
 def _save_model(conf: FineTuneConf, model: DocClassifier, metrics, labels_index, labels_mapping):
     d = model.encoder.to_dict()
     d['fine_tune_cfg'] = conf
-    d['classif_layer'] = model.classif_layer.state_dict()
+    d['cls_head'] = model.cls_head.state_dict()
     d['labels_index'] = labels_index
     d['labels_mapping'] = labels_mapping
     if 'thresholds' in metrics:
