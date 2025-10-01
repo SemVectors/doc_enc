@@ -106,6 +106,16 @@ class TransformersAutoModel(BaseTransformersAutoModel):
 
                 if self.config.transformers_pooler in ('first', 'auto'):
                     pooled_out = last_hidden_state[:, 0]
+                elif self.config.transformers_pooler == 'last':
+                    left_padding = attention_mask[:, -1].sum() == attention_mask.shape[0]
+                    if left_padding:
+                        pooled_out = last_hidden_state[:, -1]
+                    else:
+                        batch_size = last_hidden_state.shape[0]
+                        pooled_out = last_hidden_state[
+                            torch.arange(batch_size, device=last_hidden_state.device),
+                            lengths - 1,
+                        ]
 
                 elif self.config.transformers_pooler == 'mean':
                     input_mask_expanded = (
