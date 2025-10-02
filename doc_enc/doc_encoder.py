@@ -496,6 +496,7 @@ def encode_input_data(
         collect_on_cpu=collect_on_cpu,
         pad_to_multiple_of=encoder.pad_to_multiple_of,
         already_sorted=input_data.input_sorted(),
+        padding_side=encoder.get_padding_side(),
     )
 
 
@@ -524,12 +525,14 @@ class BaseSentEncodeModule(torch.nn.Module):
 
     def _prepare_input_data(self, doc_segments: list[list[int]], already_sorted=False):
         max_len = len(max(doc_segments, key=len))
+
         tokens_tensor, lengths_tensor = create_padded_tensor(
             doc_segments,
             max_len,
             pad_idx=self._pad_idx,
             device=self.device,
             pad_to_multiple_of=self._first_encode_layer().pad_to_multiple_of,
+            padding_side=self._first_encode_layer().get_padding_side(),
         )
 
         return _InputData(

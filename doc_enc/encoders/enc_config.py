@@ -44,6 +44,8 @@ class BaseEncoderConf:
     transformers_fix_pretrained_params: bool = False
     # might be used to override default pool strategy: mean/first/last/max.
     transformers_pooler: str = 'auto'
+    # pad options
+    left_padding: bool = False
 
 
 @dataclasses.dataclass

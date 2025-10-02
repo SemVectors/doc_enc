@@ -50,6 +50,12 @@ class SeqEncoder(nn.Module):
     def out_embs_dim(self):
         return self.encoder.out_embs_dim()
 
+    def get_padding_side(self):
+        padding_side = 'right'
+        if self.conf.left_padding:
+            padding_side = 'left'
+        return padding_side
+
     def _prepare_input(self, embs):
         if self.inp_dropout is not None:
             embs = self.inp_dropout(embs)

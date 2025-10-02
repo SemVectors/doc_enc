@@ -12,6 +12,7 @@ from doc_enc.encoders.base_pooler import BasePoolerConf
 from doc_enc.encoders.enc_config import BaseEncoderConf
 from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_out import BaseEncoderOut
+from doc_enc.encoders.pad_utils import create_key_padding_mask
 
 
 class BaseTransformersAutoModel(BaseEncoder):
@@ -35,13 +36,11 @@ class BaseTransformersAutoModel(BaseEncoder):
     def out_embs_dim(self) -> int:
         return self._get_auto_config().hidden_size
 
-    def _create_key_padding_mask(self, max_len, src_lengths, device):
-        bs = src_lengths.shape[0]
-        mask = torch.full((bs, max_len), 0, dtype=torch.float, device=device)
-        for i, length in enumerate(src_lengths):
-            mask[i, 0:length] = 1
-
-        return mask
+    def _get_padding_side(self):
+        padding_side = 'right'
+        if self.config.left_padding:
+            padding_side = 'left'
+        return padding_side
 
     def state_dict(self, *args, **kwargs):
         # do not save state when params are fixed
@@ -85,7 +84,9 @@ class TransformersAutoModel(BaseTransformersAutoModel):
         max_len = t.shape[1]
 
         # B X L
-        attention_mask = self._create_key_padding_mask(max_len, lengths, t.device)
+        attention_mask = create_key_padding_mask(
+            max_len, lengths, t.device, padding_side=self._get_padding_side()
+        )
 
         if transformers_kwargs is None:
             transformers_kwargs = {}
@@ -208,7 +209,9 @@ class SbertAutoModel(BaseTransformersAutoModel):
 
         max_len = input_token_ids.shape[1]
 
-        attention_mask = self._create_key_padding_mask(max_len, lengths, input_token_ids.device)
+        attention_mask = create_key_padding_mask(
+            max_len, lengths, input_token_ids.device, padding_side=self._get_padding_side()
+        )
 
         if transformers_kwargs is None:
             transformers_kwargs = {}

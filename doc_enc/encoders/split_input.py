@@ -23,11 +23,12 @@ def split_input_and_embed(
     collect_on_cpu: bool = False,
     already_sorted: bool = False,
     pad_to_multiple_of: int = 0,
+    padding_side: str = 'right',
 ) -> torch.Tensor:
     if not input_lengths.numel():
         return torch.FloatTensor()
 
-    max_len = torch.max(input_lengths).item()
+    max_len: int = int(torch.max(input_lengths).item())
     sents_cnt = input.size(0)
     if sents_cnt <= max_chunk_size and max_len * sents_cnt < max_tokens_in_chunk:
         res = encoder(input, input_lengths, enforce_sorted=already_sorted)
@@ -56,14 +57,18 @@ def split_input_and_embed(
 
     sorted_lengths_list = sorted_lengths.tolist()
     while beg_offs < sents_cnt:
-        max_len = sorted_lengths_list[beg_offs]
-        if pad_to_multiple_of and max_len % pad_to_multiple_of != 0:
-            max_len = ((max_len // pad_to_multiple_of) + 1) * pad_to_multiple_of
+        chunk_max_len: int = sorted_lengths_list[beg_offs]
+        if pad_to_multiple_of and chunk_max_len % pad_to_multiple_of != 0:
+            chunk_max_len = ((chunk_max_len // pad_to_multiple_of) + 1) * pad_to_multiple_of
 
-        cnt_by_tokens = max_tokens_in_chunk // max_len
+        cnt_by_tokens = max_tokens_in_chunk // chunk_max_len
         cnt = min(max_chunk_size, cnt_by_tokens, sents_cnt - beg_offs)
-        chunk = sorted_sents[beg_offs : beg_offs + cnt, :max_len]
-
+        if padding_side == 'right':
+            chunk = sorted_sents[beg_offs : beg_offs + cnt, :chunk_max_len]
+        elif padding_side == 'left':
+            chunk = sorted_sents[beg_offs : beg_offs + cnt, max_len - chunk_max_len :]
+        else:
+            raise RuntimeError("Unknown value of padding_side: " + padding_side)
         res = encoder(chunk, sorted_lengths[beg_offs : beg_offs + cnt], enforce_sorted=True)
         embs.append(_encoder_res_finalize(res, collect_on_cpu))
 
