@@ -116,9 +116,9 @@ def _add_common_opts(parser):
     parser.add_argument(
         "--gpu", "-g", default=0, help='GPU device number, pass -1 to use CPU.', type=int
     )
-    parser.add_argument("--max_sents_per_batch", "-ms", default=2048)
-    parser.add_argument("--max_tokens_per_batch", "-mt", default=128_000)
-    parser.add_argument("--batch_size", "-b", default=1000)
+    parser.add_argument("--max_sents_per_batch", "-ms", default=2048, type=int)
+    parser.add_argument("--max_tokens_per_batch", "-mt", default=128_000, type=int)
+    parser.add_argument("--batch_size", "-b", default=1000, type=int)
     parser.add_argument("--enable_amp", "-amp", default=False, action='store_true')
 
 

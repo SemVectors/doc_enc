@@ -114,7 +114,7 @@ def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEn
     tgt_sent_ids, tgt_embs = doc_encoder.encode_sents_from_file(
         tgt_file_path, first_column_is_id=True
     )
-    logging.info("shape of encoded tgt sents: %s", src_embs.shape)
+    logging.info("shape of encoded tgt sents: %s", tgt_embs.shape)
 
     max_k = max(conf.topk)
     msim, indexes = calc_sim(conf.sim_kind, max_k, src_embs, tgt_embs, use_gpu=conf.use_gpu)
