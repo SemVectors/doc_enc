@@ -576,7 +576,9 @@ class BaseEncodeModule(BaseSentEncodeModule):
         self.frag_layer = frag_layer
 
     def sent_encoding_supported(self):
-        return self.sent_layer is not None
+        return self.sent_layer is not None or (
+            self.frag_layer is None and self.doc_layer is not None
+        )
 
     def sent_embs_dim(self):
         if self.sent_layer is not None:
@@ -849,9 +851,12 @@ class EncodeModule(BaseEncodeModule):
         )
 
     def encode_sents(self, sents: list[list[int]], collect_on_cpu=False, already_sorted=False):
-        if self.sent_layer is None:
-            raise RuntimeError("Sent layer is absent in this model")
-        encoder = self.sent_layer.cast_to_base()
+        if self.sent_layer is not None:
+            encoder = self.sent_layer.cast_to_base()
+        elif self.frag_layer is None and self.doc_layer is not None:
+            encoder = self.doc_layer
+        else:
+            raise RuntimeError("Sentence encoding is not supported!")
         input_data = self._prepare_input_data(sents, already_sorted=already_sorted)
         return encode_input_data(
             input_data,
