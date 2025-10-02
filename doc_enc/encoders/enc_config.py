@@ -42,6 +42,7 @@ class BaseEncoderConf:
     transformers_auto_name: str = ''
     transformers_cache_dir: str | None = None
     transformers_fix_pretrained_params: bool = False
+    transformers_torch_fp16: bool = False
     # might be used to override default pool strategy: mean/first/last/max.
     transformers_pooler: str = 'auto'
     # pad options
