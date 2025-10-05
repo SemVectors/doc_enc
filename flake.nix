@@ -13,10 +13,13 @@
           cudaSupport = true;
         };
       };
-      pypkgs = pkgs.pythonPackages;
+      pypkgs = pkgs.python3Packages;
       pycu11pkgs = pkgs.pycu11.pkgs;
     in {
-      overlays.default = import ./nix/overlay.nix {inherit self pkgs;};
+      overlays = {
+        default = import ./nix/overlay.nix {inherit self pkgs;};
+        cu11 = import ./nix/overlay-cu11.nix {inherit self pkgs;};
+      };
 
       packages.x86_64-linux = {
         default = pypkgs.doc_enc;
