@@ -31,6 +31,7 @@ from doc_enc.training.index.prepare_index_util import prepare_sent_index
 
 from doc_enc.training.combine_docs_sources import combine_docs_datasets
 from doc_enc.training.types import TaskType
+from doc_enc.utils import global_init
 
 
 @dataclass
@@ -388,4 +389,5 @@ def repack_cli(conf: Config) -> None:
 
 
 if __name__ == "__main__":
+    global_init()
     train_cli()

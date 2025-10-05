@@ -15,6 +15,7 @@ from doc_enc.eval.doc_matching import DocMatchingConf, doc_matching_eval
 from doc_enc.eval.doc_retrieval import DocRetrievalConf, doc_retrieval_eval
 from doc_enc.eval.sent_retrieval import SentRetrievalConf, sent_retrieval_eval
 from doc_enc.eval.bench_model import BenchConf, bench_sents_encoding, bench_docs_encoding
+from doc_enc.utils import global_init
 
 
 @dataclasses.dataclass
@@ -157,4 +158,5 @@ def eval_cli(conf: Config) -> None:
 
 
 if __name__ == "__main__":
+    global_init()
     eval_cli()

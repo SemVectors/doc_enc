@@ -24,6 +24,7 @@ import torch.nn.functional as F
 
 
 from doc_enc.doc_encoder import DocEncoderConf, EncodeModule, BatchIterator, file_path_fetcher
+from doc_enc.utils import global_init
 
 # * Configs
 
@@ -925,4 +926,5 @@ def fine_tune_classif_cli(conf: ClassifFineTuneConf) -> None:
 
 
 if __name__ == "__main__":
+    global_init()
     fine_tune_classif_cli()

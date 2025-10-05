@@ -5,6 +5,7 @@ from typing import Union
 from gzip import GzipFile
 from io import TextIOWrapper
 from pathlib import Path
+import multiprocessing
 
 
 def _is_gzipped(fp):
@@ -60,3 +61,7 @@ def file_line_cnt(fp, limit=0):
         for _, (i, _) in zip(filler, enumerate(f)):
             pass
     return i + 1
+
+
+def global_init():
+    multiprocessing.set_start_method('spawn')

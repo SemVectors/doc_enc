@@ -8,6 +8,7 @@ import numpy as np
 
 from doc_enc.doc_encoder import DocEncoder, DocEncoderConf, file_path_fetcher
 from doc_enc.classif_doc import ClassifDoc
+from doc_enc.utils import global_init
 
 
 def _save(args, output_dir, ids, embs, batch_i):
@@ -169,4 +170,5 @@ def main():
 
 
 if __name__ == '__main__':
+    global_init()
     main()
