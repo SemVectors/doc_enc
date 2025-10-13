@@ -518,7 +518,7 @@ class BaseSentEncodeModule(torch.nn.Module):
         self.embed = embed
         self.sent_layer = sent_layer
 
-    def _first_encode_layer(self) -> SeqEncoder:
+    def first_encode_layer(self) -> SeqEncoder:
         if self.sent_layer is not None:
             return self.sent_layer
         raise RuntimeError("No encode layers in Sent Encode module")
@@ -531,8 +531,8 @@ class BaseSentEncodeModule(torch.nn.Module):
             max_len,
             pad_idx=self._pad_idx,
             device=self.device,
-            pad_to_multiple_of=self._first_encode_layer().pad_to_multiple_of,
-            padding_side=self._first_encode_layer().get_padding_side(),
+            pad_to_multiple_of=self.first_encode_layer().pad_to_multiple_of,
+            padding_side=self.first_encode_layer().get_padding_side(),
         )
 
         return _InputData(
@@ -591,12 +591,21 @@ class BaseEncodeModule(BaseSentEncodeModule):
     def doc_embs_dim(self):
         return self.doc_layer.out_embs_dim()
 
-    def _first_encode_layer(self) -> SeqEncoder:
+    def first_encode_layer(self) -> SeqEncoder:
         if self.sent_layer is not None:
             return self.sent_layer
         if self.frag_layer is not None:
             return self.frag_layer
         return self.doc_layer
+
+    def last_encode_layer(self) -> SeqEncoder:
+        if self.doc_layer is not None:
+            return self.doc_layer
+        if self.frag_layer is not None:
+            return self.frag_layer
+        if self.sent_layer is not None:
+            return self.sent_layer
+        raise RuntimeError("last_encode_layer: logic error!")
 
     def _sent_level_ctx_mgr(self):
         return contextlib.nullcontext()
