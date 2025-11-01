@@ -40,6 +40,11 @@ from doc_enc.training.models.model_conf import DocModelConf
 
 
 @dataclasses.dataclass
+class TextProcOverride:
+    auto_tokenizer_max_seq_len: Optional[int] = None
+
+
+@dataclasses.dataclass
 class EncOverride:
     use_adapter: Optional[str] = None
     adapter_kwargs: Optional[Dict[str, Any]] = None
@@ -48,6 +53,7 @@ class EncOverride:
 
 @dataclasses.dataclass
 class ConfOverrides:
+    text_proc: TextProcOverride
     sent: EncOverride
     frag: EncOverride
     doc: EncOverride
@@ -736,6 +742,12 @@ def _adjust_enc_config(
             config.adapter_kwargs = override.adapter_kwargs
 
 
+def _adjust_tp_config(tp: TextProcessor, override: ConfOverrides | None):
+    if override is not None and (msl := override.text_proc.auto_tokenizer_max_seq_len) is not None:
+        tp._tokenizer.set_max_seq_length(msl)
+        tp.conf().tokenizer.auto_tokenizer_max_seq_len = msl
+
+
 class EncodeModule(BaseEncodeModule):
     def __init__(self, conf: DocEncoderConf, eval_mode: bool = True) -> None:
         self._conf = conf
@@ -754,6 +766,7 @@ class EncodeModule(BaseEncodeModule):
         self._tp_state_dict = state_dict['tp']
         self._tp = TextProcessor(self._tp_conf, inference_mode=True)
         self._tp.load_state_dict(self._tp_state_dict)
+        _adjust_tp_config(self._tp, conf.overrides)
 
         vocab = self._tp.vocab()
         mc: DocModelConf = state_dict['model_conf']

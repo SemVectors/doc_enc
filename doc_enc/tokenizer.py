@@ -41,6 +41,9 @@ class AbcTokenizer:
     def get_max_seq_length(self) -> int | None:
         raise NotImplementedError("Not implemented")
 
+    def set_max_seq_length(self, msl: int):
+        raise NotImplementedError("Not implemented")
+
     def get_idx(self, token: str) -> int:
         raise NotImplementedError("Not implemented")
 
@@ -99,8 +102,10 @@ class SentencepieceTokenizer(AbcTokenizer):
     def get_max_seq_length(self):
         return None
 
-    def get_idx(self, token):
-        self._vocab.PieceToId(token)
+    def set_max_seq_length(self, msl): ...
+
+    def get_idx(self, token: str) -> int:
+        return self._vocab.PieceToId(token)
 
     def pad_idx(self):
         return self._vocab.pad_id()
@@ -153,6 +158,9 @@ class BaseTransformersTokenizer(AbcTokenizer):
     def get_max_seq_length(self):
         return self._max_seq_length
 
+    def set_max_seq_length(self, msl):
+        self._max_seq_length = msl
+
     def get_idx(self, token: str) -> int:
         return self._tokenizer.convert_tokens_to_ids(token)
 
@@ -177,8 +185,8 @@ class BaseTransformersTokenizer(AbcTokenizer):
             d['max_seq_length'] = self._max_seq_length
         return d
 
-    def load_state_dict(self, di):
-        if msl := di.get('max_seq_length'):
+    def load_state_dict(self, d):
+        if msl := d.get('max_seq_length'):
             self._max_seq_length = msl
 
 
