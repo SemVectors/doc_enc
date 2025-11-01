@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from enum import Enum
-from typing import Optional, List
+from typing import Any, Optional, List, Dict
 import dataclasses
 
 
@@ -47,6 +47,10 @@ class BaseEncoderConf:
     transformers_pooler: str = 'auto'
     # pad options
     left_padding: bool = False
+
+    # supported values: lora
+    use_adapter: str = ''
+    adapter_kwargs: Optional[Dict[str, Any]] = None
 
 
 @dataclasses.dataclass

@@ -124,8 +124,8 @@ class DocClassifier(nn.Module):
         return self.cls_head(embeddings)
 
 
-def _create_model(conf: ClassifFineTuneConf):
-    doc_encoder = EncodeModule(conf, eval_mode=False)
+def _create_model(conf: ClassifFineTuneConf, eval_mode=False):
+    doc_encoder = EncodeModule(conf, eval_mode=eval_mode)
 
     if (ft_cfg := doc_encoder._state_dict.get('fine_tune_cfg')) is not None:
         # update conf's nlabels
@@ -357,7 +357,7 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
         logging.info("Evaling on test:")
         logging.info("Loading saved model from %s", conf.model_path)
 
-        model = _create_model(conf)
+        model = _create_model(conf, eval_mode=True)
         labels_mapping = model.encoder._state_dict['labels_mapping']
         with torch.inference_mode():
             metrics = eval_on_dataset(

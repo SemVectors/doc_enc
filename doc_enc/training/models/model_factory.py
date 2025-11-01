@@ -67,7 +67,7 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
 
         sent_enc_for_doc = None
         if conf.sent_for_doc is not None:
-            sent_enc_for_doc = create_encoder(conf.sent_for_doc)
+            sent_enc_for_doc = create_encoder(conf.sent_for_doc, eval_mode=False)
             if state_dict is not None:
                 sent_enc_for_doc.load_state_dict(state_dict['sent_for_doc'])
 

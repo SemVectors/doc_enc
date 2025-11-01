@@ -5,7 +5,7 @@ import logging
 import itertools
 import math
 import copy
-from typing import Optional, Any
+from typing import Dict, Optional, Any
 import dataclasses
 from pathlib import Path
 import threading
@@ -13,6 +13,7 @@ import multiprocessing
 import collections.abc
 
 import numpy as np
+from omegaconf import OmegaConf
 import torch
 from torch.amp.autocast_mode import autocast
 import torch.nn.functional as F
@@ -30,12 +31,26 @@ from doc_enc.encoders.enc_factory import (
     create_seq_encoder,
 )
 
-from doc_enc.encoders.enc_config import BaseEncoderConf
+from doc_enc.encoders.enc_config import SeqEncoderConf
 from doc_enc.encoders.pad_utils import create_padded_tensor
 from doc_enc.encoders.split_input import split_input_and_embed
 from doc_enc.encoders.sent_for_doc_encoder import SentForDocEncoder
 from doc_enc.encoders.seq_encoder import SeqEncoder
 from doc_enc.training.models.model_conf import DocModelConf
+
+
+@dataclasses.dataclass
+class EncOverride:
+    use_adapter: Optional[str] = None
+    adapter_kwargs: Optional[Dict[str, Any]] = None
+    transformers_torch_fp16: Optional[bool] = None
+
+
+@dataclasses.dataclass
+class ConfOverrides:
+    sent: EncOverride
+    frag: EncOverride
+    doc: EncOverride
 
 
 @dataclasses.dataclass
@@ -56,6 +71,8 @@ class DocEncoderConf:
     # perform l2 normalization on encoded vectors.
     normalize_vecs: bool = False
     enable_amp: bool = False
+
+    overrides: Optional[ConfOverrides] = None
 
 
 # * Batch helpers
@@ -697,13 +714,26 @@ class BaseEncodeModule(BaseSentEncodeModule):
         )
 
 
-def _adjust_enc_config(config: BaseEncoderConf, eval_mode: bool):
-    # wipe out cacheck dir since it is different from machine on which model was trained
+def _adjust_enc_config(
+    config: SeqEncoderConf, eval_mode: bool, override: EncOverride | None = None
+):
+    # wipe out cache dir since it is different from machine on which model was trained
     if config.transformers_cache_dir:
         config.transformers_cache_dir = None
 
     if not eval_mode:
         config.transformers_fix_pretrained_params = False
+
+    # It is dumb merge, even if optional value is not set, it will override value on the left with None from the right.
+    # if override is not None:
+    #     return OmegaConf.structured(OmegaConf.merge(config, OmegaConf.to_container(override)))
+    if override is not None:
+        if override.transformers_torch_fp16 is not None:
+            config.transformers_torch_fp16 = override.transformers_torch_fp16
+        if override.use_adapter is not None:
+            config.use_adapter = override.use_adapter
+        if override.adapter_kwargs is not None:
+            config.adapter_kwargs = override.adapter_kwargs
 
 
 class EncodeModule(BaseEncodeModule):
@@ -736,11 +766,15 @@ class EncodeModule(BaseEncodeModule):
         sent_layer: SentForDocEncoder | None = None
         sent_embs_out_size = 0
         if mc.sent is not None:
-            _adjust_enc_config(mc.sent.encoder, eval_mode)
-            base_sent_enc = create_seq_encoder(mc.sent.encoder, prev_output_size=emb_dim)
+            _adjust_enc_config(
+                mc.sent.encoder, eval_mode, None if not conf.overrides else conf.overrides.sent
+            )
+            base_sent_enc = create_seq_encoder(
+                mc.sent.encoder, prev_output_size=emb_dim, eval_mode=eval_mode
+            )
             sent_for_doc_layer = None
             if 'sent_for_doc' in state_dict and mc.sent_for_doc is not None:
-                sent_for_doc_layer = create_encoder(mc.sent_for_doc)
+                sent_for_doc_layer = create_encoder(mc.sent_for_doc, eval_mode)
             sent_layer = SentForDocEncoder.from_base(
                 base_sent_enc, sent_for_doc_layer, freeze_base_sents_layer=False
             )
@@ -749,21 +783,19 @@ class EncodeModule(BaseEncodeModule):
 
         frag_layer = None
         if 'frag_enc' in state_dict and mc.fragment is not None:
-            _adjust_enc_config(mc.fragment, eval_mode)
+            _adjust_enc_config(
+                mc.fragment, eval_mode, None if not conf.overrides else conf.overrides.frag
+            )
             frag_layer = create_seq_encoder(
-                mc.fragment,
-                prev_output_size=sent_embs_out_size,
+                mc.fragment, prev_output_size=sent_embs_out_size, eval_mode=eval_mode
             )
             doc_input_size = frag_layer.out_embs_dim()
             logging.debug("fragment layer\n:%s", frag_layer)
         else:
             doc_input_size = sent_embs_out_size
 
-        _adjust_enc_config(mc.doc, eval_mode)
-        doc_layer = create_seq_encoder(
-            mc.doc,
-            prev_output_size=doc_input_size,
-        )
+        _adjust_enc_config(mc.doc, eval_mode, None if not conf.overrides else conf.overrides.doc)
+        doc_layer = create_seq_encoder(mc.doc, prev_output_size=doc_input_size, eval_mode=eval_mode)
 
         logging.debug("doc layer\n:%s", doc_layer)
 

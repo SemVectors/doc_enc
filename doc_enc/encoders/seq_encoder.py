@@ -2,6 +2,7 @@
 
 import logging
 import math
+from typing import Any, Mapping
 
 import torch
 import torch.utils.checkpoint
@@ -135,3 +136,12 @@ class SeqEncoder(nn.Module):
         enc_result = self.encoder(input_embs=padded_seq, lengths=input_seq_lengths, **kwargs)
 
         return enc_result
+
+    def state_dict(self, *args, **kwargs):
+        return {'encoder': self.encoder.state_dict(*args, **kwargs)}
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], **kwargs):
+        if 'encoder' not in state_dict:
+            # compat with previous versions
+            return super().load_state_dict(state_dict, **kwargs)
+        return self.encoder.load_state_dict(state_dict['encoder'], **kwargs)

@@ -31,7 +31,7 @@ def _get_extra_padding(conf: BaseEncoderConf):
     return pad_to_multiple_of
 
 
-def create_encoder(conf: BaseEncoderConf):
+def create_encoder(conf: BaseEncoderConf, eval_mode: bool):
     if conf.encoder_kind == EncoderKind.LSTM:
         return LSTMEncoder(conf)
 
@@ -52,8 +52,8 @@ def create_encoder(conf: BaseEncoderConf):
 
     if conf.encoder_kind == EncoderKind.TRANSFORMERS_AUTO:
         if 'longformer' in conf.transformers_auto_name:
-            return TransformersLongformer(conf)
-        return TransformersAutoModel(conf)
+            return TransformersLongformer(conf, eval_mode)
+        return TransformersAutoModel(conf, eval_mode)
     if conf.encoder_kind == EncoderKind.AVERAGING:
         return AveragingEncoder(conf)
     if conf.encoder_kind == EncoderKind.SBERT_AUTO:
@@ -62,9 +62,9 @@ def create_encoder(conf: BaseEncoderConf):
     raise RuntimeError(f"Unsupported encoder kind: {conf.encoder_kind}")
 
 
-def create_seq_encoder(conf: SeqEncoderConf, prev_output_size) -> SeqEncoder:
+def create_seq_encoder(conf: SeqEncoderConf, prev_output_size, eval_mode: bool) -> SeqEncoder:
     # conf_dict: Dict[str, Any] = OmegaConf.to_container(conf, resolve=True, throw_on_missing=True)
-    encoder = create_encoder(conf)
+    encoder = create_encoder(conf, eval_mode)
     pad_to_multiple_of = _get_extra_padding(conf)
 
     return SeqEncoder(

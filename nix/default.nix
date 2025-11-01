@@ -7,6 +7,7 @@
   numpy,
   sentencepiece,
   torch,
+  peft,
   hydra-core,
   transformers,
   sentence-transformers,
@@ -28,6 +29,7 @@ buildPythonPackage {
     scikit-learn
     numpy
     torch
+    peft
     sentencepiece
     hydra-core
     transformers

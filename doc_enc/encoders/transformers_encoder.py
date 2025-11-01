@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 
+import logging
 import torch
 
 from transformers import AutoModel
-from transformers.modeling_outputs import BaseModelOutput
+from peft import (
+    LoraConfig,
+    get_peft_model,
+    PeftModel,
+    get_peft_model_state_dict,
+    set_peft_model_state_dict,
+)
+
 from sentence_transformers import SentenceTransformer
 
 from doc_enc.common_types import PoolingStrategy
@@ -47,23 +55,85 @@ class BaseTransformersAutoModel(BaseEncoder):
         # if finetuning save state_dict
         if self.config.transformers_fix_pretrained_params:
             return {}
+        if isinstance(self.auto_model, PeftModel):
+            all_peft_config = self.auto_model.peft_config
+            selected_adapters = list(all_peft_config.keys())
+            if len(selected_adapters) > 1:
+                raise RuntimeError("More than one adapter is not supported!")
+            adapter_name = selected_adapters[0]
+            output_state_dict = get_peft_model_state_dict(
+                self.auto_model,
+                adapter_name=adapter_name,
+                # TODO
+                # save_embedding_layers=save_embedding_layers,
+            )
+            if 'destination' in kwargs:
+                d = kwargs['destination']
+            else:
+                d = {}
+            d['adapter_weights'] = output_state_dict
+            return d
+
         prefix = kwargs.get('prefix', '')
         kwargs['prefix'] = prefix + 'auto_model.'
         return self.auto_model.state_dict(*args, **kwargs)
 
+    def load_state_dict(self, state_dict, *args, **kwargs):
+        if isinstance(self.auto_model, PeftModel):
+            set_peft_model_state_dict(self.auto_model, state_dict['adapter_weights'])
+        else:
+            super().load_state_dict(state_dict, *args, **kwargs)
+
+
+def print_trainable_parameters(model):
+    """
+    Prints the number of trainable parameters in the model.
+    """
+    trainable_params = 0
+    all_param = 0
+    for _, param in model.named_parameters():
+        all_param += param.numel()
+        if param.requires_grad:
+            trainable_params += param.numel()
+    logging.info(
+        f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param:.2f}"
+    )
+
 
 class TransformersAutoModel(BaseTransformersAutoModel):
-    def __init__(self, config: BaseEncoderConf) -> None:
+    def __init__(self, config: BaseEncoderConf, eval_mode: bool) -> None:
         kwargs = {}
         if config.transformers_torch_fp16:
             kwargs['torch_dtype'] = torch.float16
         auto_model = AutoModel.from_pretrained(
             config.transformers_auto_name, cache_dir=config.transformers_cache_dir, **kwargs
         )
+        if config.use_adapter:
+            logging.info(
+                "Create an adapter %s, adapter kwargs: %s",
+                config.use_adapter,
+                config.adapter_kwargs,
+            )
+            if not eval_mode:
+                print_trainable_parameters(auto_model)
+            if config.use_adapter == 'lora':
+                kwargs = {}
+                if config.adapter_kwargs is not None:
+                    kwargs = config.adapter_kwargs
+                adapter_config = LoraConfig(inference_mode=eval_mode, **kwargs)
+            else:
+                raise RuntimeError("Unsupported adapter %s" % config.use_adapter)
+
+            model = get_peft_model(auto_model, adapter_config)
+            if not eval_mode:
+                print_trainable_parameters(model)
+        else:
+            model = auto_model
+
         # TODO optionally enable checkpointing
         # auto_model.gradient_checkpointing_enable()
 
-        super().__init__(config, auto_model)
+        super().__init__(config, model)
 
     def _get_auto_config(self):
         return self.auto_model.config
