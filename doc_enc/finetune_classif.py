@@ -10,6 +10,7 @@ import collections
 import re
 import random
 from enum import Enum
+from typing import Any, List, Optional
 
 
 import hydra
@@ -29,6 +30,20 @@ from doc_enc.utils import global_init
 # * Configs
 
 
+class LabelsData:
+    def __init__(self, labels_index: list[str], labels_mapping: dict[str, int]) -> None:
+        self.labels_index = labels_index
+        self.labels_mapping = labels_mapping
+
+
+class LabelStat:
+    def __init__(self, nlbls):
+        self.seen_labels = torch.zeros(nlbls, dtype=torch.long)
+
+    def update(self, labels):
+        self.seen_labels = self.seen_labels + labels.sum(dim=0).cpu()
+
+
 @dataclasses.dataclass
 class FineTuneConf(DocEncoderConf):
     train_meta_path: str = MISSING
@@ -44,6 +59,7 @@ class FineTuneConf(DocEncoderConf):
     max_updates: int = 5000
 
     validation_metric: str = 'micro_F1'
+    save_dev_eval_stat: bool = False
 
     only_eval_test: bool = False
 
@@ -54,9 +70,37 @@ class ClassifHeadType(Enum):
 
 
 @dataclasses.dataclass
+class ThresholdPredictorOpts:
+    intervals: List[List[float]] = dataclasses.field(default_factory=list)
+    cls_intervals: List[List[float]] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class TopkPredictorOpts:
+    topks: List[int] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class TopkWithThresholdPredictorOpts:
+    intervals: List[List[float]] = dataclasses.field(default_factory=list)
+    topks: List[int] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class GapPredictorOpts:
+    max_gaps: List[float] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
 class ClassifFineTuneConf(FineTuneConf):
     nlabels: int = MISSING
     classif_head: ClassifHeadType = ClassifHeadType.LINEAR
+
+    try_predictors_on_dev: List[str] = dataclasses.field(default_factory=list)
+    threshold_pred_opts: Optional[ThresholdPredictorOpts] = None
+    topk_pred_opts: Optional[TopkPredictorOpts] = None
+    topk_with_threshold_pred_opts: Optional[TopkWithThresholdPredictorOpts] = None
+    gap_pred_opts: Optional[GapPredictorOpts] = None
 
 
 cs = ConfigStore.instance()
@@ -117,7 +161,7 @@ class DocClassifier(nn.Module):
         else:
             self.cls_head = MLPClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
 
-        self.thresholds: list | None = None
+        self.predictor: AbcPredictor | None = None
 
     def forward(self, docs, doc_fragments):
         embeddings = self.encoder(docs, doc_fragments)
@@ -126,15 +170,23 @@ class DocClassifier(nn.Module):
 
 def _create_model(conf: ClassifFineTuneConf, eval_mode=False):
     doc_encoder = EncodeModule(conf, eval_mode=eval_mode)
+    state_dict = doc_encoder._state_dict
 
-    if (ft_cfg := doc_encoder._state_dict.get('fine_tune_cfg')) is not None:
+    if (ft_cfg := state_dict.get('fine_tune_cfg')) is not None:
         # update conf's nlabels
         conf.nlabels = ft_cfg.nlabels
         # uses this loaded config for DocClassifier loading
         conf = ft_cfg
 
     model = DocClassifier(doc_encoder, conf)
-    model.thresholds = doc_encoder._state_dict.get('thresholds')
+    predictor = None
+    # Compatibility with previous versions
+    if thresholds := state_dict.get('thresholds'):
+        predictor = ThresholdPredictor(conf.nlabels, thresholds, doc_encoder.device)
+    elif pred_data := doc_encoder._state_dict.get('predictor_data', {}):
+        name = pred_data['name']
+        predictor = create_predictor(name, conf.nlabels, doc_encoder.device, pred_data)
+    model.predictor = predictor
     # Compatibility with previous versions
     if 'classif_layer' in doc_encoder._state_dict:
         assert isinstance(
@@ -243,6 +295,654 @@ class ClassifBatchIterator:
             yield docs, doc_fragments, labels
 
 
+# * Predictors
+
+
+# ** Basedev predictor
+
+
+class BaseDevMetricsComputer:
+    def __init__(self, nlbl: int, nvars: int, decider_metric='micro_F1'):
+        self.nlbl = nlbl
+
+        # per class aggregations
+        self.cls_total = torch.zeros(self.nlbl, dtype=torch.int32)
+        self.cls_tp = torch.zeros(nvars, self.nlbl, dtype=torch.int32)
+        self.cls_predicted = torch.zeros(nvars, self.nlbl, dtype=torch.int32)
+
+        # per example aggregation
+        self.decider_metric = decider_metric
+        self.decider_tensor: None | torch.Tensor = None
+        self.max_idx: int = -1
+
+        self.xmpl_tp = torch.zeros(nvars, dtype=torch.int32)
+        self.xmpl_rel = torch.zeros(1, dtype=torch.int32)
+        self.xmpl_predicted = torch.zeros(nvars, dtype=torch.int32)
+
+        self.xmpl_rec = torch.zeros(nvars, dtype=torch.float32)
+        self.xmpl_prec = torch.zeros(nvars, dtype=torch.float32)
+        self.xmpl_ap = torch.zeros(nvars, dtype=torch.float32)
+        self.total_examples = 0
+
+    def _update_per_class(
+        self, predictions: torch.Tensor, outputs: torch.Tensor, labels: torch.Tensor
+    ):
+        # predictions [ N x nvars x L ]
+        # outputs [ N x L ]
+        # labels [ N x L ]
+
+        assert self.nlbl == labels.size(1), "Input data has wrong num of labels!"
+
+        self.cls_tp += (predictions & labels.unsqueeze(1).bool()).sum(dim=0).cpu()
+        self.cls_predicted += predictions.sum(dim=0).cpu()
+        self.cls_total += labels.int().sum(dim=0).cpu()
+
+    def _update_per_example(
+        self, predictions: torch.Tensor, outputs: torch.Tensor, labels: torch.Tensor
+    ):
+        # predictions [ N x nvars x L ]
+        # outputs [ N x L ]
+        # labels [ N x L ]
+
+        # N x V
+        tp = (predictions * labels.unsqueeze(1)).sum(dim=2)
+        # N
+        rel = labels.sum(dim=1)
+        # [N x V]
+        predicted = predictions.sum(dim=2)
+        # [V]
+        self.xmpl_tp += tp.sum(dim=0).int().cpu()
+        self.xmpl_rel += rel.sum().int().cpu()
+        self.xmpl_predicted += predicted.sum(dim=0).int().cpu()
+
+        self.total_examples += labels.size(0)
+        self.xmpl_rec += (tp / rel[:, None]).nan_to_num().sum(dim=0).cpu()
+        self.xmpl_prec += (tp / predicted).nan_to_num().sum(dim=0).cpu()
+
+        # calc AP
+        # N x L
+        sort_idx = torch.argsort(outputs, dim=-1, descending=True)
+        # N x V x L
+        vars_cnt = self.xmpl_tp.size(0)
+        sorted_tp = torch.gather(
+            predictions * labels.unsqueeze(1),
+            2,
+            sort_idx.unsqueeze(1).expand(-1, vars_cnt, -1),
+        )
+
+        # N x V x L
+        prec_at_i = torch.cumsum(sorted_tp, dim=-1) / torch.arange(
+            1, labels.size(1) + 1, device=sorted_tp.device
+        )
+        self.xmpl_ap += ((prec_at_i * sorted_tp).sum(dim=-1) / rel[:, None]).sum(dim=0).cpu()
+
+    def _compute_per_class_metrics(self, var_idx: int):
+        # [L]
+        tp = self.cls_tp[var_idx]
+        predicted = self.cls_predicted[var_idx]
+        rec = tp / self.cls_total
+        prec = tp / predicted
+        f1 = 2 * rec * prec / (rec + prec)
+        return rec, prec, f1
+
+    def _compute_per_class_macro_F1(self, var_idx: int):
+        _, _, f1 = self._compute_per_class_metrics(var_idx)
+        macro_F1 = f1.sum().item() / self.nlbl
+        return macro_F1
+
+    def _compute_per_example_metrics(self) -> dict[str, Any]:
+        # V
+        micro_rec = (self.xmpl_tp / self.xmpl_rel).nan_to_num()
+        micro_prec = (self.xmpl_tp / self.xmpl_predicted).nan_to_num()
+        micro_f1 = (2 * micro_rec * micro_prec / (micro_rec + micro_prec)).nan_to_num()
+
+        macro_rec = (self.xmpl_rec / self.total_examples).nan_to_num()
+        macro_prec = (self.xmpl_prec / self.total_examples).nan_to_num()
+        macro_f1 = (2 * macro_rec * macro_prec / (macro_rec + macro_prec)).nan_to_num()
+        mean_ap = (self.xmpl_ap / self.total_examples).nan_to_num()
+
+        return {
+            'micro_F1': micro_f1,
+            'micro_recall': micro_rec,
+            'micro_precision': micro_prec,
+            'macro_F1': macro_f1,
+            'macro_recall': macro_rec,
+            'macro_precision': macro_prec,
+            'MAP': mean_ap,
+        }
+
+    def _select_best_metric(self) -> tuple[int, dict[str, Any]]:
+        metrics = self._compute_per_example_metrics()
+
+        decider_m_tensor = None
+        if self.decider_metric not in ('micro_F1', 'macro_F1'):
+            raise RuntimeError(f"Unsupported decider metric: {self.decider_metric}!")
+        decider_m_tensor = metrics.get(self.decider_metric)
+        assert decider_m_tensor is not None, "Logic error comp 32892"
+        self.decider_tensor = decider_m_tensor
+
+        max_m_idx = int(torch.argmax(decider_m_tensor).item())
+        self.max_idx = max_m_idx
+
+        micro_f1 = metrics['micro_F1']
+        micro_rec = metrics['micro_recall']
+        micro_prec = metrics['micro_precision']
+        macro_f1 = metrics['macro_F1']
+        macro_rec = metrics['macro_recall']
+        macro_prec = metrics['macro_precision']
+        mean_ap = metrics['MAP']
+        return max_m_idx, {
+            'micro_F1': micro_f1[max_m_idx].item(),
+            'micro_recall': micro_rec[max_m_idx].item(),
+            'micro_precision': micro_prec[max_m_idx].item(),
+            'macro_F1': macro_f1[max_m_idx].item(),
+            'macro_recall': macro_rec[max_m_idx].item(),
+            'macro_precision': macro_prec[max_m_idx].item(),
+            'MAP': mean_ap[max_m_idx].item(),
+        }
+
+    def _update(self, predictions: torch.Tensor, outputs: torch.Tensor, labels: torch.Tensor):
+        self._update_per_class(predictions, outputs, labels)
+        self._update_per_example(predictions, outputs, labels)
+
+    def _compute(self):
+        best_var_idx, m = self._select_best_metric()
+        cls_f1 = self._compute_per_class_macro_F1(best_var_idx)
+        m['cls_macro_F1'] = cls_f1
+        return best_var_idx, m
+
+
+# ** Predictors for tunning on dev data
+
+
+class AbcDevPredictor:
+    def name(self):
+        raise NotImplementedError("impl name")
+
+    def enumerate_variants(self):
+        raise NotImplementedError("impl enumerate_variants")
+
+    def metrics_for_all_variants(self):
+        raise NotImplementedError("impl metrics_for_all_variants")
+
+    def cls_metrics_for_best_variant(self):
+        raise NotImplementedError("impl cls_metrics_for_best_variant")
+
+
+def _create_bins(inters_decl: list[list[float]]):
+    bins = []
+    for inter in inters_decl:
+        val, end, step = inter
+        while val <= end + 1e-6:
+            bins.append(val)
+            val += step
+    return bins
+
+
+class DevThresholdPredictor(AbcDevPredictor, BaseDevMetricsComputer):
+    def __init__(
+        self,
+        conf: ClassifFineTuneConf,
+        device: torch.device,
+        last_eval_results: dict,
+    ):
+        nlbl = conf.nlabels
+        self.last_eval_results = last_eval_results
+
+        # per class aggregations
+        self.cls_metric_for_threshold_selecting = 'cls_F1'
+
+        if conf.threshold_pred_opts is not None and (
+            cls_inters := conf.threshold_pred_opts.cls_intervals
+        ):
+            bins = _create_bins(cls_inters)
+            self.cls_thresholds = torch.tensor(bins, device=device)
+            self.cls_thresh_bins_cnt = len(bins)
+        else:
+            self.cls_thresh_bins_cnt = 10
+            self.cls_thresholds = torch.linspace(0.0, 0.9, self.cls_thresh_bins_cnt).to(
+                device=device
+            )
+
+        self.per_cls_predicted_vars = [
+            torch.zeros(self.cls_thresh_bins_cnt, dtype=torch.int32) for _ in range(nlbl)
+        ]
+        self.per_cls_tp_vars = [
+            torch.zeros(self.cls_thresh_bins_cnt, dtype=torch.int32) for _ in range(nlbl)
+        ]
+
+        # per example aggregation
+        self.xmpl_max_threshold_vars = 30
+
+        if tvars := self.last_eval_results.get('_threshold_vars'):
+            threshold_vars_cnt = len(tvars)
+        else:
+            if conf.threshold_pred_opts is not None and (
+                inters := conf.threshold_pred_opts.intervals
+            ):
+                bins = _create_bins(inters)
+                tvars = [[b] * nlbl for b in bins]
+                threshold_vars_cnt = len(bins)
+
+            else:
+                threshold_vars_cnt = 10
+                tvars = [[v / threshold_vars_cnt] * nlbl for v in range(0, threshold_vars_cnt)]
+
+        self.xmpl_thresholds = torch.tensor(tvars, device=device)
+
+        super().__init__(conf.nlabels, threshold_vars_cnt, conf.validation_metric)
+
+    def _update_per_class_thresh(self, outputs: torch.Tensor, labels: torch.Tensor):
+        # outputs [ N x L ]
+        # labels [ N x L ]
+
+        assert self.nlbl == labels.size(1), "Input data has wrong num of labels!"
+
+        for i in range(self.nlbl):
+            labels_i = labels[:, i].squeeze()
+            out_i = outputs[:, i].squeeze()
+
+            # out_i      [ 1    x n ]
+            # thresholds [ bins x 1 ]
+            # pred_i     [ bins x n ]
+            pred_i = out_i >= self.cls_thresholds[:, None]
+            # labels_i    [ n ]
+            self.per_cls_tp_vars[i] += (pred_i & labels_i.bool()).sum(dim=1).cpu()
+            self.per_cls_predicted_vars[i] += pred_i.sum(dim=1).cpu()
+
+    def _select_best_cls_thresholds(self):
+        cls_thresholds = []
+        for i in range(self.nlbl):
+            # cls_total [ nlbl ]
+            # tp        [ nbins ]
+            rec = self.per_cls_tp_vars[i] / self.cls_total[i]
+            prec = self.per_cls_tp_vars[i] / self.per_cls_predicted_vars[i]
+            f1 = 2 * rec * prec / (rec + prec)
+            metrics_i = {
+                'cls_recall': rec.nan_to_num(),
+                'cls_precision': prec.nan_to_num(),
+                'cls_F1': f1.nan_to_num(),
+            }
+            assert (
+                self.cls_metric_for_threshold_selecting in metrics_i
+            ), f'Unknown decider metric {self.cls_metric_for_threshold_selecting}!'
+            decider_m = metrics_i[self.cls_metric_for_threshold_selecting]
+
+            max_m_idx = torch.argmax(decider_m)
+
+            cls_thresholds.append(self.cls_thresholds[max_m_idx].cpu().item())
+
+        return cls_thresholds
+
+    def name(self):
+        return 'threshold'
+
+    def __call__(self, outputs: torch.Tensor, labels: torch.Tensor):
+        # sig_out = F.sigmoid(outputs)
+        self._update_per_class_thresh(outputs, labels)
+
+        # outputs [ N x L ]
+        # labels [ N x L ]
+        # thresholds [ V x L ]
+
+        # outputs     [ N x 1 x L ]
+        # thresholds  [ 1 x V x L ]
+        # predictions [ N x V x L ]
+        predictions = outputs.unsqueeze(1) >= self.xmpl_thresholds
+        self._update(predictions, outputs, labels)
+
+    def compute(self):
+        cls_thresholds = self._select_best_cls_thresholds()
+
+        best_var_idx, m = self._compute()
+
+        assert self.decider_tensor is not None, "Logic error 383299"
+        if self.decider_tensor.size(0) > self.xmpl_max_threshold_vars:
+            _, ind = self.decider_tensor.topk(self.xmpl_max_threshold_vars, sorted=False)
+            thresh_vars = self.xmpl_thresholds[ind].tolist()
+        else:
+            thresh_vars = self.xmpl_thresholds.tolist()
+
+        thresh_vars.append(cls_thresholds)
+        m['_threshold_vars'] = thresh_vars
+        m['_predictor_data'] = {
+            'thresholds': self.xmpl_thresholds[best_var_idx].tolist(),
+            'name': self.name(),
+        }
+        return m
+
+    def enumerate_variants(self):
+        vars = []
+        for i, var in enumerate(self.xmpl_thresholds.tolist()):
+            str_var = ','.join('%.2f' % f for f in var)
+            vars.append((i, str_var))
+        return vars
+
+    def metrics_for_all_variants(self):
+        metrics = self._compute_per_example_metrics()
+        assert self.xmpl_thresholds.size(0) == metrics['micro_F1'].size(
+            0
+        ), "Misaligned thresholds and metrics, 187200"
+
+        return metrics
+
+    def cls_metrics_for_best_variant(self):
+        rec, prec, f1 = self._compute_per_class_metrics(self.max_idx)
+        assert self.nlbl == rec.size(0), "Misaligned nlbl and class metrics, 498756"
+        return {'rec': rec, 'prec': prec, 'f1': f1}
+
+
+class DevTopkPredictor(AbcDevPredictor, BaseDevMetricsComputer):
+    def __init__(self, conf: ClassifFineTuneConf):
+        if conf.topk_pred_opts is not None and conf.topk_pred_opts.topks:
+            self.topks = conf.topk_pred_opts.topks
+        else:
+            self.topks = [1, 2, 3, 4, 5]
+
+        super().__init__(conf.nlabels, len(self.topks), conf.validation_metric)
+
+    def name(self):
+        return 'topk'
+
+    def __call__(self, outputs: torch.Tensor, labels: torch.Tensor):
+        # outputs [ N x L ]
+        # labels [ N x L ]
+
+        # predictions [ N x V x L ]
+        szs = (outputs.size(0), len(self.topks), outputs.size(1))
+        predictions = torch.full(szs, False, dtype=torch.bool, device=outputs.device)
+        for i, k in enumerate(self.topks):
+            _, ind = torch.topk(outputs, k, sorted=False)
+            predictions[:, i, :].scatter_(1, ind, torch.full_like(ind, True, dtype=torch.bool))
+
+        self._update(predictions, outputs, labels)
+
+    def compute(self):
+        best_var_idx, m = self._compute()
+        m['_predictor_data'] = {'topk': self.topks[best_var_idx], 'name': self.name()}
+        return m
+
+    def enumerate_variants(self):
+        vars = []
+        for i, var in enumerate(self.topks):
+            vars.append((i, var))
+        return vars
+
+    def metrics_for_all_variants(self):
+        metrics = self._compute_per_example_metrics()
+        assert len(self.topks) == metrics['micro_F1'].size(
+            0
+        ), "Misaligned thresholds and metrics, 187200"
+
+        return metrics
+
+    def cls_metrics_for_best_variant(self):
+        rec, prec, f1 = self._compute_per_class_metrics(self.max_idx)
+        assert self.nlbl == rec.size(0), "Misaligned nlbl and class metrics, 498756"
+        return {'rec': rec, 'prec': prec, 'f1': f1}
+
+
+class DevTopkWithThresholdPredictor(AbcDevPredictor, BaseDevMetricsComputer):
+    def __init__(self, conf: ClassifFineTuneConf, device: torch.device):
+
+        if (
+            conf.topk_with_threshold_pred_opts is not None
+            and conf.topk_with_threshold_pred_opts.topks
+        ):
+            self.topks = conf.topk_with_threshold_pred_opts.topks
+        else:
+            self.topks = [2, 3, 4]
+
+        if conf.topk_with_threshold_pred_opts is not None and (
+            inters := conf.topk_with_threshold_pred_opts.intervals
+        ):
+            bins = _create_bins(inters)
+            tvars = [[b] * conf.nlabels for b in bins]
+            threshold_vars_cnt = len(bins)
+
+        else:
+            threshold_vars_cnt = 10
+            tvars = [[v / threshold_vars_cnt] * conf.nlabels for v in range(0, threshold_vars_cnt)]
+
+        self.thresholds = torch.tensor(tvars, device=device)
+
+        self.vars_cnt = len(self.topks) * threshold_vars_cnt
+
+        super().__init__(conf.nlabels, self.vars_cnt, conf.validation_metric)
+
+    def name(self):
+        return 'topk_with_threshold'
+
+    def __call__(self, outputs: torch.Tensor, labels: torch.Tensor):
+        # outputs [ N x L ]
+        # labels [ N x L ]
+
+        # predictions [ N x V x L ]
+        n = outputs.size(0)
+        thresh_cnt = self.thresholds.size(0)
+        szs = (n, len(self.topks), thresh_cnt, outputs.size(1))
+        predictions = torch.full(szs, False, dtype=torch.bool, device=outputs.device)
+        for i, k in enumerate(self.topks):
+            _, ind = torch.topk(outputs, k, sorted=False)
+            topk_view = predictions[:, i, ...]
+            ind = ind.unsqueeze(1).expand(-1, thresh_cnt, -1)
+            topk_view.scatter_(2, ind, torch.full_like(ind, True, dtype=torch.bool))
+            topk_view.logical_and_(outputs.unsqueeze(1) >= self.thresholds)
+
+        self._update(predictions.reshape(n, self.vars_cnt, -1), outputs, labels)
+
+    def get_var_by_idx(self, idx: int):
+        ts = self.thresholds.size(0)
+        topk = self.topks[idx // ts]
+        threshold = self.thresholds[idx % ts][0].item()
+        return topk, threshold
+
+    def compute(self):
+        best_var_idx, m = self._compute()
+        topk, threshold = self.get_var_by_idx(best_var_idx)
+        m['_predictor_data'] = {'topk': topk, 'threshold': threshold, 'name': self.name()}
+        return m
+
+    def enumerate_variants(self):
+        vars = []
+        for i in range(self.vars_cnt):
+            topk, threshold = self.get_var_by_idx(i)
+            str_var = f'topk={topk}, threshold={threshold}'
+            vars.append((i, str_var))
+        return vars
+
+    def metrics_for_all_variants(self):
+        metrics = self._compute_per_example_metrics()
+        assert self.vars_cnt == metrics['micro_F1'].size(
+            0
+        ), "Misaligned thresholds and metrics, 187200"
+
+        return metrics
+
+    def cls_metrics_for_best_variant(self):
+        rec, prec, f1 = self._compute_per_class_metrics(self.max_idx)
+        assert self.nlbl == rec.size(0), "Misaligned nlbl and class metrics, 498756"
+        return {'rec': rec, 'prec': prec, 'f1': f1}
+
+
+class DevGapPredictor(AbcDevPredictor, BaseDevMetricsComputer):
+    def __init__(self, conf: ClassifFineTuneConf, device: torch.device):
+        if conf.gap_pred_opts is not None and conf.gap_pred_opts.max_gaps:
+            self.max_gaps = conf.gap_pred_opts.max_gaps
+        else:
+            self.max_gaps = [0.03, 0.05, 0.08, 0.1, 0.15, 0.2, 0.25, 0.3]
+
+        self.gaps_tensor = torch.tensor(self.max_gaps, device=device)
+
+        super().__init__(conf.nlabels, len(self.max_gaps), conf.validation_metric)
+
+    def name(self):
+        return 'gap'
+
+    def __call__(self, outputs: torch.Tensor, labels: torch.Tensor):
+        # outputs [ N x L ]
+        # labels [ N x L ]
+        # The main idea is find the first gap that is boundary between relevant classes and the rest.
+        # For example, outputs are in sorted order:
+        # 0.99, 0.95, 0.9, 0.7, 0.6, 0.2
+        #                 ^gap
+        # So the first three classes will be marked as relevant.
+
+        gap_vars_cnt = len(self.max_gaps)
+        sorted, ind = torch.sort(outputs, descending=True)
+        gaps = -torch.diff(sorted, prepend=sorted[:, 0].unsqueeze(-1))
+        boundaries = gaps.unsqueeze(1) > self.gaps_tensor[None, :, None]
+        cs = torch.cumsum(boundaries, -1)
+        ind = ind.unsqueeze(1).expand((-1, gap_vars_cnt, -1))
+        predictions = torch.gather(cs, 2, ind) == 0
+
+        self._update(predictions, outputs, labels)
+
+    def compute(self):
+        best_var_idx, m = self._compute()
+        m['_predictor_data'] = {'gap': self.max_gaps[best_var_idx], 'name': self.name()}
+        return m
+
+    def enumerate_variants(self):
+        vars = []
+        for i, var in enumerate(self.max_gaps):
+            vars.append((i, var))
+        return vars
+
+    def metrics_for_all_variants(self):
+        metrics = self._compute_per_example_metrics()
+        assert len(self.max_gaps) == metrics['micro_F1'].size(
+            0
+        ), "Misaligned thresholds and metrics, 187200"
+
+        return metrics
+
+    def cls_metrics_for_best_variant(self):
+        rec, prec, f1 = self._compute_per_class_metrics(self.max_idx)
+        assert self.nlbl == rec.size(0), "Misaligned nlbl and class metrics, 498756"
+        return {'rec': rec, 'prec': prec, 'f1': f1}
+
+
+# ** Predictors
+
+
+class AbcPredictor:
+
+    def preds_as_tensor(self, outputs: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError("Impl preds_as_tensor")
+
+    def predictions(self, outputs: torch.Tensor) -> list[list[int]]:
+        raise NotImplementedError("Impl predictions")
+
+    def predictions_with_weights(self, outputs: torch.Tensor) -> list[list[tuple[int, float]]]:
+        raise NotImplementedError("Impl predictions_with_weights")
+
+
+class ThresholdPredictor(AbcPredictor):
+    def __init__(self, nlbl: int, thresholds: list[float] | None, device: torch.device):
+        self.nlbl = nlbl
+        if thresholds is None:
+            thresholds = [0.5] * nlbl
+        else:
+            if len(thresholds) != nlbl:
+                raise RuntimeError(
+                    f"Len of thresholds list should be equal to number of labels: {len(thresholds)} != {nlbl}!"
+                )
+
+        self.thresholds = torch.tensor(thresholds, dtype=torch.float, device=device)
+
+    def preds_as_tensor(self, outputs: torch.Tensor):
+        predictions = F.sigmoid(outputs)
+        predictions = torch.where(torch.lt(predictions, self.thresholds), 0, 1)
+        return predictions
+
+    def predictions(self, outputs: torch.Tensor) -> list[list[int]]:
+        return []
+
+    def predictions_with_weights(self, outputs: torch.Tensor):
+        return []
+
+
+class TopkPredictor(AbcPredictor):
+    def __init__(self, nlbl: int, topk: int):
+        self.nlbl = nlbl
+        self.topk = topk
+
+    def preds_as_tensor(self, outputs: torch.Tensor):
+        outputs = F.sigmoid(outputs)
+        _, ind = torch.topk(outputs, self.topk, sorted=False)
+        predictions = torch.full(outputs.size(), 0, dtype=torch.long, device=outputs.device)
+        # , device=outputs.device
+        predictions.scatter_(1, ind, torch.full_like(ind, 1))
+        return predictions
+
+    def predictions(self, outputs: torch.Tensor):
+        return []
+
+    def predictions_with_weights(self, outputs: torch.Tensor):
+        return []
+
+
+class TopkWithThresholdPredictor(AbcPredictor):
+    def __init__(self, nlbl: int, topk: int, threshold: float):
+
+        self.nlbl = nlbl
+        self.topk = topk
+        self.threshold = threshold
+
+    def preds_as_tensor(self, outputs: torch.Tensor):
+        outputs = F.sigmoid(outputs)
+        _, ind = torch.topk(outputs, self.topk, sorted=False)
+        predictions = torch.full(outputs.size(), 0, dtype=torch.long, device=outputs.device)
+        predictions.scatter_(1, ind, torch.full_like(ind, 1))
+        predictions.logical_and_(outputs >= self.threshold)
+        return predictions
+
+    def predictions(self, outputs: torch.Tensor):
+        return []
+
+    def predictions_with_weights(self, outputs: torch.Tensor):
+        return []
+
+
+class GapPredictor(AbcPredictor):
+    def __init__(self, nlbl: int, gap: float):
+        self.nlbl = nlbl
+        self.gap = gap
+
+    def preds_as_tensor(self, outputs: torch.Tensor):
+        # See DevGapPredictor.__call__
+        outputs = F.sigmoid(outputs)
+
+        sorted, ind = torch.sort(outputs, descending=True)
+        gaps = -torch.diff(sorted, prepend=sorted[:, 0].unsqueeze(-1))
+        boundaries = gaps > self.gap
+        cs = torch.cumsum(boundaries, -1)
+        predictions = torch.gather(cs, 1, ind) == 0
+        return predictions.int()
+
+    def predictions(self, outputs: torch.Tensor):
+        return []
+
+    def predictions_with_weights(self, outputs: torch.Tensor):
+        return []
+
+
+def create_predictor(name: str, nlbl: int, device: torch.device, predictor_data: dict):
+    if name == 'threshold':
+        return ThresholdPredictor(nlbl, predictor_data.get('thresholds'), device)
+    elif name == 'topk':
+        return TopkPredictor(nlbl, predictor_data.get('topk', 3))
+    elif name == 'topk_with_threshold':
+        return TopkWithThresholdPredictor(
+            nlbl, predictor_data.get('topk', 3), predictor_data.get('threshold', 0.5)
+        )
+    elif name == 'gap':
+        return GapPredictor(nlbl, predictor_data.get('gap', 3))
+    else:
+        raise RuntimeError(f'Unknown predictor: {name}')
+
+
 # * Train loop
 
 
@@ -270,17 +970,23 @@ class RunningStat:
         self.correct_contain = 0
 
     def update_running_metric(
-        self, outputs: torch.Tensor, labels: torch.Tensor, multi_label: bool, metrics: dict
+        self,
+        outputs: torch.Tensor,
+        labels: torch.Tensor,
+        multi_label: bool,
+        predictor: AbcPredictor,
     ):
         self._multi_label = multi_label
         with torch.no_grad():
             if multi_label:
-                thresholds = metrics.get('thresholds')
-                if thresholds is None:
-                    thresholds = [0.5] * labels.size(1)
-                t_t = torch.tensor(thresholds, dtype=torch.float, device=outputs.device)
+                # thresholds = metrics.get('thresholds')
+                # if thresholds is None:
+                #     thresholds = [0.5] * labels.size(1)
+                # t_t = torch.tensor(thresholds, dtype=torch.float, device=outputs.device)
+                # predicted = torch.where(F.sigmoid(outputs) < t_t, 0, 1)
 
-                predicted = torch.where(F.sigmoid(outputs) < t_t, 0, 1)
+                predicted = predictor.preds_as_tensor(outputs)
+
                 self.correct += (predicted == labels).int().sum().cpu().item()
                 self.total += labels.numel()
                 # Exact match
@@ -316,17 +1022,21 @@ def _create_label_mapping(meta_path):
             if label not in labels_mapping:
                 labels_mapping[label] = len(unique_labels)
                 unique_labels.append(label)
-    return unique_labels, labels_mapping
+    return LabelsData(unique_labels, labels_mapping)
 
 
 def _train_classif(conf: ClassifFineTuneConf):
     torch.manual_seed(2025 * 8)
     random.seed(2025 * 9)
 
-    labels_index, labels_mapping = _create_label_mapping(conf.train_meta_path)
+    labels_data = _create_label_mapping(conf.train_meta_path)
     if OmegaConf.is_missing(conf, 'nlabels'):
-        conf.nlabels = len(labels_index)
-    logging.info("Found %s unique labels, first 20: %s", len(labels_index), labels_index[:20])
+        conf.nlabels = len(labels_data.labels_index)
+    logging.info(
+        "Found %s unique labels, first 20: %s",
+        len(labels_data.labels_index),
+        labels_data.labels_index[:20],
+    )
 
     model = _create_model(conf)
     logging.info("Model:\n%s", model)
@@ -335,13 +1045,11 @@ def _train_classif(conf: ClassifFineTuneConf):
         conf.train_meta_path,
         conf.data_dir,
         model.encoder.create_batch_iterator(eval_mode=False),
-        labels_mapping=labels_mapping,
+        labels_mapping=labels_data.labels_mapping,
         device=model.encoder.device,
     )
     try:
-        _train_loop(
-            conf, train_iter, model, labels_index=labels_index, labels_mapping=labels_mapping
-        )
+        _train_loop(conf, train_iter, model, labels_data=labels_data)
     finally:
         train_iter.destroy()
 
@@ -359,46 +1067,50 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
 
         model = _create_model(conf, eval_mode=True)
         labels_mapping = model.encoder._state_dict['labels_mapping']
+        labels_index = model.encoder._state_dict['labels_index']
         with torch.inference_mode():
             metrics = eval_on_dataset(
-                conf, conf.test_meta_path, model, labels_mapping=labels_mapping
+                conf, conf.test_meta_path, model, LabelsData(labels_index, labels_mapping)
             )
         logging.info("Test metrics:\n%s", metrics)
         print('micro_F1,macro_F1')
         print(f'{metrics["micro_F1"]:.3f},{metrics["macro_F1"]:.3f}')
 
 
-def _eval_on_dev_and_maybe_save(conf, model, prev_best_metrics, labels_index, labels_mapping):
+def _eval_on_dev_and_maybe_save(
+    conf, model, prev_best_metrics, labels_data: LabelsData, labels_stat: LabelStat
+):
     with torch.no_grad():
-        metrics = eval_on_dataset(
+        eval_result = eval_on_dataset(
             conf,
             conf.dev_meta_path,
             model,
-            labels_mapping=labels_mapping,
+            labels_data=labels_data,
             last_eval_results=prev_best_metrics,
+            labels_stat=labels_stat,
         )
 
     logging.info(
         "\nEval metrics: %s\n",
-        '\n'.join(f'{m}: {v}' for m, v in metrics.items() if not m.startswith('_')),
+        '\n'.join(f'{m}: {v}' for m, v in eval_result.items() if not m.startswith('_')),
     )
 
     if (m := re.match(r'F1_(\d+)', conf.validation_metric)) is not None:
         cls_num = int(m.group(1))
-        if f1m := metrics.get('F1'):
+        if f1m := eval_result.get('F1'):
             m = f1m[cls_num]
         else:
             raise RuntimeError(
-                f'Validation metric (F1) not found among metrics: {list(metrics.keys())}'
+                f'Validation metric (F1) not found among metrics: {list(eval_result.keys())}'
             )
         prev_best_metric = 0
         if prev_f1m := prev_best_metrics.get('F1'):
             prev_best_metric = prev_f1m[cls_num]
-    elif (m := metrics.get(conf.validation_metric)) is not None:
+    elif (m := eval_result.get(conf.validation_metric)) is not None:
         prev_best_metric = prev_best_metrics.get(conf.validation_metric, 0.0)
     else:
         raise RuntimeError(
-            f'Validation metric ({conf.validation_metric}) not found among metrics: {list(metrics.keys())}'
+            f'Validation metric ({conf.validation_metric}) not found among metrics: {list(eval_result.keys())}'
         )
 
     logging.info(
@@ -407,18 +1119,12 @@ def _eval_on_dev_and_maybe_save(conf, model, prev_best_metrics, labels_index, la
         m,
         conf.validation_metric,
         prev_best_metric,
-        metrics.get('predictions_per_cls', 'N/A'),
+        eval_result.get('predictions_per_cls', 'N/A'),
     )
     if m >= prev_best_metric:
-        _save_model(
-            conf,
-            model,
-            metrics,
-            labels_index=labels_index,
-            labels_mapping=labels_mapping,
-        )
+        _save_model(conf, model, eval_result, labels_data)
         logging.info("new best model was saved")
-        prev_best_metrics = metrics
+        prev_best_metrics = eval_result
     return prev_best_metrics
 
 
@@ -438,8 +1144,7 @@ def _train_loop(
     conf: ClassifFineTuneConf,
     train_iter: ClassifBatchIterator,
     model: DocClassifier,
-    labels_index,
-    labels_mapping,
+    labels_data: LabelsData,
 ):
     optimizer = torch.optim.AdamW(model.parameters(), lr=conf.lr)
 
@@ -451,10 +1156,12 @@ def _train_loop(
     )
 
     scaler = GradScaler(enabled=conf.enable_amp)
-    best_metrics = {}
+    last_eval_result = {}
     update_nums = 0
     epoch = 0
     running_stat = RunningStat()
+    labels_stat = LabelStat(conf.nlabels)
+    predictor = create_predictor('threshold', conf.nlabels, train_iter.device(), {})
 
     while update_nums < conf.max_updates:
         epoch += 1
@@ -475,9 +1182,8 @@ def _train_loop(
             scheduler.step()
             running_stat.loss += loss.item()
             running_stat.docs += labels.size(0)
-            running_stat.update_running_metric(
-                outputs, labels, train_iter.multi_label(), best_metrics
-            )
+            running_stat.update_running_metric(outputs, labels, train_iter.multi_label(), predictor)
+            labels_stat.update(labels)
             update_nums += 1
 
             rep_every = 10
@@ -493,8 +1199,14 @@ def _train_loop(
                 running_stat.reset()
 
             if update_nums % conf.eval_every == 0:
-                best_metrics = _eval_on_dev_and_maybe_save(
-                    conf, model, best_metrics, labels_index, labels_mapping
+                last_eval_result = _eval_on_dev_and_maybe_save(
+                    conf, model, last_eval_result, labels_data, labels_stat
+                )
+                predictor = create_predictor(
+                    last_eval_result['predictor'],
+                    conf.nlabels,
+                    train_iter.device(),
+                    last_eval_result['_predictor_data'],
                 )
             if update_nums >= conf.max_updates:
                 break
@@ -541,330 +1253,137 @@ class MultiClassEvaluator:
 
 
 class MultiLabelTestEvaluator:
-    def __init__(self, nlbl: int, device: torch.device, thresholds: list):
+    def __init__(self, nlbl: int, predictor: AbcPredictor):
         self.nlbl = nlbl
-        if len(thresholds) != nlbl:
-            raise RuntimeError(
-                f"Len of thresholds list should be equal to number of labels: {len(thresholds)} != {nlbl}!"
-            )
-        self.thresholds = torch.tensor(thresholds, dtype=torch.float32, device=device)
+        self.predictor = predictor
 
-        # per class aggregations
-        self.cls_total = torch.zeros(nlbl, dtype=torch.int32)
-        self.cls_predicted = torch.zeros(nlbl, dtype=torch.int32)
-        self.cls_tp = torch.zeros(nlbl, dtype=torch.int32)
-
-        # per examples aggregation
-        # Micro
-        self.xmpl_tp = 0.0
-        self.xmpl_rel = 0.0
-        self.xmpl_predicted = 0.0
-        # Macro
-        self.xmpl_rec = 0.0
-        self.xmpl_prec = 0.0
-        self.xmpl_ap = 0.0
-        self.total_examples = 0
-
-    def _update_per_class(self, predictions: torch.Tensor, labels: torch.Tensor):
-        # Predictions are already either 0 or 1 for each class, just compute
-        # metrics for binary classification of each class.
-        for i in range(self.nlbl):
-            labels_i = labels[:, i]
-            pred_i = predictions[:, i]
-            self.cls_tp[i] += (pred_i * labels_i).int().sum().cpu().item()
-            self.cls_total[i] += labels_i.int().sum().cpu().item()
-            self.cls_predicted[i] += pred_i.sum().cpu().item()
-
-    def _update_per_example(
-        self, outputs: torch.Tensor, predictions: torch.Tensor, labels: torch.Tensor
-    ):
-        tp = (predictions * labels).sum(dim=1)
-        rel = labels.sum(dim=1)
-        predicted = predictions.sum(dim=1)
-        self.xmpl_tp += tp.sum().item()
-        self.xmpl_rel += rel.sum().item()
-        self.xmpl_predicted += predicted.sum().item()
-
-        self.total_examples += labels.size(0)
-        self.xmpl_rec += (tp / rel).nan_to_num().sum().item()
-        self.xmpl_prec += (tp / predicted).nan_to_num().sum().item()
-
-        sort_idx = torch.argsort(outputs, dim=-1, descending=True)
-        # N x L
-        sorted_tp = torch.gather(predictions * labels, -1, sort_idx)
-        # N x L
-        prec_at_i = torch.cumsum(sorted_tp, dim=-1) / torch.arange(
-            1, labels.size(1) + 1, device=sorted_tp.device
-        )
-
-        self.xmpl_ap += ((prec_at_i * sorted_tp).sum(dim=-1) / rel).sum().item()
+        self.metric_computer = BaseDevMetricsComputer(nlbl, 1)
 
     def __call__(self, outputs: torch.Tensor, labels: torch.Tensor):
-        predictions = F.sigmoid(outputs)
-        predictions = torch.where(torch.lt(predictions, self.thresholds), 0, 1)
-        self._update_per_class(predictions, labels)
-
-        self._update_per_example(outputs, predictions, labels)
-
-    def _compute_per_class_metrics(self):
-        rec = self.cls_tp / self.cls_total
-        prec = self.cls_tp / self.cls_predicted
-        f1 = 2 * rec * prec / (rec + prec)
-        f1 = f1.nan_to_num()
-        metrics = {
-            'cls_macro_F1': f1.mean().item(),
-            'cls_recall': rec.nan_to_num().tolist(),
-            'cls_precision': prec.nan_to_num().tolist(),
-            'cls_F1': f1.tolist(),
-        }
-        return metrics
-
-    def _compute_per_example_metrics(self):
-        if self.total_examples:
-            macro_rec = self.xmpl_rec / self.total_examples
-            macro_prec = self.xmpl_prec / self.total_examples
-            macro_f1 = 2 * macro_rec * macro_prec / (macro_prec + macro_rec)
-            mean_ap = self.xmpl_ap / self.total_examples
-        else:
-            macro_rec = 0
-            macro_prec = 0
-            macro_f1 = 0
-            mean_ap = 0
-
-        if self.xmpl_predicted:
-            micro_prec = self.xmpl_tp / self.xmpl_predicted
-        else:
-            micro_prec = 0
-
-        if self.xmpl_rel:
-            micro_rec = self.xmpl_tp / self.xmpl_rel
-        else:
-            micro_rec = 0
-
-        if micro_prec > 0 or micro_rec > 0:
-            micro_f1 = 2 * micro_prec * micro_rec / (micro_prec + micro_rec)
-        else:
-            micro_f1 = 0
-
-        return {
-            'micro_F1': micro_f1,
-            'micro_recall': micro_rec,
-            'micro_precision': micro_prec,
-            'macro_F1': macro_f1,
-            'macro_recall': macro_rec,
-            'macro_precision': macro_prec,
-            'MAP': mean_ap,
-        }
+        predictions = self.predictor.preds_as_tensor(outputs)
+        self.metric_computer._update(predictions.unsqueeze(1), outputs, labels)
 
     def compute(self):
-        metrics = self._compute_per_class_metrics()
-        metrics.update(self._compute_per_example_metrics())
-        return metrics
+        _, m = self.metric_computer._compute()
+        return m
 
 
 class MultiLabelDevEvaluator:
     """MultiLabelTestEvaluator is used for evaluation at test time for given thresholds,
-    whereas this class is used to compute best thresholds for each label."""
+    whereas this class is used to tune thresholds on dev data."""
 
     def __init__(
         self,
-        nlbl: int,
+        conf: ClassifFineTuneConf,
         device: torch.device,
+        labels_data: LabelsData,
         last_eval_results: dict,
-        select_threshold_metric: str = 'micro_F1',
+        labels_stat: LabelStat | None,
     ):
-        self.nlbl = nlbl
+        self.conf = conf
+        self.nlbl = conf.nlabels
+        self.labels_data = labels_data
         self.last_eval_results = last_eval_results
+        self.labels_stat = labels_stat
+        self.eval_num = last_eval_results.get('_upd_num', 1)
+        self.decider_metric = conf.validation_metric
 
-        # per class aggregations
-        self.cls_metric_for_threshold_selecting = 'cls_F1'
-        self.cls_thresh_bins_cnt = 10
-        self.cls_total = torch.zeros(nlbl, dtype=torch.int32)
-        self.cls_predicted = [
-            torch.zeros(self.cls_thresh_bins_cnt, dtype=torch.int32) for _ in range(nlbl)
-        ]
-        self.cls_tp = [
-            torch.zeros(self.cls_thresh_bins_cnt, dtype=torch.int32) for _ in range(nlbl)
-        ]
-        self.cls_thresholds = torch.linspace(0.0, 0.9, self.cls_thresh_bins_cnt).to(device=device)
+        self.predictors = []
 
-        # per example aggregation
-        self.select_threshold_metric = select_threshold_metric
-        self.xmpl_max_threshold_vars = 20
-        if tvars := self.last_eval_results.get('_threshold_vars'):
-            threshold_vars_cnt = len(tvars)
+        if conf.try_predictors_on_dev:
+            for pn in conf.try_predictors_on_dev:
+                if pn == 'topk':
+                    self.predictors.append(DevTopkPredictor(conf))
+                elif pn == 'threshold':
+                    self.predictors.append(
+                        DevThresholdPredictor(
+                            conf, device, last_eval_results.get('_thresh-pred', {})
+                        )
+                    )
+                elif pn == 'topk_with_threshold':
+                    self.predictors.append(DevTopkWithThresholdPredictor(conf, device))
+                elif pn == 'gap':
+                    self.predictors.append(DevGapPredictor(conf, device))
+                else:
+                    raise RuntimeError(f'Unknown predictor: {pn}')
+
         else:
-            threshold_vars_cnt = 10
-            tvars = [[v / threshold_vars_cnt] * nlbl for v in range(0, threshold_vars_cnt)]
-
-        self.xmpl_thresholds = torch.tensor(tvars, device=device)
-
-        self.xmpl_tp = torch.zeros(threshold_vars_cnt, dtype=torch.int32)
-        self.xmpl_rel = torch.zeros(1, dtype=torch.int32)
-        self.xmpl_predicted = torch.zeros(threshold_vars_cnt, dtype=torch.int32)
-
-        self.xmpl_rec = torch.zeros(threshold_vars_cnt, dtype=torch.float32)
-        self.xmpl_prec = torch.zeros(threshold_vars_cnt, dtype=torch.float32)
-        self.xmpl_ap = torch.zeros(threshold_vars_cnt, dtype=torch.float32)
-        self.total_examples = 0
-
-    def _update_per_class(self, outputs: torch.Tensor, labels: torch.Tensor):
-        # outputs [ N x L ]
-        # labels [ N x L ]
-
-        assert self.nlbl == labels.size(1), "Input data has wrong num of labels!"
-
-        for i in range(self.nlbl):
-            labels_i = labels[:, i].squeeze()
-            out_i = outputs[:, i].squeeze()
-
-            self.cls_total[i] += labels_i.int().sum().item()
-
-            # out_i      [ 1    x n ]
-            # thresholds [ bins x 1 ]
-            # pred_i     [ bins x n ]
-            pred_i = out_i >= self.cls_thresholds[:, None]
-            # labels_i    [ n ]
-            self.cls_tp[i] += (pred_i & labels_i.bool()).sum(dim=1).cpu()
-            self.cls_predicted[i] += pred_i.sum(dim=1).cpu()
-
-    def _update_per_example(self, outputs: torch.Tensor, labels: torch.Tensor):
-        # outputs [ N x L ]
-        # labels [ N x L ]
-        # thresholds [ V x L ]
-
-        # outputs     [ N x 1 x L ]
-        # thresholds  [ 1 x V x L ]
-        # predictions [ N x V x L ]
-        predictions = outputs.unsqueeze(1) >= self.xmpl_thresholds
-
-        # N x V
-        tp = (predictions * labels.unsqueeze(1)).sum(dim=2)
-        # N
-        rel = labels.sum(dim=1)
-        # [N x V]
-        predicted = predictions.sum(dim=2)
-        self.xmpl_tp += tp.sum(dim=0).int().cpu()
-        self.xmpl_rel += rel.sum().int().cpu()
-        self.xmpl_predicted += predicted.sum(dim=0).int().cpu()
-
-        self.total_examples += labels.size(0)
-        self.xmpl_rec += (tp / rel[:, None]).nan_to_num().sum(dim=0).cpu()
-        self.xmpl_prec += (tp / predicted).nan_to_num().sum(dim=0).cpu()
-
-        # calc AP
-        # N x L
-        sort_idx = torch.argsort(outputs, dim=-1, descending=True)
-        # N x V x L
-        sorted_tp = torch.gather(
-            predictions * labels.unsqueeze(1),
-            2,
-            sort_idx.unsqueeze(1).expand(-1, self.xmpl_tp.size(0), -1),
-        )
-
-        # N x V x L
-        prec_at_i = torch.cumsum(sorted_tp, dim=-1) / torch.arange(
-            1, labels.size(1) + 1, device=sorted_tp.device
-        )
-        self.xmpl_ap += ((prec_at_i * sorted_tp).sum(dim=-1) / rel[:, None]).sum(dim=0).cpu()
+            self.predictors = [
+                DevThresholdPredictor(conf, device, last_eval_results.get('_thresh-pred', {})),
+            ]
 
     def __call__(self, outputs: torch.Tensor, labels: torch.Tensor):
         sig_out = F.sigmoid(outputs)
-        self._update_per_class(sig_out, labels)
-        self._update_per_example(sig_out, labels)
+        for predictor in self.predictors:
+            predictor(sig_out, labels)
 
-    def _compute_per_class_metrics(self):
-        metrics = {
-            'cls_macro_F1': 0.0,
-            'cls_recall': [],
-            'cls_precision': [],
-            'cls_F1': [],
-            'cls_thresholds': [],
-        }
-        for i in range(self.nlbl):
-            # cls_total [ nlbl ]
-            # tp        [ nbins ]
-            rec = self.cls_tp[i] / self.cls_total[i]
-            prec = self.cls_tp[i] / self.cls_predicted[i]
-            f1 = 2 * rec * prec / (rec + prec)
-            metrics_i = {
-                'cls_recall': rec.nan_to_num(),
-                'cls_precision': prec.nan_to_num(),
-                'cls_F1': f1.nan_to_num(),
-            }
-            assert (
-                self.cls_metric_for_threshold_selecting in metrics_i
-            ), f'Unknown decider metric {self.cls_metric_for_threshold_selecting}!'
-            decider_m = metrics_i[self.cls_metric_for_threshold_selecting]
+    def _save_predictor_stat(self, predictor: AbcDevPredictor):
+        stat_dir = Path(f'./eval_stat/{self.eval_num:03}/{predictor.name()}')
+        stat_dir.mkdir(parents=True, exist_ok=True)
 
-            max_m_idx = torch.argmax(decider_m)
+        vars = predictor.enumerate_variants()
+        with open(stat_dir / 'variants.csv', 'w') as outf:
+            wrtr = csv.writer(outf)
+            wrtr.writerow(('num', 'var_repr'))
+            for var_num, var in vars:
+                wrtr.writerow((var_num, var))
 
-            for ms, mt in metrics_i.items():
-                metrics[ms].append(mt[max_m_idx].item())
+        def _fmt_v(val):
+            return '%.5f' % val.item()
 
-            metrics['cls_thresholds'].append(self.cls_thresholds[max_m_idx].cpu().item())
+        with open(stat_dir / 'variant_metrics.csv', 'w') as outf:
+            wrtr = csv.writer(outf)
+            metrics = predictor.metrics_for_all_variants()
+            mks = tuple(metrics.keys())
+            wrtr.writerow(('num',) + mks)
+            for var_num in range(len(vars)):
+                row = [var_num]
+                for mk in mks:
+                    row.append(_fmt_v(metrics[mk][var_num]))
+                wrtr.writerow(row)
 
-        metrics['cls_macro_F1'] = sum(metrics['cls_F1']) / len(metrics['cls_F1'])
-        return metrics
-
-    def _compute_per_example_metrics(self):
-        # V
-        micro_rec = (self.xmpl_tp / self.xmpl_rel).nan_to_num()
-        micro_prec = (self.xmpl_tp / self.xmpl_predicted).nan_to_num()
-        micro_f1 = (2 * micro_rec * micro_prec / (micro_rec + micro_prec)).nan_to_num()
-
-        macro_rec = (self.xmpl_rec / self.total_examples).nan_to_num()
-        macro_prec = (self.xmpl_prec / self.total_examples).nan_to_num()
-        macro_f1 = (2 * macro_rec * macro_prec / (macro_rec + macro_prec)).nan_to_num()
-        mean_ap = (self.xmpl_ap / self.total_examples).nan_to_num()
-
-        decider_m_tensor = None
-        match self.select_threshold_metric:
-            case 'micro_F1':
-                decider_m_tensor = micro_f1
-            case 'macro_F1':
-                decider_m_tensor = macro_f1
-            case _:
-                raise RuntimeError(f'Unsupported decider metric: {self.select_threshold_metric}')
-        assert decider_m_tensor is not None, "Logic error comp 32892"
-
-        max_m_idx = torch.argmax(decider_m_tensor)
-        if decider_m_tensor.size(0) > self.xmpl_max_threshold_vars:
-            _, ind = decider_m_tensor.topk(self.xmpl_max_threshold_vars, sorted=False)
-            thresh_vars = self.xmpl_thresholds[ind].tolist()
-        else:
-            thresh_vars = self.xmpl_thresholds.tolist()
-
-        fmt_str = list(
-            (m.item(), ','.join("%.1f" % v for v in thr[:3].tolist()) + '..')
-            for m, thr in zip(decider_m_tensor, self.xmpl_thresholds)
-        )
-        logging.info("select thresholds from  %s, selected %s", fmt_str, fmt_str[max_m_idx])
-        return {
-            'micro_F1': micro_f1[max_m_idx].item(),
-            'micro_recall': micro_rec[max_m_idx].item(),
-            'micro_precision': micro_prec[max_m_idx].item(),
-            'macro_F1': macro_f1[max_m_idx].item(),
-            'macro_recall': macro_rec[max_m_idx].item(),
-            'macro_precision': macro_prec[max_m_idx].item(),
-            'MAP': mean_ap[max_m_idx].item(),
-            '_threshold_vars': thresh_vars,
-            'thresholds': self.xmpl_thresholds[max_m_idx].tolist(),
-        }
+        with open(stat_dir / 'cls_metrics_for_best_variant.csv', 'w') as outf:
+            wrtr = csv.writer(outf)
+            metrics = predictor.cls_metrics_for_best_variant()
+            mks = tuple(metrics.keys())
+            wrtr.writerow(('lbl', 'seen') + mks)
+            seen_nums = 0
+            for lbl_num in range(self.nlbl):
+                if self.labels_stat is not None:
+                    seen_nums = int(self.labels_stat.seen_labels[lbl_num].item())
+                row = [self.labels_data.labels_index[lbl_num], seen_nums]
+                for mk in mks:
+                    row.append(_fmt_v(metrics[mk][lbl_num]))
+                wrtr.writerow(row)
 
     def compute(self):
-        m = self._compute_per_class_metrics()
-        m.update(self._compute_per_example_metrics())
-        m['_threshold_vars'].append(m['cls_thresholds'])
-        return m
+        pred_results = []
+        eval_result = {}
+        for predictor in self.predictors:
+            m = predictor.compute()
+            m['predictor'] = predictor.name()
+            eval_result[f'_{predictor.name()}-pred'] = m
+            pred_results.append((m[self.decider_metric], m))
+            if self.conf.save_dev_eval_stat:
+                self._save_predictor_stat(predictor)
+
+        _, m = max(pred_results, key=lambda t: t[0])
+        for k, v in m.items():
+            if k.startswith('_') and k != '_predictor_data':
+                continue
+            eval_result[k] = v
+
+        eval_result['_upd_num'] = self.eval_num + 1
+        return eval_result
 
 
 def eval_on_dataset(
     conf: ClassifFineTuneConf,
     meta_path,
     model: DocClassifier,
-    labels_mapping: dict,
+    labels_data: LabelsData,
     last_eval_results: dict | None = None,
+    labels_stat: LabelStat | None = None,
 ):
     model.eval()
     device = model.encoder.device
@@ -872,22 +1391,21 @@ def eval_on_dataset(
         meta_path,
         conf.data_dir,
         model.encoder.create_batch_iterator(eval_mode=True),
-        labels_mapping=labels_mapping,
+        labels_mapping=labels_data.labels_mapping,
         device=device,
     )
 
     if test_iter.multi_label():
-        if model.thresholds is not None:
-            evalor = MultiLabelTestEvaluator(
-                conf.nlabels, device=device, thresholds=model.thresholds
-            )
+        if model.predictor is not None:
+            evalor = MultiLabelTestEvaluator(conf.nlabels, predictor=model.predictor)
         else:
             assert last_eval_results is not None, "Logic error dev 821"
             evalor = MultiLabelDevEvaluator(
-                conf.nlabels,
+                conf,
                 device=device,
+                labels_data=labels_data,
                 last_eval_results=last_eval_results,
-                select_threshold_metric=conf.validation_metric,
+                labels_stat=labels_stat,
             )
     else:
         evalor = MultiClassEvaluator(conf.nlabels)
@@ -902,14 +1420,16 @@ def eval_on_dataset(
     return evalor.compute()
 
 
-def _save_model(conf: FineTuneConf, model: DocClassifier, metrics, labels_index, labels_mapping):
+def _save_model(
+    conf: FineTuneConf, model: DocClassifier, eval_results: dict, labels_data: LabelsData
+):
     d = model.encoder.to_dict()
     d['fine_tune_cfg'] = conf
     d['cls_head'] = model.cls_head.state_dict()
-    d['labels_index'] = labels_index
-    d['labels_mapping'] = labels_mapping
-    if 'thresholds' in metrics:
-        d['thresholds'] = metrics['thresholds']
+    d['labels_index'] = labels_data.labels_index
+    d['labels_mapping'] = labels_data.labels_mapping
+    if '_predictor_data' in eval_results:
+        d['predictor_data'] = eval_results['_predictor_data']
 
     if not conf.save_path:
         conf.save_path = os.path.join(os.getcwd(), 'model.pt')
