@@ -380,9 +380,10 @@ class BaseDevMetricsComputer:
         # [L]
         tp = self.cls_tp[var_idx]
         predicted = self.cls_predicted[var_idx]
-        rec = tp / self.cls_total
-        prec = tp / predicted
+        rec = (tp / self.cls_total).nan_to_num()
+        prec = (tp / predicted).nan_to_num()
         f1 = 2 * rec * prec / (rec + prec)
+        f1 = f1.nan_to_num()
         return rec, prec, f1
 
     def _compute_per_class_macro_F1(self, var_idx: int):
