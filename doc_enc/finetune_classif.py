@@ -1298,7 +1298,7 @@ class MultiLabelDevEvaluator:
                 elif pn == 'threshold':
                     self.predictors.append(
                         DevThresholdPredictor(
-                            conf, device, last_eval_results.get('_thresh-pred', {})
+                            conf, device, last_eval_results.get(f'_{pn}-pred', {})
                         )
                     )
                 elif pn == 'topk_with_threshold':
