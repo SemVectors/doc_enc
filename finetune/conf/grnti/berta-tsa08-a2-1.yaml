@@ -1,0 +1,32 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+    /mnt/data/apps/grnti-classification/models/pretrained/berta.pt
+train_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/train.csv
+dev_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/dev.csv
+test_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/test.csv
+data_dir: >-
+    /mnt/data/apps/grnti-classification/data_v2/data_ru.segmented
+use_gpu: 0
+enable_amp: true
+
+async_batch_gen: 10
+
+lr: 0.0001
+dropout: 0.4
+
+eval_every: 1000
+max_updates: 12000
+
+max_sents: 512
+max_tokens: 6_500
+bucket_multiplier: 7
+
+truncate_long_docs: true
+classif_head: MLP

@@ -1,0 +1,48 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+  /mnt/data/apps/grnti-classification/models/pretrained/Qwen3-emb-600M-fp32.pt
+train_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/train.csv
+dev_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/dev.csv
+test_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/test.csv
+data_dir: >-
+    /mnt/data/apps/grnti-classification/data_v2/data_ru.segmented
+use_gpu: 0
+enable_amp: true
+
+async_batch_gen: 10
+
+lr: 0.00005
+dropout: 0.4
+
+eval_every: 2000
+max_updates: 24000
+
+max_sents: 8192
+max_tokens: 4_000
+bucket_multiplier: 2
+
+truncate_long_docs: true
+classif_head: MLP
+
+validation_metric: macro_F1
+
+overrides:
+  text_proc:
+    auto_tokenizer_max_seq_len: 2048
+  doc:
+    transformers_torch_fp16: true
+    use_adapter: lora
+    adapter_kwargs:
+      r: 32
+      lora_alpha: 32
+      bias: lora_only
+      target_modules:
+        - q_proj
+        - v_proj

@@ -1,0 +1,66 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+    /mnt/data/apps/grnti-classification/models/pretrained/berta.pt
+train_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/train.csv
+dev_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/dev.csv
+test_meta_path: >-
+    /mnt/data/apps/grnti-classification/data_v2/metas/meta_lvl2-2000-3000-6039/test.csv
+data_dir: >-
+    /mnt/data/apps/grnti-classification/data_v2/data_ru.segmented
+use_gpu: 0
+enable_amp: true
+
+async_batch_gen: 20
+
+lr: 0.0001
+lr_scheduler_kwargs:
+  div_factor: 10
+  final_div_factor: 1
+dropout: 0.4
+
+eval_every: 1000
+max_updates: 21000
+
+max_sents: 512
+max_tokens: 7_000
+bucket_multiplier: 6
+
+truncate_long_docs: true
+validation_metric: macro_F1
+
+save_dev_eval_stat: true
+try_predictors_on_dev:
+  - threshold
+  - topk_with_threshold
+threshold_pred_opts:
+  cls_intervals:
+    - - 0.0
+      - 0.99
+      - 0.05
+  intervals:
+    - - 0.5
+      - 0.8
+      - 0.1
+    - - 0.9
+      - 0.99
+      - 0.01
+
+topk_with_threshold_pred_opts:
+  topks:
+    - 3
+    - 4
+    - 5
+    - 6
+  intervals:
+    - - 0.5
+      - 0.8
+      - 0.1
+    - - 0.9
+      - 0.99
+      - 0.01

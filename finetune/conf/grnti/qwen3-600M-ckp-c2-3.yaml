@@ -1,0 +1,80 @@
+# @package _global_
+defaults:
+  - /base_classif_config
+  - _self_
+
+model_path: >-
+  /train/init_models/Qwen3-emb-600M-fp32.pt
+train_meta_path: >-
+    /train/data/grnti_classif/metas/meta_lvl2-2000-3000-6039/train.csv
+dev_meta_path: >-
+    /train/data/grnti_classif/metas/meta_lvl2-2000-3000-6039/dev.csv
+test_meta_path: >-
+    /train/data/grnti_classif/metas/meta_lvl2-2000-3000-6039/test.csv
+data_dir: >-
+    /train/data/grnti_classif/data_ru.segmented
+use_gpu: 0
+enable_amp: true
+
+max_updates: 28000
+eval_every: 4000
+
+
+lr: 0.0001
+dropout: 0.4
+
+async_batch_gen: 25
+
+max_sents: 8192
+max_tokens: 6_500
+bucket_multiplier: 4
+
+truncate_long_docs: true
+
+validation_metric: macro_F1
+
+overrides:
+  text_proc:
+    auto_tokenizer_max_seq_len: 2048
+  doc:
+    transformers_torch_fp16: true
+    use_adapter: lora
+    adapter_kwargs:
+      r: 32
+      lora_alpha: 32
+      bias: lora_only
+      target_modules: all-linear
+
+save_dev_eval_stat: true
+try_predictors_on_dev:
+  - threshold
+  - topk
+  - topk_with_threshold
+threshold_pred_opts:
+  cls_intervals:
+    - - 0.0
+      - 0.99
+      - 0.05
+  intervals:
+    - - 0.3
+      - 0.99
+      - 0.05
+
+topk_pred_opts:
+  topks:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+
+topk_with_threshold_pred_opts:
+  topks:
+    - 2
+    - 3
+    - 4
+  intervals:
+    - - 0.3
+      - 0.99
+      - 0.05

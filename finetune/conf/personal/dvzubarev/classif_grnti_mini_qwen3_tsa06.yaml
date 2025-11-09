@@ -4,7 +4,8 @@ defaults:
   - _self_
 
 max_sents: 2048
-max_tokens: 96_000
+max_tokens: 6_000
+bucket_multiplier: 1
 enable_amp: true
 truncate_long_docs: true
 async_batch_gen: 1
@@ -12,8 +13,24 @@ dropout: 0.4
 # lr: 0.00005
 lr: 0.0001
 
+overrides:
+  text_proc:
+    auto_tokenizer_max_seq_len: 1024
+  doc:
+    transformers_torch_fp16: true
+    use_adapter: lora
+    adapter_kwargs:
+      r: 32
+      lora_alpha: 32
+      bias: lora_only
+      target_modules:
+        - q_proj
+        - v_proj
+        - embed_tokens
+
+
 model_path: >-
-  /home/dvzubarev/Workspace/projects/semvectors/tuning/trans/doc_trans_full1-9-4/model.pt
+  /home/dvzubarev/Workspace/projects/semvectors/models/pretrained/Qwen3-emb-600M-fp32.pt
 use_gpu: 0
 
 train_meta_path: >-
@@ -29,20 +46,5 @@ save_path: >-
 # eval_every: 500
 # max_updates: 3000
 
-eval_every: 15
+eval_every: 40
 max_updates: 50
-
-save_dev_eval_stat: true
-try_predictors_on_dev:
-  - threshold
-  - topk
-  - topk_with_threshold
-  - gap
-threshold_pred_opts:
-  intervals:
-    - - 0.5
-      - 0.8
-      - 0.1
-    - - 0.9
-      - 0.99
-      - 0.01
