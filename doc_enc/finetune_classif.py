@@ -109,7 +109,8 @@ cs.store(name="base_classif_config", node=ClassifFineTuneConf)
 cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 
-# * Models
+# * DocClassifier
+# ** Classifier heads
 
 
 class LinearClassifierHead(nn.Module):
@@ -151,6 +152,9 @@ class MLPClassifierHead(nn.Module):
         return x
 
 
+# ** Classifier
+
+
 class DocClassifier(nn.Module):
     def __init__(self, encoder: EncodeModule, conf: ClassifFineTuneConf):
         super().__init__()
@@ -172,8 +176,11 @@ class DocClassifier(nn.Module):
             embeddings = embeddings.to(dtype=torch.float32)
         return self.cls_head(embeddings)
 
+    def predictions_with_weights(self, docs, doc_fragments) -> list[list[tuple[int, float]]]:
+        raise NotImplementedError("Impl predictions_with_weights")
 
-def _create_model(conf: ClassifFineTuneConf, eval_mode=False):
+
+def _create_model(conf: ClassifFineTuneConf, eval_mode=False) -> DocClassifier:
     doc_encoder = EncodeModule(conf, eval_mode=eval_mode)
     state_dict = doc_encoder._state_dict
 
@@ -844,7 +851,31 @@ class AbcPredictor:
         raise NotImplementedError("Impl predictions_with_weights")
 
 
-class ThresholdPredictor(AbcPredictor):
+class _BasePredictor(AbcPredictor):
+    def predictions(self, outputs: torch.Tensor) -> list[list[int]]:
+        preds_with_weights = self.predictions_with_weights(outputs)
+        return [[t[0] for t in r] for r in preds_with_weights]
+
+    def predictions_with_weights(self, outputs: torch.Tensor) -> list[list[tuple[int, float]]]:
+        preds = self.preds_as_tensor(outputs)
+        row_indices, column_indices = torch.nonzero(preds, as_tuple=True)
+        out = []
+        cur_i = 0
+
+        for i in range(outputs.size(0)):
+            results = []
+            out.append(results)
+            if cur_i >= row_indices.size(0) or i != (r := int(row_indices[cur_i].item())):
+                continue
+
+            while cur_i < row_indices.size(0) and i == int(row_indices[cur_i].item()):
+                c = int(column_indices[cur_i].item())
+                results.append((c, outputs[r, c].item()))
+                cur_i += 1
+        return out
+
+
+class ThresholdPredictor(_BasePredictor):
     def __init__(self, nlbl: int, thresholds: list[float] | None, device: torch.device):
         self.nlbl = nlbl
         if thresholds is None:
@@ -862,14 +893,8 @@ class ThresholdPredictor(AbcPredictor):
         predictions = torch.where(torch.lt(predictions, self.thresholds), 0, 1)
         return predictions
 
-    def predictions(self, outputs: torch.Tensor) -> list[list[int]]:
-        return []
 
-    def predictions_with_weights(self, outputs: torch.Tensor):
-        return []
-
-
-class TopkPredictor(AbcPredictor):
+class TopkPredictor(_BasePredictor):
     def __init__(self, nlbl: int, topk: int):
         self.nlbl = nlbl
         self.topk = topk
@@ -882,14 +907,8 @@ class TopkPredictor(AbcPredictor):
         predictions.scatter_(1, ind, torch.full_like(ind, 1))
         return predictions
 
-    def predictions(self, outputs: torch.Tensor):
-        return []
 
-    def predictions_with_weights(self, outputs: torch.Tensor):
-        return []
-
-
-class TopkWithThresholdPredictor(AbcPredictor):
+class TopkWithThresholdPredictor(_BasePredictor):
     def __init__(self, nlbl: int, topk: int, threshold: float):
 
         self.nlbl = nlbl
@@ -904,14 +923,8 @@ class TopkWithThresholdPredictor(AbcPredictor):
         predictions.logical_and_(outputs >= self.threshold)
         return predictions
 
-    def predictions(self, outputs: torch.Tensor):
-        return []
 
-    def predictions_with_weights(self, outputs: torch.Tensor):
-        return []
-
-
-class GapPredictor(AbcPredictor):
+class GapPredictor(_BasePredictor):
     def __init__(self, nlbl: int, gap: float):
         self.nlbl = nlbl
         self.gap = gap
@@ -926,12 +939,6 @@ class GapPredictor(AbcPredictor):
         cs = torch.cumsum(boundaries, -1)
         predictions = torch.gather(cs, 1, ind) == 0
         return predictions.int()
-
-    def predictions(self, outputs: torch.Tensor):
-        return []
-
-    def predictions_with_weights(self, outputs: torch.Tensor):
-        return []
 
 
 def create_predictor(name: str, nlbl: int, device: torch.device, predictor_data: dict):
