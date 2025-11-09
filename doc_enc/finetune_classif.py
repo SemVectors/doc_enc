@@ -158,8 +158,11 @@ class DocClassifier(nn.Module):
 
         if conf.classif_head == ClassifHeadType.LINEAR:
             self.cls_head = LinearClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
-        else:
+        elif conf.classif_head == ClassifHeadType.MLP:
             self.cls_head = MLPClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
+        else:
+            # compat with previous versions
+            self.cls_head = LinearClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
 
         self.predictor: AbcPredictor | None = None
 
