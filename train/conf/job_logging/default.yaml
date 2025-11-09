@@ -9,7 +9,7 @@ handlers:
   console:
     class: logging.StreamHandler
     formatter: simple
-    stream: ext://sys.stdout
+    stream: ext://sys.stderr
   file:
     class: logging.FileHandler
     formatter: simple
