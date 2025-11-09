@@ -81,6 +81,7 @@ class BaseTransformersAutoModel(BaseEncoder):
     def load_state_dict(self, state_dict, *args, **kwargs):
         if isinstance(self.auto_model, PeftModel):
             set_peft_model_state_dict(self.auto_model, state_dict['adapter_weights'])
+            self.auto_model = self.auto_model.merge_and_unload()
         else:
             super().load_state_dict(state_dict, *args, **kwargs)
 
