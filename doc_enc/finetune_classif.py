@@ -168,6 +168,8 @@ class DocClassifier(nn.Module):
 
     def forward(self, docs, doc_fragments):
         embeddings = self.encoder(docs, doc_fragments)
+        if self.encoder.last_encode_layer().conf.transformers_torch_fp16:
+            embeddings = embeddings.to(dtype=torch.float32)
         return self.cls_head(embeddings)
 
 
