@@ -7,7 +7,8 @@ import os
 import numpy as np
 
 from doc_enc.doc_encoder import DocEncoder, DocEncoderConf, file_path_fetcher
-from doc_enc.classif_doc import ClassifDoc
+from doc_enc.doc_classifier import DocClassifier
+
 from doc_enc.utils import global_init
 
 
@@ -26,8 +27,8 @@ def _save(args, output_dir, ids, embs, batch_i):
 
 def _paths_gen(sent_file):
     with open(sent_file, 'r', encoding='utf8') as fp:
-        for l in fp:
-            yield l.rstrip()
+        for ll in fp:
+            yield ll.rstrip()
 
 
 def _compute_embs(args, doc_encoder: DocEncoder):
@@ -103,13 +104,15 @@ def run_classif(args):
         max_tokens=args.max_tokens_per_batch,
         enable_amp=args.enable_amp,
     )
-    doc_encoder = ClassifDoc(conf)
+    doc_encoder = DocClassifier(conf)
     with open(args.output_file, 'w', encoding='utf8') as outf:
-        for batch_paths, predictions in doc_encoder.predict_docs_stream(
+        for batch_paths, predictions in doc_encoder.clsf_docs_stream(
             _paths_gen(args.input_file), fetcher=file_path_fetcher, batch_size=args.batch_size
         ):
-            for path, pred in zip(batch_paths, predictions):
-                outf.write(f'{path}\t{pred}\n')
+            for path, preds in zip(batch_paths, predictions):
+
+                for lbl, weight in sorted(preds, key=lambda t: -t[1]):
+                    outf.write(f'{path}\t{lbl}\t{weight}\n')
 
 
 def _add_common_opts(parser):
@@ -152,7 +155,7 @@ def main():
 
     classif_parser = subparsers.add_parser('classif', help='Do classification of documents')
     classif_parser.add_argument(
-        "--input_file", "-i", required=True, help="file with paths to segmented texts"
+        "--input_file", "-i", required=True, help="file with paths to texts."
     )
     classif_parser.add_argument("--output_file", "-o", required=True, help="")
     _add_common_opts(classif_parser)

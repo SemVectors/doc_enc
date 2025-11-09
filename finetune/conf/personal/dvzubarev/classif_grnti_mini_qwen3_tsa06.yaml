@@ -9,9 +9,11 @@ bucket_multiplier: 1
 enable_amp: true
 truncate_long_docs: true
 async_batch_gen: 1
-dropout: 0.4
 # lr: 0.00005
 lr: 0.0001
+
+classif_module:
+  dropout: 0.4
 
 overrides:
   text_proc:

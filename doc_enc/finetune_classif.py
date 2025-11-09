@@ -9,13 +9,17 @@ from pathlib import Path
 import collections
 import re
 import random
-from enum import Enum
+from enum import IntEnum
 from typing import Any, List, Optional
 
 
 import hydra
 from hydra.core.config_store import ConfigStore
-from omegaconf import MISSING, OmegaConf
+from omegaconf import (
+    MISSING,
+    OmegaConf,
+)
+import omegaconf
 
 import torch
 from torch import nn
@@ -53,7 +57,6 @@ class FineTuneConf(DocEncoderConf):
     save_path: str = ''
 
     eval_every: int = 1000
-    dropout: float = 0.5
     lr: float = 0.0003
     lr_scheduler_kwargs: dict = dataclasses.field(default_factory=dict)
     max_updates: int = 5000
@@ -64,9 +67,15 @@ class FineTuneConf(DocEncoderConf):
     only_eval_test: bool = False
 
 
-class ClassifHeadType(Enum):
+class ClassifHeadType(IntEnum):
     LINEAR = 0
     MLP = 1
+
+
+@dataclasses.dataclass
+class ClassifModuleConf:
+    head: ClassifHeadType = ClassifHeadType.LINEAR
+    dropout: float = 0.5
 
 
 @dataclasses.dataclass
@@ -94,7 +103,7 @@ class GapPredictorOpts:
 @dataclasses.dataclass
 class ClassifFineTuneConf(FineTuneConf):
     nlabels: int = MISSING
-    classif_head: ClassifHeadType = ClassifHeadType.LINEAR
+    classif_module: ClassifModuleConf = dataclasses.field(default_factory=ClassifModuleConf)
 
     try_predictors_on_dev: List[str] = dataclasses.field(default_factory=list)
     threshold_pred_opts: Optional[ThresholdPredictorOpts] = None
@@ -114,13 +123,13 @@ cs.store(name="base_doc_encoder", group="doc_encoder", node=DocEncoderConf)
 
 
 class LinearClassifierHead(nn.Module):
-    def __init__(self, in_dim: int, device: torch.device, conf: ClassifFineTuneConf):
+    def __init__(self, nlabels: int, in_dim: int, device: torch.device, conf: ClassifModuleConf):
         super().__init__()
 
         self.dropout = None
         if conf.dropout > 0.0:
             self.dropout = nn.Dropout(conf.dropout)
-        self.classif_layer = nn.Linear(in_dim, conf.nlabels)
+        self.classif_layer = nn.Linear(in_dim, nlabels)
         self.classif_layer = self.classif_layer.to(device=device)
 
     def forward(self, embeddings: torch.Tensor):
@@ -130,7 +139,7 @@ class LinearClassifierHead(nn.Module):
 
 
 class MLPClassifierHead(nn.Module):
-    def __init__(self, in_dim: int, device: torch.device, conf: ClassifFineTuneConf):
+    def __init__(self, nlabels: int, in_dim: int, device: torch.device, conf: ClassifModuleConf):
         super().__init__()
 
         self.dense = nn.Linear(in_dim, in_dim, device=device)
@@ -138,7 +147,7 @@ class MLPClassifierHead(nn.Module):
         if conf.dropout > 0.0:
             self.dropout = nn.Dropout(conf.dropout)
 
-        self.out_proj = nn.Linear(in_dim, conf.nlabels, device=device)
+        self.out_proj = nn.Linear(in_dim, nlabels, device=device)
 
     def forward(self, embeddings: torch.Tensor):
         x = embeddings
@@ -155,18 +164,22 @@ class MLPClassifierHead(nn.Module):
 # ** Classifier
 
 
-class DocClassifier(nn.Module):
-    def __init__(self, encoder: EncodeModule, conf: ClassifFineTuneConf):
+class DocClassifierModule(nn.Module):
+    def __init__(self, nlabels: int, encoder: EncodeModule, conf: ClassifModuleConf):
         super().__init__()
+        self.nlabels = nlabels
         self.encoder = encoder
 
-        if conf.classif_head == ClassifHeadType.LINEAR:
-            self.cls_head = LinearClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
-        elif conf.classif_head == ClassifHeadType.MLP:
-            self.cls_head = MLPClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
+        if conf.head == ClassifHeadType.LINEAR:
+            self.cls_head = LinearClassifierHead(
+                nlabels, encoder.doc_embs_dim(), self.encoder.device, conf
+            )
+        elif conf.head == ClassifHeadType.MLP:
+            self.cls_head = MLPClassifierHead(
+                nlabels, encoder.doc_embs_dim(), self.encoder.device, conf
+            )
         else:
-            # compat with previous versions
-            self.cls_head = LinearClassifierHead(encoder.doc_embs_dim(), self.encoder.device, conf)
+            raise RuntimeError(f'Unknown classif head: {conf.head}')
 
         self.predictor: AbcPredictor | None = None
 
@@ -176,28 +189,42 @@ class DocClassifier(nn.Module):
             embeddings = embeddings.to(dtype=torch.float32)
         return self.cls_head(embeddings)
 
-    def predictions_with_weights(self, docs, doc_fragments) -> list[list[tuple[int, float]]]:
-        raise NotImplementedError("Impl predictions_with_weights")
+    def predictions_with_weights(self, docs, doc_fragments) -> list[list[tuple[str, float]]]:
+        assert self.predictor is not None, "DocClassifierModule: predictor is not inited!"
+        outputs = self.forward(docs, doc_fragments)
+        return self.predictor.predictions_with_weights(outputs)
 
 
-def _create_model(conf: ClassifFineTuneConf, eval_mode=False) -> DocClassifier:
+def _create_clsf_module(conf: ClassifFineTuneConf, eval_mode=False) -> DocClassifierModule:
+    doc_encoder = EncodeModule(conf, eval_mode=eval_mode)
+    model = DocClassifierModule(conf.nlabels, doc_encoder, conf.classif_module)
+    return model
+
+
+def load_clsf_module(conf: DocEncoderConf, eval_mode=True) -> DocClassifierModule:
     doc_encoder = EncodeModule(conf, eval_mode=eval_mode)
     state_dict = doc_encoder._state_dict
 
-    if (ft_cfg := state_dict.get('fine_tune_cfg')) is not None:
-        # update conf's nlabels
-        conf.nlabels = ft_cfg.nlabels
-        # uses this loaded config for DocClassifier loading
-        conf = ft_cfg
+    ft_cfg: ClassifFineTuneConf | None = None
+    if (ft_cfg := state_dict.get('fine_tune_cfg')) is None:
+        raise RuntimeError("Failed to load clsf model: fine_tune_cfg is missing in state_dict")
 
-    model = DocClassifier(doc_encoder, conf)
+    nlabels = ft_cfg.nlabels
+    try:
+        mod_conf = ft_cfg.classif_module
+    except omegaconf.errors.ConfigAttributeError:
+        head = getattr(ft_cfg, 'classif_head', ClassifHeadType.LINEAR)
+        mod_conf = ClassifModuleConf(head=head)
+
+    model = DocClassifierModule(nlabels, doc_encoder, mod_conf)
+    labels_index = state_dict['labels_index']
     predictor = None
     # Compatibility with previous versions
     if thresholds := state_dict.get('thresholds'):
-        predictor = ThresholdPredictor(conf.nlabels, thresholds, doc_encoder.device)
+        predictor = ThresholdPredictor(nlabels, thresholds, doc_encoder.device, labels_index)
     elif pred_data := doc_encoder._state_dict.get('predictor_data', {}):
         name = pred_data['name']
-        predictor = create_predictor(name, conf.nlabels, doc_encoder.device, pred_data)
+        predictor = create_predictor(name, nlabels, doc_encoder.device, pred_data, labels_index)
     model.predictor = predictor
     # Compatibility with previous versions
     if 'classif_layer' in doc_encoder._state_dict:
@@ -844,24 +871,28 @@ class AbcPredictor:
     def preds_as_tensor(self, outputs: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError("Impl preds_as_tensor")
 
-    def predictions(self, outputs: torch.Tensor) -> list[list[int]]:
+    def predictions(self, outputs: torch.Tensor) -> list[list[str]]:
         raise NotImplementedError("Impl predictions")
 
-    def predictions_with_weights(self, outputs: torch.Tensor) -> list[list[tuple[int, float]]]:
+    def predictions_with_weights(self, outputs: torch.Tensor) -> list[list[tuple[str, float]]]:
         raise NotImplementedError("Impl predictions_with_weights")
 
 
 class _BasePredictor(AbcPredictor):
-    def predictions(self, outputs: torch.Tensor) -> list[list[int]]:
+    def __init__(self, labels_index: list):
+        self._labels_index = labels_index
+
+    def predictions(self, outputs: torch.Tensor) -> list[list[str]]:
         preds_with_weights = self.predictions_with_weights(outputs)
         return [[t[0] for t in r] for r in preds_with_weights]
 
-    def predictions_with_weights(self, outputs: torch.Tensor) -> list[list[tuple[int, float]]]:
+    def predictions_with_weights(self, outputs: torch.Tensor) -> list[list[tuple[str, float]]]:
         preds = self.preds_as_tensor(outputs)
         row_indices, column_indices = torch.nonzero(preds, as_tuple=True)
         out = []
         cur_i = 0
 
+        outputs = F.sigmoid(outputs)
         for i in range(outputs.size(0)):
             results = []
             out.append(results)
@@ -870,13 +901,21 @@ class _BasePredictor(AbcPredictor):
 
             while cur_i < row_indices.size(0) and i == int(row_indices[cur_i].item()):
                 c = int(column_indices[cur_i].item())
-                results.append((c, outputs[r, c].item()))
+                results.append((self._labels_index[c], outputs[r, c].item()))
                 cur_i += 1
         return out
 
 
 class ThresholdPredictor(_BasePredictor):
-    def __init__(self, nlbl: int, thresholds: list[float] | None, device: torch.device):
+    def __init__(
+        self,
+        nlbl: int,
+        thresholds: list[float] | None,
+        device: torch.device,
+        labels_index: list,
+    ):
+        super().__init__(labels_index)
+
         self.nlbl = nlbl
         if thresholds is None:
             thresholds = [0.5] * nlbl
@@ -895,7 +934,8 @@ class ThresholdPredictor(_BasePredictor):
 
 
 class TopkPredictor(_BasePredictor):
-    def __init__(self, nlbl: int, topk: int):
+    def __init__(self, nlbl: int, topk: int, labels_index: list):
+        super().__init__(labels_index)
         self.nlbl = nlbl
         self.topk = topk
 
@@ -909,7 +949,8 @@ class TopkPredictor(_BasePredictor):
 
 
 class TopkWithThresholdPredictor(_BasePredictor):
-    def __init__(self, nlbl: int, topk: int, threshold: float):
+    def __init__(self, nlbl: int, topk: int, threshold: float, labels_index: list):
+        super().__init__(labels_index)
 
         self.nlbl = nlbl
         self.topk = topk
@@ -925,7 +966,8 @@ class TopkWithThresholdPredictor(_BasePredictor):
 
 
 class GapPredictor(_BasePredictor):
-    def __init__(self, nlbl: int, gap: float):
+    def __init__(self, nlbl: int, gap: float, labels_index: list):
+        super().__init__(labels_index)
         self.nlbl = nlbl
         self.gap = gap
 
@@ -941,17 +983,23 @@ class GapPredictor(_BasePredictor):
         return predictions.int()
 
 
-def create_predictor(name: str, nlbl: int, device: torch.device, predictor_data: dict):
+def create_predictor(
+    name: str,
+    nlbl: int,
+    device: torch.device,
+    predictor_data: dict,
+    labels_index: list,
+):
     if name == 'threshold':
-        return ThresholdPredictor(nlbl, predictor_data.get('thresholds'), device)
+        return ThresholdPredictor(nlbl, predictor_data.get('thresholds'), device, labels_index)
     elif name == 'topk':
-        return TopkPredictor(nlbl, predictor_data.get('topk', 3))
+        return TopkPredictor(nlbl, predictor_data.get('topk', 3), labels_index)
     elif name == 'topk_with_threshold':
         return TopkWithThresholdPredictor(
-            nlbl, predictor_data.get('topk', 3), predictor_data.get('threshold', 0.5)
+            nlbl, predictor_data.get('topk', 3), predictor_data.get('threshold', 0.5), labels_index
         )
     elif name == 'gap':
-        return GapPredictor(nlbl, predictor_data.get('gap', 3))
+        return GapPredictor(nlbl, predictor_data.get('gap', 3), labels_index)
     else:
         raise RuntimeError(f'Unknown predictor: {name}')
 
@@ -992,12 +1040,6 @@ class RunningStat:
         self._multi_label = multi_label
         with torch.no_grad():
             if multi_label:
-                # thresholds = metrics.get('thresholds')
-                # if thresholds is None:
-                #     thresholds = [0.5] * labels.size(1)
-                # t_t = torch.tensor(thresholds, dtype=torch.float, device=outputs.device)
-                # predicted = torch.where(F.sigmoid(outputs) < t_t, 0, 1)
-
                 predicted = predictor.preds_as_tensor(outputs)
 
                 self.correct += (predicted == labels).int().sum().cpu().item()
@@ -1051,7 +1093,7 @@ def _train_classif(conf: ClassifFineTuneConf):
         labels_data.labels_index[:20],
     )
 
-    model = _create_model(conf)
+    model = _create_clsf_module(conf)
     logging.info("Model:\n%s", model)
 
     train_iter = ClassifBatchIterator(
@@ -1078,7 +1120,8 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
         logging.info("Evaling on test:")
         logging.info("Loading saved model from %s", conf.model_path)
 
-        model = _create_model(conf, eval_mode=True)
+        model = load_clsf_module(conf)
+        conf.nlabels = model.nlabels
         labels_mapping = model.encoder._state_dict['labels_mapping']
         labels_index = model.encoder._state_dict['labels_index']
         with torch.inference_mode():
@@ -1156,7 +1199,7 @@ def _calc_loss(outputs: torch.Tensor, labels: torch.Tensor, multi_label: bool):
 def _train_loop(
     conf: ClassifFineTuneConf,
     train_iter: ClassifBatchIterator,
-    model: DocClassifier,
+    model: DocClassifierModule,
     labels_data: LabelsData,
 ):
     optimizer = torch.optim.AdamW(model.parameters(), lr=conf.lr)
@@ -1174,7 +1217,7 @@ def _train_loop(
     epoch = 0
     running_stat = RunningStat()
     labels_stat = LabelStat(conf.nlabels)
-    predictor = create_predictor('threshold', conf.nlabels, train_iter.device(), {})
+    predictor = create_predictor('threshold', conf.nlabels, train_iter.device(), {}, [])
 
     while update_nums < conf.max_updates:
         epoch += 1
@@ -1220,6 +1263,7 @@ def _train_loop(
                     conf.nlabels,
                     train_iter.device(),
                     last_eval_result['_predictor_data'],
+                    [],
                 )
             if update_nums >= conf.max_updates:
                 break
@@ -1393,7 +1437,7 @@ class MultiLabelDevEvaluator:
 def eval_on_dataset(
     conf: ClassifFineTuneConf,
     meta_path,
-    model: DocClassifier,
+    model: DocClassifierModule,
     labels_data: LabelsData,
     last_eval_results: dict | None = None,
     labels_stat: LabelStat | None = None,
@@ -1434,10 +1478,12 @@ def eval_on_dataset(
 
 
 def _save_model(
-    conf: FineTuneConf, model: DocClassifier, eval_results: dict, labels_data: LabelsData
+    conf: FineTuneConf, model: DocClassifierModule, eval_results: dict, labels_data: LabelsData
 ):
     d = model.encoder.to_dict()
-    d['fine_tune_cfg'] = conf
+    d['fine_tune_cfg'] = OmegaConf.to_container(
+        conf, structured_config_mode=omegaconf.SCMode.INSTANTIATE
+    )
     d['cls_head'] = model.cls_head.state_dict()
     d['labels_index'] = labels_data.labels_index
     d['labels_mapping'] = labels_data.labels_mapping

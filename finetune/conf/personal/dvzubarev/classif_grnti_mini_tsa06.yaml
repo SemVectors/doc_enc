@@ -8,9 +8,11 @@ max_tokens: 96_000
 enable_amp: true
 truncate_long_docs: true
 async_batch_gen: 1
-dropout: 0.4
 # lr: 0.00005
 lr: 0.0001
+
+classif_module:
+  dropout: 0.4
 
 model_path: >-
   /home/dvzubarev/Workspace/projects/semvectors/tuning/trans/doc_trans_full1-9-4/model.pt

@@ -23,4 +23,5 @@ max_sents: 600
 max_tokens: 8000
 bucket_multiplier: 4
 truncate_long_docs: true
-dropout: 0.4
+classif_module:
+  dropout: 0.4
