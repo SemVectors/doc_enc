@@ -52,10 +52,10 @@ class EncOverride:
 
 @dataclasses.dataclass
 class ConfOverrides:
-    text_proc: TextProcOverride
-    sent: EncOverride
-    frag: EncOverride
-    doc: EncOverride
+    text_proc: Optional[TextProcOverride] = None
+    sent: Optional[EncOverride] = None
+    frag: Optional[EncOverride] = None
+    doc: Optional[EncOverride] = None
 
 
 @dataclasses.dataclass
@@ -742,7 +742,11 @@ def _adjust_enc_config(
 
 
 def _adjust_tp_config(tp: TextProcessor, override: ConfOverrides | None):
-    if override is not None and (msl := override.text_proc.auto_tokenizer_max_seq_len) is not None:
+    if (
+        override is not None
+        and override.text_proc is not None
+        and (msl := override.text_proc.auto_tokenizer_max_seq_len) is not None
+    ):
         tp._tokenizer.set_max_seq_length(msl)
         tp.conf().tokenizer.auto_tokenizer_max_seq_len = msl
 
