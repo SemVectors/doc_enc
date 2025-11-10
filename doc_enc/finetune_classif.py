@@ -607,10 +607,15 @@ class DevThresholdPredictor(AbcDevPredictor, BaseDevMetricsComputer):
                 self.cls_metric_for_threshold_selecting in metrics_i
             ), f'Unknown decider metric {self.cls_metric_for_threshold_selecting}!'
             decider_m = metrics_i[self.cls_metric_for_threshold_selecting]
+            if torch.all(decider_m < 0.05):
+                # No information to select threshold for this class.
+                # Do not predict it for now.
+                thresh = 1.0
+            else:
+                max_m_idx = torch.argmax(decider_m)
+                thresh = self.cls_thresholds[max_m_idx].cpu().item()
 
-            max_m_idx = torch.argmax(decider_m)
-
-            cls_thresholds.append(self.cls_thresholds[max_m_idx].cpu().item())
+            cls_thresholds.append(thresh)
 
         return cls_thresholds
 
