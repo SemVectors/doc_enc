@@ -11,8 +11,10 @@ ClsfResultT = list[list[tuple[str, float]]]
 
 
 class DocClassifier:
-    def __init__(self, conf: DocEncoderConf) -> None:
-        self._cls_module = load_clsf_module(conf, eval_mode=True)
+    def __init__(
+        self, conf: DocEncoderConf, topk: int | None = None, threshold: float | None = None
+    ) -> None:
+        self._cls_module = load_clsf_module(conf, topk=topk, threshold=threshold, eval_mode=True)
         self._enc_module = self._cls_module.encoder
 
         state_dict = self._enc_module._state_dict

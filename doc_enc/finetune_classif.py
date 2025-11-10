@@ -201,7 +201,9 @@ def _create_clsf_module(conf: ClassifFineTuneConf, eval_mode=False) -> DocClassi
     return model
 
 
-def load_clsf_module(conf: DocEncoderConf, eval_mode=True) -> DocClassifierModule:
+def load_clsf_module(
+    conf: DocEncoderConf, topk: int | None = None, threshold: float | None = None, eval_mode=True
+) -> DocClassifierModule:
     doc_encoder = EncodeModule(conf, eval_mode=eval_mode)
     state_dict = doc_encoder._state_dict
 
@@ -217,15 +219,30 @@ def load_clsf_module(conf: DocEncoderConf, eval_mode=True) -> DocClassifierModul
         mod_conf = ClassifModuleConf(head=head)
 
     model = DocClassifierModule(nlabels, doc_encoder, mod_conf)
+    model.train(not eval_mode)
     labels_index = state_dict['labels_index']
     predictor = None
-    # Compatibility with previous versions
-    if thresholds := state_dict.get('thresholds'):
-        predictor = ThresholdPredictor(nlabels, thresholds, doc_encoder.device, labels_index)
-    elif pred_data := doc_encoder._state_dict.get('predictor_data', {}):
-        name = pred_data['name']
-        predictor = create_predictor(name, nlabels, doc_encoder.device, pred_data, labels_index)
+    # Create predictor based on passed parameters.
+    if topk is not None and threshold is not None:
+        predictor = TopkWithThresholdPredictor(nlabels, topk, threshold, labels_index)
+    elif topk is not None:
+        predictor = TopkPredictor(nlabels, topk, labels_index)
+    elif threshold is not None:
+        predictor = ThresholdPredictor(nlabels, threshold, doc_encoder.device, labels_index)
+
+    # Otherwise load predictor from saved model
+    if predictor is None:
+        # Compatibility with previous versions
+        if thresholds := state_dict.get('thresholds'):
+            predictor = ThresholdPredictor(nlabels, thresholds, doc_encoder.device, labels_index)
+        elif pred_data := doc_encoder._state_dict.get('predictor_data', {}):
+            name = pred_data['name']
+            predictor = create_predictor(name, nlabels, doc_encoder.device, pred_data, labels_index)
+        else:
+            raise RuntimeError('Unable to load predictor from saved state!')
+
     model.predictor = predictor
+
     # Compatibility with previous versions
     if 'classif_layer' in doc_encoder._state_dict:
         assert isinstance(
@@ -915,7 +932,7 @@ class ThresholdPredictor(_BasePredictor):
     def __init__(
         self,
         nlbl: int,
-        thresholds: list[float] | None,
+        thresholds: list[float] | float | None,
         device: torch.device,
         labels_index: list,
     ):
@@ -924,11 +941,15 @@ class ThresholdPredictor(_BasePredictor):
         self.nlbl = nlbl
         if thresholds is None:
             thresholds = [0.5] * nlbl
-        else:
+        elif isinstance(thresholds, float):
+            thresholds = [thresholds] * nlbl
+        elif isinstance(thresholds, list):
             if len(thresholds) != nlbl:
                 raise RuntimeError(
                     f"Len of thresholds list should be equal to number of labels: {len(thresholds)} != {nlbl}!"
                 )
+        else:
+            raise RuntimeError(f"Unknown type of thresholds: {type(thresholds)}")
 
         self.thresholds = torch.tensor(thresholds, dtype=torch.float, device=device)
 

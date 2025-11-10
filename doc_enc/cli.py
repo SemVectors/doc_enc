@@ -104,7 +104,7 @@ def run_classif(args):
         max_tokens=args.max_tokens_per_batch,
         enable_amp=args.enable_amp,
     )
-    doc_encoder = DocClassifier(conf)
+    doc_encoder = DocClassifier(conf, topk=args.topk, threshold=args.threshold)
     with open(args.output_file, 'w', encoding='utf8') as outf:
         for batch_paths, predictions in doc_encoder.clsf_docs_stream(
             _paths_gen(args.input_file), fetcher=file_path_fetcher, batch_size=args.batch_size
@@ -159,6 +159,8 @@ def main():
     )
     classif_parser.add_argument("--output_file", "-o", required=True, help="")
     _add_common_opts(classif_parser)
+    classif_parser.add_argument("--topk", "-k", default=None, type=int)
+    classif_parser.add_argument("--threshold", "-t", default=None, type=float)
     classif_parser.set_defaults(func=run_classif)
 
     args = parser.parse_args()
