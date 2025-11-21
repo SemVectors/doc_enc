@@ -1243,7 +1243,10 @@ def _train_loop(
     epoch = 0
     running_stat = RunningStat()
     labels_stat = LabelStat(conf.nlabels)
-    predictor = create_predictor('threshold', conf.nlabels, train_iter.device(), {}, [])
+    if train_iter.multi_label:
+        predictor = create_predictor('threshold', conf.nlabels, train_iter.device(), {}, [])
+    else:
+        predictor = create_predictor('topk', conf.nlabels, train_iter.device(), {'topk': 1}, [])
 
     while update_nums < conf.max_updates:
         epoch += 1
@@ -1324,15 +1327,17 @@ class MultiClassEvaluator:
         prec = self.tp / self.cls_predicted
         f1 = 2 * rec * prec / (rec + prec)
         f1 = f1.nan_to_num()
-        metrics = {
+        eval_data = {
             'micro_F1': self.correct.item() / self.total,
             'macro_F1': f1.mean().item(),
             'recall': rec.nan_to_num().tolist(),
             'precision': prec.nan_to_num().tolist(),
             'F1': f1.tolist(),
             'predictions_per_cls': [c.item() / self.total for c in self.cls_predicted],
+            'predictor': 'topk',
+            '_predictor_data': {'topk': 1, 'name': 'topk'},
         }
-        return metrics
+        return eval_data
 
 
 class MultiLabelTestEvaluator:
