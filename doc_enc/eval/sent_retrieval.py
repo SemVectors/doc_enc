@@ -5,6 +5,7 @@ import dataclasses
 from pathlib import Path
 import collections
 
+import numpy as np
 
 from doc_enc.utils import open_file, find_file
 from doc_enc.eval.sim_util import calc_sim, SimKind
@@ -29,6 +30,8 @@ class SentRetrievalConf:
     thresholds: list[float] = dataclasses.field(default_factory=lambda: [0.4, 0.5, 0.6, 0.7, 0.8])
 
     use_gpu: int = -1
+
+    query_instruction: str = ''
 
 
 def _read_sents(sent_file):
@@ -99,14 +102,43 @@ def calc_metrics(predictions, gold):
     return {'MAP': _calc_map(predictions, gold_set), 'rec': recall, 'prec': precision, 'f1': f1}
 
 
+def _create_gen_queries_with_instr(src_file_path: Path, instr: str, sep: str = '\t'):
+
+    def _gen():
+        with open(src_file_path, 'r') as inpf:
+            for line in inpf:
+
+                sent_id, sent = line.rstrip().split(sep, 1)
+                yield sent_id, instr + sent
+
+    return _gen
+
+
+def _encode_srcs(src_file_path: Path, conf: SentRetrievalConf, doc_encoder: DocEncoder):
+    """This is terminology of translations mining (from MT): src == queries,
+    target == docs/texts."""
+    if not conf.query_instruction:
+        src_sent_ids, src_embs = doc_encoder.encode_sents_from_file(
+            src_file_path, first_column_is_id=True
+        )
+    else:
+        src_sent_ids = []
+        all_src_embs = []
+        gens = [_create_gen_queries_with_instr(src_file_path, conf.query_instruction)]
+        for ids, embs in doc_encoder.encode_sents_from_generators(gens):
+            src_sent_ids.extend(ids)
+            all_src_embs.append(embs)
+        src_embs = np.vstack(all_src_embs)
+        assert len(src_sent_ids) == src_embs.shape[0], "Missaligned data 83292"
+    return src_sent_ids, src_embs
+
+
 def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEncoder):
     base_dir = Path(conf.ds_base_dir)
 
     src_file_path = base_dir / (ds_conf.sents + ".src")
     logging.info("encoding src")
-    src_sent_ids, src_embs = doc_encoder.encode_sents_from_file(
-        src_file_path, first_column_is_id=True
-    )
+    src_sent_ids, src_embs = _encode_srcs(src_file_path, conf, doc_encoder)
     logging.info("shape of encoded src sents: %s", src_embs.shape)
 
     tgt_file_path = base_dir / (ds_conf.sents + ".tgt")
