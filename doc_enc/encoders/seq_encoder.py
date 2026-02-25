@@ -144,4 +144,6 @@ class SeqEncoder(nn.Module):
         if 'encoder' not in state_dict:
             # compat with previous versions
             return super().load_state_dict(state_dict, **kwargs)
-        return self.encoder.load_state_dict(state_dict['encoder'], **kwargs)
+
+        if enc_state := state_dict['encoder']:
+            return self.encoder.load_state_dict(enc_state, **kwargs)

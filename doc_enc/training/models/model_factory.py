@@ -22,10 +22,7 @@ def _create_sent_model(
 ):
     emb_dim = 0 if embed is None else embed.conf.emb_dim
     if conf.kind == ModelKind.DUAL_ENC:
-        encoder = create_seq_encoder(
-            conf.encoder,
-            prev_output_size=emb_dim,
-        )
+        encoder = create_seq_encoder(conf.encoder, prev_output_size=emb_dim, eval_mode=False)
         if conf.load_params_from:
             state_dict = torch.load(conf.load_params_from, map_location=device)
         if state_dict is not None:
@@ -88,8 +85,7 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
         _check_enc_layer_correctness(conf.fragment, sent_embs_out_size)
 
         frag_layer = create_seq_encoder(
-            conf.fragment,
-            prev_output_size=sent_embs_out_size,
+            conf.fragment, prev_output_size=sent_embs_out_size, eval_mode=False
         )
         if state_dict is not None:
             frag_layer.load_state_dict(state_dict['frag_enc'])
@@ -98,7 +94,7 @@ def create_models(conf: DocModelConf, vocab: AbcTokenizer, device):
         doc_input_size = sent_embs_out_size
 
     _check_enc_layer_correctness(conf.doc, doc_input_size)
-    doc_layer = create_seq_encoder(conf.doc, prev_output_size=doc_input_size)
+    doc_layer = create_seq_encoder(conf.doc, prev_output_size=doc_input_size, eval_mode=False)
     if state_dict is not None:
         doc_layer.load_state_dict(state_dict['doc_enc'])
 
