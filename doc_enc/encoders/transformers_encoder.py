@@ -107,7 +107,10 @@ class TransformersAutoModel(BaseTransformersAutoModel):
         if config.transformers_torch_fp16:
             kwargs['torch_dtype'] = torch.float16
         auto_model = AutoModel.from_pretrained(
-            config.transformers_auto_name, cache_dir=config.transformers_cache_dir, **kwargs
+            config.transformers_auto_name,
+            cache_dir=config.transformers_cache_dir,
+            trust_remote_code=True,
+            **kwargs,
         )
         if config.use_adapter:
             logging.info(
