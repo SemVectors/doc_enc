@@ -34,6 +34,8 @@ class SentRetrievalConf:
     query_instruction: str = ''
     fp16: bool = False
 
+    save_predictions_prefix: str = ''
+
 
 def _read_sents(sent_file):
     sent_ids = []
@@ -97,6 +99,12 @@ def calc_metrics(predictions, gold):
     if not ncorrect:
         return {}
 
+    logging.info(
+        "SentRetrieval: ngolds=%d, ncorrect=%d, npredicted=%d",
+        len(gold),
+        ncorrect,
+        len(predictions),
+    )
     recall = ncorrect / len(gold)
     precision = ncorrect / len(predictions)
     f1 = 2 * recall * precision / (recall + precision)
@@ -134,6 +142,30 @@ def _encode_srcs(src_file_path: Path, conf: SentRetrievalConf, doc_encoder: DocE
     return src_sent_ids, src_embs
 
 
+def _save_predictions(
+    conf: SentRetrievalConf,
+    ds_conf: DatasetConf,
+    sim_arr: np.ndarray,
+    idx_arr: np.ndarray,
+    src_sent_ids,
+    tgt_sent_ids,
+):
+    if not conf.save_predictions_prefix:
+        return
+    max_topk = max(conf.topk)
+    min_sim = min(conf.thresholds)
+
+    p = Path(f'{conf.save_predictions_prefix}_{ds_conf.name}.csv')
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, 'w') as outf:
+        outf.write('rank,src,tgt,sim\n')
+        for i in range(len(idx_arr)):
+            for rank, (j, sim) in enumerate(zip(idx_arr[i], sim_arr[i])):
+                if sim < min_sim or rank >= max_topk:
+                    break
+                outf.write(f'{rank+1},{src_sent_ids[i]},{tgt_sent_ids[j]},{sim}\n')
+
+
 def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEncoder):
     base_dir = Path(conf.ds_base_dir)
 
@@ -156,6 +188,7 @@ def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEn
 
     max_k = max(conf.topk)
     msim, indexes = calc_sim(conf.sim_kind, max_k, src_embs, tgt_embs, use_gpu=conf.use_gpu)
+    _save_predictions(conf, ds_conf, msim, indexes, src_sent_ids, tgt_sent_ids)
     gold = load_gold_data(base_dir / ds_conf.meta)
     metrics = []
     for k in conf.topk:
