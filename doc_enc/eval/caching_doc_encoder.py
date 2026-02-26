@@ -46,7 +46,12 @@ class _Cache:
             return 0
         return self._embs.shape[1]
 
-    def get_embs(self):
+    def dtype(self):
+        assert self._embs is not None, "CachingEmbs: logic error 04767"
+        return self._embs.dtype
+
+    def get_embs(self) -> np.ndarray:
+        assert self._embs is not None, "CachingEmbs: logic error 04768"
         return self._embs
 
     def add_embs(self, paths, embs: np.ndarray):
@@ -70,7 +75,7 @@ class CachingDocEncoder(DocEncoder):
     def __init__(self, conf: DocEncoderConf, model_name: str) -> None:
         super().__init__(conf)
 
-        self._caches = {}
+        self._caches: dict[Path, _Cache] = {}
 
         self._cache_dir = f"__cached_embs__/{model_name}"
 
@@ -104,7 +109,30 @@ class CachingDocEncoder(DocEncoder):
         cache = self._caches[cache_key]
         np.savez(p / 'embs.npz', embs=cache.get_embs(), ids=cache.get_ids())
 
+    def _get_common_dtype_and_dim(self, cached_idxs_dict):
+        common_dtype = None
+        dim = None
+        for cache_key in cached_idxs_dict.keys():
+            cache = self._caches[cache_key]
+            if common_dtype is None:
+                common_dtype = cache.dtype()
+                dim = cache.embs_dim()
+            elif common_dtype is not cache.dtype():
+                raise RuntimeError(
+                    f'Common cached dtype is {common_dtype}, but {cache_key} has dtype - {cache.dtype()}!'
+                )
+            elif dim != cache.embs_dim():
+                raise RuntimeError(
+                    f'Common cached dim is {dim}, but {cache_key} has dim - {cache.embs_dim()}!'
+                )
+
+        assert common_dtype is not None, "CachingEmbs: logic error 04060"
+        assert dim is not None, "CachingEmbs: logic error 04061"
+        return common_dtype, dim
+
     def _assign_embs(self, cached_idxs_dict, total_embs_cnt):
+        if not cached_idxs_dict:
+            return None
         if len(cached_idxs_dict) == 1:
             # try to optimize
             required_idxs, cached_idxs = next(iter(cached_idxs_dict.values()))
@@ -115,20 +143,42 @@ class CachingDocEncoder(DocEncoder):
                 and len(required_idxs) == total_embs_cnt
                 and required_idxs == cached_idxs
             ):
-                logging.info("simple case: return all cached embs")
+                if cache.embs_dim() != self._enc_module.doc_embs_dim():
+                    raise RuntimeError(
+                        f'Cached dim is {cache.embs_dim()}, but model has dim - {self._enc_module.doc_embs_dim()}!'
+                    )
+                logging.info(
+                    "simple case: return all cached embs, dim=%d, dtype=%s",
+                    cache.embs_dim(),
+                    cache.dtype(),
+                )
                 return cache.get_embs()
 
-        embs_arr = np.empty(
-            (total_embs_cnt, self._enc_module.doc_layer.out_embs_dim()), dtype=np.float16
-        )
+        cached_dtype, cached_dim = self._get_common_dtype_and_dim(cached_idxs_dict)
+        if cached_dim != self._enc_module.doc_embs_dim():
+            raise RuntimeError(
+                f'Cached dim is {cached_dim}, but model has dim - {self._enc_module.doc_embs_dim()}!'
+            )
+
+        embs_arr = np.empty((total_embs_cnt, cached_dim), dtype=cached_dtype)
         for cache_key, (required_idxs, cached_idxs) in cached_idxs_dict.items():
-            logging.info("assign %d embs from %s", len(cached_idxs), cache_key)
             cache = self._caches[cache_key]
+            logging.info(
+                "assign %d embs from %s, dim=%d, dtype=%s",
+                len(cached_idxs),
+                cache_key,
+                cache.embs_dim(),
+                cache.dtype(),
+            )
             embs_arr[required_idxs] = cache.get_embs()[cached_idxs]
         return embs_arr
 
     def _compute_embs(
-        self, compute_idxs_dict, path_list, out_embs, stat: DocEncodeStat | None = None
+        self,
+        compute_idxs_dict,
+        path_list,
+        out_embs: np.ndarray | None,
+        stat: DocEncodeStat | None = None,
     ):
         for cache_key, idxs_to_compute in compute_idxs_dict.items():
             cache: _Cache = self._caches[cache_key]
@@ -145,6 +195,10 @@ class CachingDocEncoder(DocEncoder):
             if id(this_cache_paths) == id(path_list):
                 return embs
 
+            if out_embs is None:
+                out_embs = np.empty(
+                    (len(path_list), self._enc_module.doc_embs_dim()), dtype=embs.dtype
+                )
             out_embs[idxs_to_compute] = embs
         return out_embs
 
