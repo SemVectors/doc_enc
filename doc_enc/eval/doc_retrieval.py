@@ -36,6 +36,7 @@ class DocRetrievalConf:
     topk: List[int] = dataclasses.field(default_factory=lambda: [3, 5, 10, 20])
 
     use_gpu: int = -1
+    fp16: bool = False
 
 
 def _load_gold_data(meta_path, query_dir, query_data, other_dir, other_data):
@@ -203,14 +204,19 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     logging.info("computing embeddings for %s docs", len(other_paths))
     other_doc_embs = doc_encoder.encode_docs_from_path_list(other_paths)
     assert len(other_doc_embs) == len(other_paths) == len(other_keys)
-    logging.info("Shape of computed other embs: %s", other_doc_embs.shape)
+    logging.info("other_embs, shape=%s, dtype=%s", other_doc_embs.shape, other_doc_embs.dtype)
     other_inv_idx = _make_keys_dict(base_dir, other_paths)
     other_data = (other_keys, other_inv_idx)
 
     query_paths = paths_from_ids(abs_query_text_dir, query_ids)
     query_doc_embs = doc_encoder.encode_docs_from_path_list(query_paths)
     assert len(query_paths) == len(query_doc_embs) == len(query_ids)
-    logging.info("Shape of computed query embs: %s", query_doc_embs.shape)
+    logging.info("query_embs, shape=%s, dtype=%s", query_doc_embs.shape, query_doc_embs.dtype)
+    if conf.fp16 and query_doc_embs.dtype != np.float16:
+        logging.info("convert_embs_dtype, from=%s, to=%s", query_doc_embs.dtype, np.float16)
+        query_doc_embs = query_doc_embs.astype(np.float16)
+        other_doc_embs = other_doc_embs.astype(np.float16)
+
     query_inv_idx = _make_keys_dict(base_dir, query_paths)
     query_data = ([_make_key(query_text_dir, i) for i in query_ids], query_inv_idx)
 

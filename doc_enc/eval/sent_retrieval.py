@@ -32,6 +32,7 @@ class SentRetrievalConf:
     use_gpu: int = -1
 
     query_instruction: str = ''
+    fp16: bool = False
 
 
 def _read_sents(sent_file):
@@ -139,14 +140,19 @@ def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEn
     src_file_path = base_dir / (ds_conf.sents + ".src")
     logging.info("encoding src")
     src_sent_ids, src_embs = _encode_srcs(src_file_path, conf, doc_encoder)
-    logging.info("shape of encoded src sents: %s", src_embs.shape)
+    logging.info("src_encoded, shape=%s, dtype=%s", src_embs.shape, src_embs.dtype)
 
     tgt_file_path = base_dir / (ds_conf.sents + ".tgt")
     logging.info("encoding tgt")
     tgt_sent_ids, tgt_embs = doc_encoder.encode_sents_from_file(
         tgt_file_path, first_column_is_id=True
     )
-    logging.info("shape of encoded tgt sents: %s", tgt_embs.shape)
+    logging.info("tgt_encoded, shape=%s, dtype=%s", tgt_embs.shape, tgt_embs.dtype)
+
+    if conf.fp16 and src_embs.dtype != np.float16:
+        logging.info("convert_embs_dtype, from=%s, to=%s", src_embs.dtype, np.float16)
+        src_embs = src_embs.astype(np.float16)
+        tgt_embs = tgt_embs.astype(np.float16)
 
     max_k = max(conf.topk)
     msim, indexes = calc_sim(conf.sim_kind, max_k, src_embs, tgt_embs, use_gpu=conf.use_gpu)
