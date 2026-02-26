@@ -153,6 +153,10 @@ def eval_cli(conf: Config) -> None:
         checkpoints = base_dir.glob(p)
         for cp in checkpoints:
             logging.info("loading parameters from: %s", cp)
+            if conf.cache_embeddings:
+                assert conf.model_id is not None
+                del doc_encoder
+                doc_encoder = CachingDocEncoder(conf.doc_encoder, conf.model_id + '-' + cp.stem)
             doc_encoder.load_params_from_checkpoint(cp)
             _eval_and_bench(conf, doc_encoder, checkpoint=cp.with_suffix('').name)
 
