@@ -389,7 +389,7 @@ class BatchIterator:
             raise RuntimeError("Batch Iterator is not initialized!")
 
         finished_processes = 0
-        while finished_processes < self._async_generators:
+        while finished_processes < len(self._processes):
             logging.debug("queue len: %s", self._out_queue.qsize())
             batch = self._out_queue.get()
             if batch is None:
