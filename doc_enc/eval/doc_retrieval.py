@@ -38,6 +38,8 @@ class DocRetrievalConf:
     use_gpu: int = -1
     fp16: bool = False
 
+    save_predictions_prefix: str = ''
+
 
 def _load_gold_data(meta_path, query_dir, query_data, other_dir, other_data):
     _, query_inv_idx = query_data
@@ -185,19 +187,59 @@ def _eval_each_group(conf, sim_matrix, gold_data, query_data, other_data):
     return all_group_metrics
 
 
-def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEncoder):
+def _key_fmt(key: tuple):
+    return f'{str(key[0])}/{key[1]}'
+
+
+def _save_predictions(
+    conf: DocRetrievalConf,
+    ds_conf: DatasetConf,
+    sim_arr: np.ndarray,
+    idx_arr: np.ndarray,
+    query_data,
+    other_data,
+):
+    if not conf.save_predictions_prefix:
+        return
+    max_topk = max(conf.topk)
+
+    query_keys, _ = query_data
+    other_keys, _ = other_data
+
+    p = Path(f'{conf.save_predictions_prefix}_{ds_conf.name}.csv')
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, 'w') as outf:
+        outf.write('rank,src,tgt,sim\n')
+        for i in range(len(idx_arr)):
+            query_key = query_keys[i]
+            first_rel_key = other_keys[idx_arr[i][0]]
+            if query_key == first_rel_key:
+                # this is the same doc
+                idxs = idx_arr[i][1:]
+                sims = sim_arr[i][1:]
+            else:
+                idxs = idx_arr[i]
+                sims = sim_arr[i]
+
+            for rank, (j, sim) in enumerate(zip(idxs, sims)):
+                if rank >= max_topk:
+                    break
+                outf.write(f'{rank+1},{_key_fmt(query_key)},{_key_fmt(other_keys[j])},{sim}\n')
+
+
+def _eval_impl(conf: DocRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEncoder):
     base_dir = Path(conf.ds_base_dir)
-    abs_query_text_dir, abs_other_text_dir = _find_text_dirs(base_dir / dsconf.texts)
+    abs_query_text_dir, abs_other_text_dir = _find_text_dirs(base_dir / ds_conf.texts)
     query_text_dir = abs_query_text_dir.relative_to(base_dir)
     other_text_dir = abs_other_text_dir.relative_to(base_dir)
 
-    query_ids, other_ids = collect_src_tgt_ids(base_dir / dsconf.meta)
+    query_ids, other_ids = collect_src_tgt_ids(base_dir / ds_conf.meta)
     other_keys = [_make_key(other_text_dir, o) for o in other_ids]
-    if dsconf.search_over_all_texts:
-        other_keys = _add_docs_from_other_dir(dsconf, base_dir, other_text_dir, other_keys)
-        if dsconf.extra_other_dir:
+    if ds_conf.search_over_all_texts:
+        other_keys = _add_docs_from_other_dir(ds_conf, base_dir, other_text_dir, other_keys)
+        if ds_conf.extra_other_dir:
             other_keys = _add_docs_from_other_dir(
-                dsconf, base_dir, Path(dsconf.extra_other_dir), other_keys
+                ds_conf, base_dir, Path(ds_conf.extra_other_dir), other_keys
             )
 
     other_paths = paths_from_keys(base_dir, other_keys)
@@ -221,15 +263,16 @@ def _eval_impl(conf: DocRetrievalConf, dsconf: DatasetConf, doc_encoder: DocEnco
     query_data = ([_make_key(query_text_dir, i) for i in query_ids], query_inv_idx)
 
     max_k = max(conf.topk) + 1
-    _, indexes = calc_sim(
+    sims, indexes = calc_sim(
         conf.sim_kind, max_k, query_doc_embs, other_doc_embs, use_gpu=conf.use_gpu
     )
+    _save_predictions(conf, ds_conf, sims, indexes, query_data, other_data)
 
     gold_data = _load_gold_data(
-        base_dir / dsconf.meta, query_text_dir, query_data, other_text_dir, other_data
+        base_dir / ds_conf.meta, query_text_dir, query_data, other_text_dir, other_data
     )
     metrics = _calc_metrics(conf, indexes, gold_data, query_data, other_data)
-    if dsconf.eval_for_len_groups:
+    if ds_conf.eval_for_len_groups:
         group_metrics = _eval_each_group(conf, indexes, gold_data, query_data, other_data)
         metrics = [metrics] + group_metrics
     return metrics
