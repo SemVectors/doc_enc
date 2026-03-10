@@ -20,6 +20,11 @@ class DatasetConf:
     name: str
     meta: str
     texts: str
+
+    # For format from MTEB {queries,corpus,qrels}.csv. corpus file is passed in
+    # texts, qrels in meta.
+    queries: str | None = None
+
     search_over_all_texts: bool = False
     other_texts_limit: int = 0
     extra_other_dir: Optional[str] = None
@@ -37,6 +42,8 @@ class DocRetrievalConf:
 
     use_gpu: int = -1
     fp16: bool = False
+
+    query_instruction: str = ''
 
     save_predictions_prefix: str = ''
 
@@ -227,7 +234,93 @@ def _save_predictions(
                 outf.write(f'{rank+1},{_key_fmt(query_key)},{_key_fmt(other_keys[j])},{sim}\n')
 
 
+def _qrel_find_col(header: list[str], col_name: str):
+    try:
+        return header.index(col_name)
+    except ValueError:
+        raise RuntimeError(f"Failed to find {col_name} in header '{header}'")
+
+
+def _encode_text_from_csv(csv_path: Path, instr: str = ''):
+    text_list = []
+    text_id_list = []
+    inv_idx = {}
+    with open(csv_path, 'r') as inpf:
+        reader = csv.reader(inpf)
+        header = next(reader)
+        id_col_num = _qrel_find_col(header, 'id')
+        text_col_num = _qrel_find_col(header, 'text')
+        for num, row in enumerate(reader):
+            text_id = row[id_col_num]
+            text_id_list.append(text_id)
+            inv_idx[text_id] = num
+
+            text = row[text_col_num]
+            if instr:
+                text = instr + text
+            text_list.append(text)
+    return (text_id_list, inv_idx), text_list
+
+
+def _load_qrels(qrel_file_path: Path, query_inv_idx: dict, doc_inv_idx: dict):
+    gold = []
+    with open(qrel_file_path, 'r') as inpf:
+        reader = csv.reader(inpf)
+        header = next(reader)
+        cur_query_id = ''
+        cur_rel = []
+        if header[:3] != ['query-id', 'corpus-id', 'score']:
+            raise RuntimeError(
+                "Header of qrels is expected to start from query-id,corpus-id,score!"
+            )
+        for qid, cid, score in reader:
+            if int(score) != 1:
+                continue
+
+            if qid != cur_query_id:
+                if cur_rel:
+                    gold.append((query_inv_idx[cur_query_id], cur_rel, None))
+                cur_query_id = qid
+                cur_rel = []
+            cur_rel.append(doc_inv_idx[cid])
+        if cur_rel:
+            gold.append((query_inv_idx[cur_query_id], cur_rel, None))
+    return gold
+
+
+def _eval_qrels_ds(conf: DocRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEncoder):
+    # Collect docs
+    base_dir = Path(conf.ds_base_dir)
+    corpus_file_path = base_dir / ds_conf.texts
+    doc_data, doc_list = _encode_text_from_csv(corpus_file_path)
+    # Encode docs
+    doc_embs = doc_encoder.encode_docs(doc_list)
+
+    # Collect queries
+    assert ds_conf.queries, 'Logic error 839110'
+    queries_file_path = base_dir / ds_conf.queries
+    query_data, query_list = _encode_text_from_csv(queries_file_path, conf.query_instruction)
+    query_embs = doc_encoder.encode_docs(query_list)
+
+    max_k = max(conf.topk) + 1
+    sims, indexes = calc_sim(conf.sim_kind, max_k, query_embs, doc_embs, use_gpu=conf.use_gpu)
+
+    _save_predictions(conf, ds_conf, sims, indexes, query_data, doc_data)
+
+    # load gold data
+    qrel_file_path = base_dir / ds_conf.meta
+    gold = _load_qrels(qrel_file_path, query_data[1], doc_data[1])
+    metrics = _calc_metrics(conf, indexes, gold, query_data, doc_data)
+    return metrics
+
+
 def _eval_impl(conf: DocRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEncoder):
+    if ds_conf.queries is not None:
+        return _eval_qrels_ds(conf, ds_conf, doc_encoder)
+
+    if conf.query_instruction:
+        raise RuntimeError('query_instruction is only supported with datasets in qrels format!')
+
     base_dir = Path(conf.ds_base_dir)
     abs_query_text_dir, abs_other_text_dir = _find_text_dirs(base_dir / ds_conf.texts)
     query_text_dir = abs_query_text_dir.relative_to(base_dir)
