@@ -33,7 +33,6 @@ class BenchConf:
     doc_datasets: list[DocDatasetConf] = dataclasses.field(default_factory=list)
     sent_ds_base_dir: str = ''
     sent_datasets: list[SentDatasetConf] = dataclasses.field(default_factory=list)
-    bench_sents_encoding: bool = False
 
     keep_full_stats: bool = False
 
