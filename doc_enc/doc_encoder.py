@@ -867,8 +867,12 @@ class EncodeModule(BaseEncodeModule):
 
         self.doc_layer = self._load_layer(self.doc_layer, state_dict['doc_enc'])
 
-    def load_params_from_checkpoint(self, checkpoint_path):
-        state = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+    def load_params_from_checkpoint(self, checkpoint: str | dict):
+        if isinstance(checkpoint, (str, Path)):
+            state = torch.load(checkpoint, map_location=self.device, weights_only=False)
+        else:
+            state = checkpoint
+
         embed_state_dict = {}
         sent_state_dict = {}
         doc_state_dict = {}

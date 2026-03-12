@@ -71,7 +71,7 @@ class BaseTransformersAutoModel(BaseEncoder):
                 d = kwargs['destination']
             else:
                 d = {}
-            d['adapter_weights'] = output_state_dict
+            d[kwargs.get('prefix', '') + 'adapter_weights'] = output_state_dict
             return d
 
         prefix = kwargs.get('prefix', '')

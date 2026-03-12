@@ -138,7 +138,12 @@ class SeqEncoder(nn.Module):
         return enc_result
 
     def state_dict(self, *args, **kwargs):
-        return {'encoder': self.encoder.state_dict(*args, **kwargs)}
+        st = {'encoder': self.encoder.state_dict(*args, **kwargs)}
+        if self.beg_seq_param is not None:
+            st['beg_seq_param'] = self.beg_seq_param.cpu()
+        if self.pos_emb is not None:
+            st['pos_emb'] = self.pos_emb.state_dict(*args, **kwargs)
+        return st
 
     def load_state_dict(self, state_dict: Mapping[str, Any], **kwargs):
         if 'encoder' not in state_dict:
@@ -146,4 +151,10 @@ class SeqEncoder(nn.Module):
             return super().load_state_dict(state_dict, **kwargs)
 
         if enc_state := state_dict['encoder']:
-            return self.encoder.load_state_dict(enc_state, **kwargs)
+            self.encoder.load_state_dict(enc_state, **kwargs)
+
+        if 'beg_seq_param' in state_dict:
+            self.beg_seq_param = state_dict['beg_seq_param']
+
+        if 'pos_emb' in state_dict:
+            self.pos_emb.load_state_dict(state_dict['pos_emb'], **kwargs)

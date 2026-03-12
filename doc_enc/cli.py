@@ -5,6 +5,7 @@ import argparse
 import logging
 import os
 import numpy as np
+import torch
 
 from doc_enc.doc_encoder import DocEncoder, DocEncoderConf, file_path_fetcher
 from doc_enc.doc_classifier import DocClassifier
@@ -115,6 +116,53 @@ def run_classif(args):
                     outf.write(f'{path}\t{lbl}\t{weight}\n')
 
 
+def merge_checkpoints(args):
+    def _zero_out(prms):
+        for v in prms.values():
+            if isinstance(v, dict):
+                _zero_out(v)
+            else:
+                v.fill_(0)
+
+    def _merge(prms, ckp_w, out_prms, seen=None):
+        if seen is None:
+            seen = set()
+        for k in out_prms.keys():
+            if (v := prms.get(k)) is None:
+                raise RuntimeError(f'Checkpoint {ckp_path} has no {k} parameter.')
+            if isinstance(v, dict):
+                _merge(v, ckp_w, out_prms[k], seen)
+            else:
+                # There might be shared tensor. Update them only once.
+                if v.data_ptr() not in seen:
+                    out_prms[k] += ckp_w * v
+                    seen.add(v.data_ptr())
+
+    ckp_file_paths: list[str] = args.ckp_files
+    weights: list[float] = args.ckp_weights
+    if not weights:
+        weights = [1 / len(ckp_file_paths)] * len(ckp_file_paths)
+    elif len(weights) != len(ckp_file_paths):
+        raise RuntimeError('Number of specified weights != number of checkpoints!')
+
+    device = torch.device('cpu')
+    merged_state = torch.load(ckp_file_paths[0], map_location=device, weights_only=False)
+    mod_params = merged_state['model']
+    _zero_out(mod_params)
+
+    for ckp_path, ckp_w in zip(ckp_file_paths, weights):
+        ckp_state = torch.load(ckp_path, map_location=device, weights_only=False)
+        cw = ckp_state['model']
+        _merge(cw, ckp_w, mod_params)
+
+    conf = DocEncoderConf(args.base_model)
+    doc_enc = DocEncoder(conf)
+    doc_enc.load_params_from_checkpoint(merged_state)
+
+    d = doc_enc.enc_module().to_dict()
+    torch.save(d, args.output_file)
+
+
 def _add_common_opts(parser):
     parser.add_argument("--model_path", "-m", required=True, help="")
     parser.add_argument(
@@ -162,6 +210,33 @@ def main():
     classif_parser.add_argument("--topk", "-k", default=None, type=int)
     classif_parser.add_argument("--threshold", "-t", default=None, type=float)
     classif_parser.set_defaults(func=run_classif)
+
+    merge_ckp_parser = subparsers.add_parser('merge_checkpoints', help='Merge various checkpoints')
+
+    merge_ckp_parser.add_argument(
+        "--base_model",
+        "-b",
+        required=True,
+        help=(
+            "Base model path. This model is used only for copying metadata/configs to the new model."
+            " Weight only loaded from checkpoints, weight from this model are not used."
+        ),
+    )
+    merge_ckp_parser.add_argument(
+        "--ckp_files", "-i", required=True, nargs='+', help="Checkpoint paths."
+    )
+    merge_ckp_parser.add_argument(
+        "--ckp_weights",
+        "-w",
+        nargs='*',
+        type=float,
+        help="Checkpoints weights. By default 1/n where n is the number of checkpoints.",
+    )
+
+    merge_ckp_parser.add_argument(
+        "--output_file", "-o", required=True, help="Path to the new model with merged weights."
+    )
+    merge_ckp_parser.set_defaults(func=merge_checkpoints)
 
     args = parser.parse_args()
 
