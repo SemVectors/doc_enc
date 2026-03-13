@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from torch.amp.autocast_mode import autocast
 import torch.nn.functional as F
-
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from doc_enc.utils import file_line_cnt
 from doc_enc.embs.emb_factory import create_emb_layer
@@ -76,6 +76,7 @@ class DocEncoderConf:
     # perform l2 normalization on encoded vectors.
     normalize_vecs: bool = False
     enable_amp: bool = False
+    ensure_flash_attn: bool = False
 
     overrides: Optional[ConfOverrides] = None
 
@@ -1002,15 +1003,27 @@ class DocEncoder:
     def conf(self):
         return self._enc_module._conf
 
+    def _sdpa_mods(self):
+        if self.conf().ensure_flash_attn:
+            sdpa_mods = SDPBackend.FLASH_ATTENTION
+        else:
+            sdpa_mods = [SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION,
+                         SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
+
+        return sdpa_mods
+    
+
     def _encode_docs(self, docs: list[list[list[int]]], doc_lengths: list[list[int]]):
         with torch.inference_mode(self._eval_mode):
             with autocast(self._enc_module.device.type, enabled=self.conf().enable_amp):
-                return self._enc_module.encode_docs(docs, doc_lengths)
+                with sdpa_kernel(self._sdpa_mods()):
+                    return self._enc_module.encode_docs(docs, doc_lengths)
 
     def _encode_sents(self, sents):
         with torch.inference_mode(self._eval_mode):
             with autocast(self._enc_module.device.type, enabled=self.conf().enable_amp):
-                return self._enc_module.encode_sents(sents, collect_on_cpu=True)
+                with sdpa_kernel(self._sdpa_mods()):
+                    return self._enc_module.encode_sents(sents, collect_on_cpu=True)
 
     def load_params_from_checkpoint(self, checkpoint_path):
         self._enc_module.load_params_from_checkpoint(checkpoint_path)
