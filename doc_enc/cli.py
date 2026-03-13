@@ -7,7 +7,7 @@ import os
 import numpy as np
 import torch
 
-from doc_enc.doc_encoder import DocEncoder, DocEncoderConf, file_path_fetcher
+from doc_enc.doc_encoder import DocEncoder, DocEncoderConf, file_path_fetcher, TextProcOverride, ConfOverrides
 from doc_enc.doc_classifier import DocClassifier
 
 from doc_enc.utils import global_init
@@ -53,27 +53,30 @@ def _compute_embs(args, doc_encoder: DocEncoder):
     if ids:
         _save(args, output_dir_path, ids, embs, batch_i)
 
-
-def run_compute_embs(args):
+def _create_doc_enc_conf(args):
     conf = DocEncoderConf(
         model_path=args.model_path,
         use_gpu=args.gpu,
         max_sents=args.max_sents_per_batch,
         max_tokens=args.max_tokens_per_batch,
         enable_amp=args.enable_amp,
+        bucket_multiplier=args.bucket_multiplier,
+        async_batch_gen=args.async_batch_gen,
+        ensure_flash_attn = args.ensure_flash_attn
     )
+    if args.max_seq_len != -1:
+        conf.overrides = ConfOverrides(text_proc=TextProcOverride(args.max_seq_len))
+    
+    return conf
+
+def run_compute_embs(args):
+    conf = _create_doc_enc_conf(args)
     doc_encoder = DocEncoder(conf)
     _compute_embs(args, doc_encoder)
 
 
 def run_compute_sent_embs(args):
-    conf = DocEncoderConf(
-        model_path=args.model_path,
-        use_gpu=args.gpu,
-        max_sents=args.max_sents_per_batch,
-        max_tokens=args.max_tokens_per_batch,
-        enable_amp=args.enable_amp,
-    )
+    conf = _create_doc_enc_conf(args)
     doc_encoder = DocEncoder(conf)
 
     output_dir_path = args.output_dir
@@ -98,13 +101,7 @@ def run_compute_sent_embs(args):
 
 
 def run_classif(args):
-    conf = DocEncoderConf(
-        model_path=args.model_path,
-        use_gpu=args.gpu,
-        max_sents=args.max_sents_per_batch,
-        max_tokens=args.max_tokens_per_batch,
-        enable_amp=args.enable_amp,
-    )
+    conf = _create_doc_enc_conf(args)
     doc_encoder = DocClassifier(conf, topk=args.topk, threshold=args.threshold)
     with open(args.output_file, 'w', encoding='utf8') as outf:
         for batch_paths, predictions in doc_encoder.clsf_docs_stream(
@@ -172,6 +169,10 @@ def _add_common_opts(parser):
     parser.add_argument("--max_tokens_per_batch", "-mt", default=128_000, type=int)
     parser.add_argument("--batch_size", "-b", default=1000, type=int)
     parser.add_argument("--enable_amp", "-amp", default=False, action='store_true')
+    parser.add_argument("--async_batch_gen", default=2, type=int)
+    parser.add_argument("--bucket_multiplier", default=2, type=int)
+    parser.add_argument("--max_seq_len", default=-1, type=int)
+    parser.add_argument("--ensure_flash_attn", default=False, action='store_true')
 
 
 def main():
