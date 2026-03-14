@@ -48,6 +48,7 @@ class EncOverride:
     use_adapter: Optional[str] = None
     adapter_kwargs: Optional[Dict[str, Any]] = None
     transformers_torch_fp16: Optional[bool] = None
+    transformers_kwargs: Optional[Dict[str, Any]] = None
 
 
 @dataclasses.dataclass
@@ -740,6 +741,11 @@ def _adjust_enc_config(
             config.use_adapter = override.use_adapter
         if override.adapter_kwargs is not None:
             config.adapter_kwargs = override.adapter_kwargs
+        if override.transformers_kwargs is not None:
+            if config.transformers_kwargs is None:
+                config.transformers_kwargs = override.transformers_kwargs
+            else:
+                config.transformers_kwargs.update(override.transformers_kwargs)
 
 
 def _adjust_tp_config(tp: TextProcessor, override: ConfOverrides | None):

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
+import copy
 import logging
+from typing import Any, cast
+from omegaconf import OmegaConf
 import torch
 
 from transformers import AutoModel
@@ -103,13 +106,17 @@ def print_trainable_parameters(model):
 
 class TransformersAutoModel(BaseTransformersAutoModel):
     def __init__(self, config: BaseEncoderConf, eval_mode: bool) -> None:
-        kwargs = {}
+        kwargs: dict[str, Any] = (
+            cast(dict, copy.copy(OmegaConf.to_container(config.transformers_kwargs)))
+            if config.transformers_kwargs is not None
+            else {}
+        )
         if config.transformers_torch_fp16:
             kwargs['torch_dtype'] = torch.float16
+        logging.info("Create Transformers model with kwargs: %s", kwargs)
         auto_model = AutoModel.from_pretrained(
             config.transformers_auto_name,
             cache_dir=config.transformers_cache_dir,
-            trust_remote_code=True,
             **kwargs,
         )
         if config.use_adapter:
