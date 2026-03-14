@@ -3,6 +3,11 @@ pyfinal: pyprev: {
 
   torch = (pyprev.torch-bin.override {cudaPackages = pkgs.cudaPackages_11;}).overridePythonAttrs(
     old: {
+      passthru = {
+        cudaSupport = true;
+        cudaPackages = pkgs.cudaPackages_11;
+      };
+      cudaCapabilities = pkgs.cudaPackages_11.flags.cudaCapabilities;
       src = pkgs.fetchurl
         {
           name = "torch-2.7.1-cu118-cp312-cp312-linux_x86_64.whl";

@@ -10,6 +10,7 @@
   peft,
   hydra-core,
   transformers,
+  flash-attn,
   sentence-transformers,
   faiss,
   pytest,
@@ -25,7 +26,7 @@ buildPythonPackage {
 
 
   buildInputs = [];
-  propagatedBuildInputs=[
+  dependencies=[
     scikit-learn
     numpy
     torch
@@ -33,6 +34,7 @@ buildPythonPackage {
     sentencepiece
     hydra-core
     transformers
+    flash-attn
     sentence-transformers
   ]
   ++ lib.optionals with-training-pkgs [
