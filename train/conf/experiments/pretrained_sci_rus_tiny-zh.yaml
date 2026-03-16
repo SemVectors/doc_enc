@@ -9,13 +9,10 @@ defaults:
   - override /model/doc: transformers_auto
   - _self_
 
-text_proc:
-  tokenizer:
-    auto_tokenizer_max_seq_len: 1024
-
 
 model:
   doc:
-    transformers_auto_name: mlsa-iai-msu-lab/sci-rus-tiny3.5
+    transformers_auto_name: mlsa-iai-msu-lab/sci-rus-tiny3.5-zh
     transformers_fix_pretrained_params: true
     transformers_pooler: mean
+    transformers_torch_fp16: true

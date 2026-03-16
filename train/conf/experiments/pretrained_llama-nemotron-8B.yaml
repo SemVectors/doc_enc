@@ -17,3 +17,5 @@ model:
     transformers_torch_fp16: true
     left_padding: true
     transformers_pooler: mean
+    transformers_kwargs:
+      trust_remote_code: true
