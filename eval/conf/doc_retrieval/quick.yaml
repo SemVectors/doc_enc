@@ -8,6 +8,12 @@ datasets:
     other_texts_limit: 50_000
     meta: ParalWiki/test.csv
     texts: ParalWiki/texts
+  - name: paral-sci-abs
+    meta: ParalSciAbs/test.csv
+    texts: ParalSciAbs/texts
+    search_over_all_texts: true
+    other_texts_limit: 200_000
+    optional: true
   - name: ses
     meta: SimEnSci/test.csv
     texts: SimEnSci/texts

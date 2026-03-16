@@ -8,6 +8,18 @@ datasets:
     other_texts_limit: 300_000
     meta: ParalWiki/test.csv
     texts: ParalWiki/texts
+  - name: paral-sci-abs
+    meta: ParalSciAbs/test.csv
+    texts: ParalSciAbs/texts
+    search_over_all_texts: true
+    optional: true
+  - name: paral-sci-full
+    meta: ParalSciFull/test-dev.csv
+    texts: ParalSciFull/texts
+    search_over_all_texts: true
+    extra_other_dir: SimEnSci/texts
+    other_texts_limit: 300_000
+    optional: true
   - name: ses
     meta: SimEnSci/test.csv
     texts: SimEnSci/texts
@@ -35,3 +47,13 @@ datasets:
     extra_other_dir: SimEnWiki/texts
     search_over_all_texts: true
     other_texts_limit: 300_000
+  - name: MIRACLhn-ru
+    meta: MIRACLhn-ru/qrels.csv
+    texts: MIRACLhn-ru/corpus.csv
+    queries: MIRACLhn-ru/queries.csv
+    optional: true
+  - name: MIRACLhn-en
+    meta: MIRACLhn-en/qrels.csv
+    texts: MIRACLhn-en/corpus.csv
+    queries: MIRACLhn-en/queries.csv
+    optional: true

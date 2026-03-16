@@ -17,6 +17,7 @@ class DatasetConf:
     name: str
     meta: str
     sents: str
+    optional: bool = False
 
 
 @dataclasses.dataclass
@@ -207,7 +208,8 @@ def _eval_impl(conf: SentRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEn
 def _check_ds(conf: SentRetrievalConf, dsconf: DatasetConf):
     base_dir = Path(conf.ds_base_dir)
     if not (base_dir / dsconf.meta).exists():
-        logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.meta)
+        if not dsconf.optional:
+            logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.meta)
         return False
     return True
 

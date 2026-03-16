@@ -7,18 +7,31 @@ defaults:
   - _self_
 
 cache_embeddings: true
+model_id: none
+eval_doc_retrieval: true
+eval_doc_matching: false
+eval_sent_retrieval: true
+bench_sent_encoding: false
 
 doc_encoder:
+  model_path: none
   use_gpu: 0
-  max_tokens: 24_000
+  max_sents: 2048
+  max_tokens: 96000
   async_batch_gen: 4
 
 doc_matching:
-  ds_base_dir: /srv/apps/doc-enc-testing/docs
+  ds_base_dir: /srv/apps/doc-enc-work-dir/data/doc
 
 doc_retrieval:
   sim_kind: COS
-  ds_base_dir: /srv/apps/doc-enc-testing/docs
+  ds_base_dir: /srv/apps/doc-enc-work-dir/data/doc
 
 sent_retrieval:
-  ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent
+  ds_base_dir: /srv/apps/doc-enc-work-dir/data/sent
+
+bench:
+  sent_ds_base_dir: >-
+    /srv/apps/doc-enc-work-dir/data/sent
+  doc_ds_base_dir: >-
+    /srv/apps/doc-enc-work-dir/data/doc

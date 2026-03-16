@@ -7,12 +7,26 @@ defaults:
   - _self_
 
 cache_embeddings: true
+model_id: none
+eval_doc_retrieval: true
+eval_doc_matching: false
+eval_sent_retrieval: true
+bench_sent_encoding: false
+
 
 doc_encoder:
-  model_path: /home/dvzubarev/Workspace/projects/semvectors/models/last_model.pt
+  model_path: none
   use_gpu: 0
   max_sents: 2048
+  max_tokens: 48000
   async_batch_gen: 4
+  # overrides:
+  #   doc:
+  #     transformers_kwargs:
+  #       attn_implementation: sdpa
+  #   text_proc:
+  #     auto_tokenizer_max_seq_len: 31000
+
 
 doc_matching:
   ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
@@ -20,10 +34,15 @@ doc_matching:
 doc_retrieval:
   sim_kind: COS
   ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
+  # query_instruction: |-
+  #   Instruct: Given a web search query, retrieve relevant passages that answer the query
+  #   Query:
+
 
 sent_retrieval:
   ds_base_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent
-
+  # query_instruction: |+
+  #   Retrieve parallel sentences.
 bench:
   sent_ds_base_dir: >-
     /home/dvzubarev/Workspace/projects/semvectors/datasets-data/sent

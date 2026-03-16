@@ -4,12 +4,9 @@ sim_kind: COS
 ds_base_dir: /train/data/sents
 topk:
   - 1
-  - 5
   - 20
-  - 100
 thresholds:
   - 0.0
-  - 0.4
 
 datasets:
   - name: paral-test
@@ -27,3 +24,15 @@ datasets:
   - name: essay2-test
     meta: essay2/test.gold
     sents: essay2/test
+  - name: bucc
+    meta: bucc/test.gold
+    sents: bucc/test
+    optional: true
+  - name: NorwegianCourtsBitextMining
+    meta: NorwegianCourtsBitextMining/test.gold
+    sents: NorwegianCourtsBitextMining/test
+    optional: true
+  - name: BornholmBitextMining
+    meta: BornholmBitextMining/test.gold
+    sents: BornholmBitextMining/test
+    optional: true

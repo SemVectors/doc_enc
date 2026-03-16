@@ -30,6 +30,9 @@ class DatasetConf:
     extra_other_dir: Optional[str] = None
     eval_for_len_groups: bool = False
 
+    # If dataset does not exist skip it w/o warning.
+    optional: bool = False
+
 
 @dataclasses.dataclass
 class DocRetrievalConf:
@@ -374,7 +377,8 @@ def _eval_impl(conf: DocRetrievalConf, ds_conf: DatasetConf, doc_encoder: DocEnc
 def _check_ds(conf: DocRetrievalConf, dsconf: DatasetConf):
     base_dir = Path(conf.ds_base_dir)
     if not (base_dir / dsconf.meta).exists():
-        logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.meta)
+        if not dsconf.optional:
+            logging.warning("%s does not exist. Skip this dataset", base_dir / dsconf.meta)
         return False
     return True
 
