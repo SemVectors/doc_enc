@@ -4,3 +4,4 @@ __pycache__/
 /doc_enc.egg-info/
 /.dir-locals.el
 /trans_cache/
+/.dev/

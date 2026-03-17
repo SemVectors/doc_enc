@@ -35,33 +35,47 @@
                                                       doc-enc-pkg = pypkgs.doc_enc;
                                                       version=pypkgs.doc_enc.version;};
 
-      devShells.x86_64-linux = {
-        default = pkgs.mkShell {
-          inputsFrom = [ pypkgs.doc_enc_train ];
-          buildInputs = [
-            pkgs.pyright
-            pkgs.nodePackages.bash-language-server
-            pkgs.shellcheck
-            pkgs.yamllint
-            pkgs.ruff
-            #pypkgs.pylint
-            pypkgs.black
-            # pypkgs.debugpy
-            pypkgs.ipykernel
-          ];
+      devShells.x86_64-linux =
+        let python-dev-hook =
+              ''
+              #execute this hook only for interactive sessions
+              if [ -n "$PS1" ]; then
+                echo "Executing pythonDevHook"
 
-          shellHook=''
+                eval "${pkgs.python3.interpreter} -m pip install -e . --prefix .dev --no-build-isolation >&2"
+                export PYTHONPATH=$(pwd)/.dev/${pkgs.python3.sitePackages}:$PYTHONPATH
+                export PATH=$(pwd)/.dev/bin:$PATH
+                export NIX_PYTHONPATH="$(pwd)/.dev/${pkgs.python3.sitePackages}:$NIX_PYTHONPATH"
+              fi
+              '';
+            common-hook = ''
             #https://github.com/NixOS/nixpkgs/issues/11390
             export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
             '';
+        in {
+          
+          default = pkgs.mkShell {
+            inputsFrom = [ pypkgs.doc_enc_train ];
+            buildInputs = [
+              pkgs.pyright
+              pkgs.nodePackages.bash-language-server
+              pkgs.shellcheck
+              pkgs.yamllint
+              pkgs.ruff
+              #pypkgs.pylint
+              pypkgs.black
+              pypkgs.pip
+              # pypkgs.debugpy
+              pypkgs.ipykernel
+            ];
+
+            shellHook= python-dev-hook + common-hook;
+          };
+          cu11 = pkgs.mkShell {
+            inputsFrom = [ pycu11pkgs.doc_enc ];
+            shellHook= python-dev-hook + common-hook;
+          };
         };
-        cu11 = pkgs.mkShell {
-          inputsFrom = [ pycu11pkgs.doc_enc ];
-          shellHook=''
-            export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/nvidia/current/:$LD_LIBRARY_PATH
-            '';
-        };
-      };
 
     };
 
