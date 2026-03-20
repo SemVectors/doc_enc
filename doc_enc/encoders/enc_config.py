@@ -7,6 +7,7 @@ import dataclasses
 
 from doc_enc.common_types import EncoderKind
 from doc_enc.encoders.base_pooler import BasePoolerConf
+from doc_enc.encoders.enc_in import EncoderInputType
 
 
 class LookAroundMode(Enum):
@@ -23,6 +24,9 @@ class BaseEncoderConf:
     num_layers: int
     pooler: BasePoolerConf
     dropout: float = 0.0
+
+    # If not set will be selected default one that is specific for an encoder.
+    input_type: Optional[EncoderInputType] = None
 
     # lstm opts
     input_size: Optional[int] = None

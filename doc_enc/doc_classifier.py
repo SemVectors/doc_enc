@@ -27,7 +27,7 @@ class DocClassifier:
 
     def clsf_docs_from_path_list(self, path_list: list[str] | list[Path]) -> ClsfResultT:
         results = [[]] * len(path_list)
-        batch_iter = self._enc_module.create_batch_iterator()
+        batch_iter = self._enc_module.create_batch_async_generator()
 
         batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
         try:
@@ -66,7 +66,7 @@ class DocClassifier:
     def clsf_docs_stream(
         self, doc_id_generator, fetcher, batch_size: int = 10
     ) -> collections.abc.Iterable[tuple[list[Any], ClsfResultT]]:
-        batch_iter = self._enc_module.create_batch_iterator()
+        batch_iter = self._enc_module.create_batch_async_generator()
         batch_iter.start_workers_for_stream(
             doc_id_generator, fetcher=fetcher, batch_size=batch_size
         )

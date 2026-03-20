@@ -1125,7 +1125,7 @@ def _train_classif(conf: ClassifFineTuneConf):
     train_iter = ClassifBatchIterator(
         conf.train_meta_path,
         conf.data_dir,
-        model.encoder.create_batch_iterator(eval_mode=False),
+        model.encoder.create_batch_async_generator(eval_mode=False),
         labels_mapping=labels_data.labels_mapping,
         device=model.encoder.device,
     )
@@ -1478,7 +1478,7 @@ def eval_on_dataset(
     test_iter = ClassifBatchIterator(
         meta_path,
         conf.data_dir,
-        model.encoder.create_batch_iterator(eval_mode=True),
+        model.encoder.create_batch_async_generator(eval_mode=True),
         labels_mapping=labels_data.labels_mapping,
         device=device,
     )

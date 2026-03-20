@@ -4,7 +4,20 @@ from typing import Any
 
 import torch
 
-from doc_enc.encoders.split_input import split_input_and_embed
+from doc_enc.encoders.enc_in import EncoderInputType, PaddedTensor, SeqEncoderBatchedInput
+from doc_enc.encoders.pad_utils import PadOpts
+from doc_enc.encoders.split_input import split_padded_input_and_encode
+
+
+def _create_input(data: list[list[int]]):
+    test_tensor = torch.tensor(data)
+    length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
+    input_data = SeqEncoderBatchedInput(EncoderInputType.PADDED)
+    input_data.batch = PaddedTensor(test_tensor, length_tensor)
+    if data:
+        input_data.max_len = int(length_tensor.max())
+        input_data.batch_size = len(data)
+    return input_data
 
 
 class DummyResponse:
@@ -16,11 +29,14 @@ class DummyEncoder:
     def __init__(self) -> None:
         self.enforce_sorted = None
 
-    def __call__(self, sent_tensor, *args: Any, enforce_sorted=None, **kwds: Any) -> Any:
+    def __call__(
+        self, input_data: SeqEncoderBatchedInput, *args: Any, enforce_sorted=None, **kwds: Any
+    ) -> Any:
         self.enforce_sorted = enforce_sorted
-        cnt, max_len = sent_tensor.size()
-        l = [[t[0], cnt, max_len] for t in sent_tensor]
-        embs = torch.tensor(l)
+        padded = input_data.get_padded()
+        cnt, max_len = padded.data.size()
+        lt = [[t[0], cnt, max_len] for t in padded.data]
+        embs = torch.tensor(lt)
         return DummyResponse(embs)
 
 
@@ -32,12 +48,10 @@ def test_split_sents():
         [10, 11, 12, 5, 0, 0],
         [13, 15, 0, 0, 0, 0],
     ]
-    test_tensor = torch.tensor(data)
-    length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
+
     encoder = DummyEncoder()
-    r = split_input_and_embed(
-        encoder, test_tensor, length_tensor, max_chunk_size=5, max_tokens_in_chunk=15
-    )
+    input_data = _create_input(data)
+    r = split_padded_input_and_encode(encoder, input_data, max_chunk_size=5, max_tokens_in_chunk=15)
 
     assert r[0].tolist() == [1, 3, 4]
     assert r[1].tolist() == [4, 2, 6]
@@ -46,9 +60,7 @@ def test_split_sents():
     assert r[4].tolist() == [13, 3, 4]
     assert encoder.enforce_sorted is True
 
-    r = split_input_and_embed(
-        encoder, test_tensor, length_tensor, max_chunk_size=2, max_tokens_in_chunk=85
-    )
+    r = split_padded_input_and_encode(encoder, input_data, max_chunk_size=2, max_tokens_in_chunk=85)
 
     assert r[0].tolist() == [1, 2, 4]
     assert r[1].tolist() == [4, 2, 6]
@@ -61,12 +73,9 @@ def test_split_sents():
 
 def test_empty_tensor():
     data = []
-    test_tensor = torch.tensor(data)
-    length_tensor = torch.tensor([])
+    input_data = _create_input(data)
     encoder = DummyEncoder()
-    r = split_input_and_embed(
-        encoder, test_tensor, length_tensor, max_chunk_size=5, max_tokens_in_chunk=15
-    )
+    r = split_padded_input_and_encode(encoder, input_data, max_chunk_size=5, max_tokens_in_chunk=15)
     assert r.numel() == 0
 
 
@@ -75,12 +84,9 @@ def test_fast_path():
         [1, 2, 3, 0, 0],
         [4, 5, 1, 6, 2],
     ]
-    test_tensor = torch.tensor(data)
-    length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
+    input_data = _create_input(data)
     encoder = DummyEncoder()
-    r = split_input_and_embed(
-        encoder, test_tensor, length_tensor, max_chunk_size=5, max_tokens_in_chunk=15
-    )
+    r = split_padded_input_and_encode(encoder, input_data, max_chunk_size=5, max_tokens_in_chunk=15)
     assert r[0].tolist() == [1, 2, 5]
     assert r[1].tolist() == [4, 2, 5]
 
@@ -93,13 +99,11 @@ def test_already_sorted():
         [7, 8, 1, 6, 2],
         [1, 2, 3, 0, 0],
     ]
-    test_tensor = torch.tensor(data)
-    length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
+    input_data = _create_input(data)
     encoder = DummyEncoder()
-    r = split_input_and_embed(
+    r = split_padded_input_and_encode(
         encoder,
-        test_tensor,
-        length_tensor,
+        input_data,
         max_chunk_size=2,
         max_tokens_in_chunk=15,
         already_sorted=True,
@@ -117,16 +121,14 @@ def test_with_padding():
         [7, 8, 1, 6, 2, 0, 0, 0],
         [1, 2, 0, 0, 0, 0, 0, 0],
     ]
-    test_tensor = torch.tensor(data)
-    length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
+    input_data = _create_input(data)
     encoder = DummyEncoder()
-    r = split_input_and_embed(
+    r = split_padded_input_and_encode(
         encoder,
-        test_tensor,
-        length_tensor,
+        input_data,
         max_chunk_size=1,
         max_tokens_in_chunk=15,
-        pad_to_multiple_of=4,
+        pad_opts=PadOpts(pad_to_multiple_of=4),
     )
     assert r[0].tolist() == [4, 1, 8]
     assert r[1].tolist() == [7, 1, 8]

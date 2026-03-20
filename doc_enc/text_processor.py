@@ -72,9 +72,14 @@ class TextProcessor:
                 if not self._filter_sent(tokens, sent):
                     if self._conf.max_sent_len:
                         tokens = tokens[: self._conf.max_sent_len]
+                    if (
+                        truncate_length_in_tokens
+                        and cur_len_in_tokens + len(tokens) > truncate_length_in_tokens
+                    ):
+                        tokens = tokens[: truncate_length_in_tokens - cur_len_in_tokens]
                     segmented_text.append(tokens)
                     cur_len_in_tokens += len(tokens)
-                    if truncate_length_in_tokens and cur_len_in_tokens > truncate_length_in_tokens:
+                    if cur_len_in_tokens == truncate_length_in_tokens:
                         break
 
             if self._conf.split_into_fragments:
@@ -96,9 +101,14 @@ class TextProcessor:
             for frag_len in fragment_lengths:
                 tokens = self._tokenizer('\n'.join(text_sents[offset : offset + frag_len]))
                 offset += frag_len
+                if (
+                    truncate_length_in_tokens
+                    and cur_len_in_tokens + len(tokens) > truncate_length_in_tokens
+                ):
+                    tokens = tokens[: truncate_length_in_tokens - cur_len_in_tokens]
                 segmented_text.append(tokens)
                 cur_len_in_tokens += len(tokens)
-                if truncate_length_in_tokens and cur_len_in_tokens > truncate_length_in_tokens:
+                if cur_len_in_tokens == truncate_length_in_tokens:
                     break
 
             # save number of fragments for this doc

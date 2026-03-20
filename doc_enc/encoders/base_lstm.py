@@ -6,9 +6,10 @@ import torch
 from torch import nn
 
 from doc_enc.common_types import EncoderKind, PoolingStrategy
+from doc_enc.encoders.enc_out import BaseEncoderOut
+from doc_enc.encoders.enc_in import EncoderInputType, SeqEncoderBatchedInput
 from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_config import BaseEncoderConf
-from doc_enc.encoders.enc_out import BaseEncoderOut
 from doc_enc.encoders.base_pooler import BasePoolerConf, BasePooler
 
 
@@ -39,6 +40,9 @@ class BaseRNNEncoder(BaseEncoder):
         super().__init__()
 
         self.conf = conf
+        if conf.input_type is not None and conf.input_type != EncoderInputType.PACKED:
+            raise RuntimeError(f"Unsupported input type: {self.conf.input_type}")
+
         proj_size = 0
         if conf.proj_size is not None:
             proj_size = conf.proj_size
@@ -75,24 +79,26 @@ class BaseRNNEncoder(BaseEncoder):
         if self.conf.pooler.out_size is not None:
             self.output_units = self.conf.pooler.out_size
 
+    def input_type(self) -> EncoderInputType:
+        return EncoderInputType.PACKED
+
     def out_embs_dim(self):
         return self.output_units
 
-    def forward(
-        self, input_embs: torch.Tensor, lengths: torch.Tensor, enforce_sorted=True, **kwargs
-    ) -> BaseEncoderOut:
-        if input_embs is None:
+    def forward(self, input_batch: SeqEncoderBatchedInput, **kwargs) -> BaseEncoderOut:
+        if not input_batch.embedded:
             raise RuntimeError("Only embs as input are supported")
 
-        bsz, seqlen = input_embs.size()[:2]
-        # BS x SeqLen x Dim -> SeqLen x BS x DIM
-        x = input_embs.transpose(0, 1)
+        # bsz, seqlen = input_embs.size()[:2]
+        # # BS x SeqLen x Dim -> SeqLen x BS x DIM
+        # x = input_embs.transpose(0, 1)
 
-        # pack embedded source tokens into a PackedSequence
-        packed_x = nn.utils.rnn.pack_padded_sequence(
-            x, lengths.cpu(), enforce_sorted=enforce_sorted
-        )
+        # # pack embedded source tokens into a PackedSequence
+        # packed_x = nn.utils.rnn.pack_padded_sequence(
+        #     x, lengths.cpu(), enforce_sorted=enforce_sorted
+        # )
 
+        packed_x = input_batch.get_packed_seq()
         packed_outs, _ = self.rnn(packed_x)
 
         # unpack outputs and apply dropout
@@ -100,7 +106,8 @@ class BaseRNNEncoder(BaseEncoder):
         if self.conf.pooler.pooling_strategy == PoolingStrategy.MAX:
             pad_value = float('-inf')
         x, out_lengths = nn.utils.rnn.pad_packed_sequence(packed_outs, padding_value=pad_value)
-        expected_shape = [seqlen, bsz, self.rnn_output_units]
+        ml, bsz = input_batch.max_len, input_batch.batch_size
+        expected_shape = [ml, bsz, self.rnn_output_units]
         assert list(x.size()) == expected_shape, f"Got {x.size()}, but expected: {expected_shape}"
 
         sentemb = self.pooler(x, out_lengths)

@@ -2,6 +2,7 @@
 
 import dataclasses
 import logging
+import multiprocessing
 from typing import Optional, List
 from pathlib import Path
 
@@ -138,6 +139,8 @@ def _eval_and_bench(conf: Config, doc_encoder: DocEncoder, **extra):
 
 @hydra.main(config_path=None, config_name="config", version_base=None)
 def eval_cli(conf: Config) -> None:
+    # global_init()
+
     if conf.cache_embeddings:
         if conf.model_id is None:
             raise RuntimeError("You need to specify model id if you use caching doc encoder")
@@ -148,6 +151,7 @@ def eval_cli(conf: Config) -> None:
     if not conf.eval_checkpoints:
         return _eval_and_bench(conf, doc_encoder)
 
+    logging.error('eval gest satat mp %s', multiprocessing.get_start_method())
     base_dir = Path(conf.doc_encoder.model_path).parent
     for p in conf.eval_checkpoints:
         checkpoints = base_dir.glob(p)
@@ -162,5 +166,4 @@ def eval_cli(conf: Config) -> None:
 
 
 if __name__ == "__main__":
-    global_init()
     eval_cli()

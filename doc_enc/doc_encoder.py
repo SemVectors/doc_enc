@@ -5,10 +5,9 @@ import logging
 import itertools
 import math
 import copy
-from typing import Dict, Optional, Any
+from typing import Callable, Dict, Generator, Optional, Any, Sequence
 import dataclasses
 from pathlib import Path
-import threading
 import multiprocessing
 import collections.abc
 
@@ -18,6 +17,14 @@ from torch.amp.autocast_mode import autocast
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
+from doc_enc.encoders.enc_in import (
+    EncoderInputType,
+    EncoderInData,
+    SeqEncoderBatchedInput,
+    TextsRepr,
+)
+from doc_enc.inter_proc_utils import deserialize_enc_in_data, serialize_enc_in_data
+from doc_enc.shared_tensors import EncInputSharedTensors
 from doc_enc.utils import file_line_cnt
 from doc_enc.embs.emb_factory import create_emb_layer
 from doc_enc.embs.token_embed import TokenEmbedding
@@ -31,8 +38,8 @@ from doc_enc.encoders.enc_factory import (
 )
 
 from doc_enc.encoders.enc_config import SeqEncoderConf
-from doc_enc.encoders.pad_utils import create_padded_tensor
-from doc_enc.encoders.split_input import split_input_and_embed
+from doc_enc.encoders.pad_utils import PadOpts
+from doc_enc.encoders.split_input import split_padded_input_and_encode
 from doc_enc.encoders.sent_for_doc_encoder import SentForDocEncoder
 from doc_enc.encoders.seq_encoder import SeqEncoder
 from doc_enc.training.models.model_conf import DocModelConf
@@ -50,6 +57,8 @@ class EncOverride:
     transformers_torch_fp16: Optional[bool] = None
     transformers_kwargs: Optional[Dict[str, Any]] = None
 
+    input_type: Optional[EncoderInputType] = None
+
 
 @dataclasses.dataclass
 class ConfOverrides:
@@ -64,6 +73,7 @@ class DocEncoderConf:
     model_path: str
     use_gpu: Optional[int] = None
 
+    # number of processes for async generation of batches
     async_batch_gen: int = 2
 
     max_sents: int = 2048
@@ -72,7 +82,7 @@ class DocEncoderConf:
     bucket_multiplier: int = 2
 
     # truncate docs that are excessively long
-    truncate_long_docs: bool = False
+    # truncate_long_docs: bool = False
 
     # perform l2 normalization on encoded vectors.
     normalize_vecs: bool = False
@@ -86,35 +96,72 @@ class DocEncoderConf:
 
 
 # ** sents batch generators
+
+SentsGenFuncT = Callable[[], Generator[tuple[str | int, str | list[str]], None, None]]
+TextGenFuncT = SentsGenFuncT
+
+
 class BaseSentsBatchGenerator:
     def __init__(
-        self, tp_conf: TextProcessorConf, conf: DocEncoderConf, tp_state_dict, eval_mode=True
+        self,
+        enc_input_type: EncoderInputType,
+        conf: DocEncoderConf,
+        tp_conf: TextProcessorConf,
+        tp_state_dict,
+        pad_opts: PadOpts = PadOpts(),
+        eval_mode=True,
     ) -> None:
+        self._enc_input_type = enc_input_type
         self._conf = conf
         self._tp = TextProcessor(tp_conf, inference_mode=eval_mode)
         self._tp.load_state_dict(tp_state_dict)
+        self._pad_opts = pad_opts
 
-    def batches(self, generator_func):
-        sents = []
-        cur_token_cnt = 0
-        batch_sent_ids = []
+    # TODO move
+    # def _prepare_batch(self, sents: list[list[int]]):
+    #     if self._enc_input_type == EncoderInputType.PADDED:
+    #         raise NotImplementedError(f"{self._enc_input_type} not implemented")
+    #     if self._enc_input_type == EncoderInputType.PACKED:
+    #         tensor_list = [torch.tensor(s, dtype=torch.int32) for s in sents]
+    #         return torch.nn.utils.rnn.pack_sequence(tensor_list, enforce_sorted=False)
 
-        m = self._conf.bucket_multiplier
+    #     raise RuntimeError(f"Unsupported enc input type: {self._enc_input_type}")
+
+    def _create_in_data(self, sents: list[list[int]], sent_ids: list[str | int]):
+        return EncoderInData(
+            SeqEncoderBatchedInput.from_input_ids(
+                self._enc_input_type, sents, self._tp.vocab().pad_idx(), self._pad_opts
+            ),
+            sent_ids,
+            texts_repr=TextsRepr(sents, []),
+        )
+
+    def batches(self, generator_func: SentsGenFuncT) -> Generator[EncoderInData, None, None]:
+        sents: list[list[int]] = []
+        cur_token_cnt: int = 0
+        batch_sent_ids: list[str | int] = []
+
+        # TODO collect more data sort them by length?
+        # Only do it for PADDed and Packed?
+        # m = self._conf.bucket_multiplier
+        m = 1
+        # logging.error('start batches in generator %s')
 
         for sent_id, sent_str in generator_func():
             tokens = self._tp.prepare_sent(sent_str)
+            # TODO what to do with empty sequences?
             if not tokens:
                 tokens = [self._tp.vocab().pad_idx()]
 
             if sents and (
-                self._tp.conf().split_into_sents
-                and (self._conf.max_sents and len(sents) + 1 > m * self._conf.max_sents)
-                or (
-                    self._conf.max_tokens
-                    and cur_token_cnt + len(tokens) > m * self._conf.max_tokens
-                )
+                # TODO rename to max_seqs
+                len(sents) + 1 > m * self._conf.max_sents
+                or cur_token_cnt + len(tokens) > m * self._conf.max_tokens
             ):
-                yield sents, batch_sent_ids
+
+                # logging.error('yielding some on  %s', cur_token_cnt)
+
+                yield self._create_in_data(sents, batch_sent_ids)
                 sents = []
                 batch_sent_ids = []
                 cur_token_cnt = 0
@@ -123,16 +170,29 @@ class BaseSentsBatchGenerator:
             batch_sent_ids.append(sent_id)
             cur_token_cnt += len(tokens)
         if sents:
-            yield sents, batch_sent_ids
+            # logging.error('yielding last on  %s', cur_token_cnt)
+
+            yield self._create_in_data(sents, batch_sent_ids)
 
 
 def _proc_wrapper_for_sents_generator(
-    queue: multiprocessing.Queue, generator_func, *args, **kwargs
+    queue: multiprocessing.Queue,
+    generator_func: SentsGenFuncT,
+    shared_tensors_holder: EncInputSharedTensors,
+    *args,
+    **kwargs,
 ):
+    torch.set_num_threads(1)
     try:
-        generator = BaseSentsBatchGenerator(*args, **kwargs)
-        for sents, sent_ids in generator.batches(generator_func):
-            queue.put((sents, sent_ids))
+        generator = BaseSentsBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
+        for b in generator.batches(generator_func):
+            # logging.error('proc receive from %s')
+
+            d = serialize_enc_in_data(b, shared_tensors_holder)
+            # logging.error('serialized data-1 %s, text ids %s', d[:-1], len(b.text_ids))
+            queue.put(d)
+            # slot_num, shapes = shared_tensors_holder.put_tensors(b)
+            # queue.put((slot_num, shapes, b.text_ids))
     except Exception as e:
         print(type(e), str(e))
         logging.exception("Failed to process batches: %s", e)
@@ -140,17 +200,35 @@ def _proc_wrapper_for_sents_generator(
     queue.put(None)
 
 
-class SentsBatchIterator:
+class SentsBatchAsyncGenerator:
+    """The same as BaseSentsBatchGenerator, but uses background workers for
+    producing batches.
+    """
+
     def __init__(
         self,
-        generator_args=(),
+        enc_input_type: EncoderInputType,
+        conf: DocEncoderConf,
+        other_generator_args=(),
         async_generators=1,
+        shared_tens_slots_cnt: int | None = None,
     ):
-        self._generator_args = generator_args
+        self._generator_args = (conf,) + other_generator_args
         self._async_generators = async_generators
 
         self._processes = []
-        self._out_queue = multiprocessing.Queue(4 * async_generators)
+        self._out_queue = multiprocessing.Queue(async_generators)
+
+        if shared_tens_slots_cnt is None:
+            # It increases consumption of shared memory, but more batches might be queued.
+            slots_multiplier = 3
+            shared_tens_slots_cnt = slots_multiplier * conf.async_batch_gen
+        self._shared_tensors_holder = EncInputSharedTensors(
+            enc_input_type,
+            conf.max_tokens,
+            conf.max_sents,
+            shared_tens_slots_cnt,
+        )
 
     def destroy(self):
         self._terminate_workers()
@@ -162,7 +240,8 @@ class SentsBatchIterator:
             p.join()
         self._processes = []
 
-    def start_workers(self, generator_funcs):
+    def start_workers(self, generator_funcs: Sequence[SentsGenFuncT]):
+        # logging.error("mp get start method %s", multiprocessing.get_start_method())
         if len(generator_funcs) > self._async_generators:
             raise RuntimeError(
                 "Passed generators number is greater than configured async generators"
@@ -172,10 +251,8 @@ class SentsBatchIterator:
         for i in range(proc_cnt):
             p = multiprocessing.Process(
                 target=_proc_wrapper_for_sents_generator,
-                args=(
-                    self._out_queue,
-                    generator_funcs[i],
-                )
+                # TODO it is strange that you pass all inited tensort to other proc (pickle and so on)
+                args=(self._out_queue, generator_funcs[i], self._shared_tensors_holder)
                 + self._generator_args,
                 kwargs={},
             )
@@ -183,7 +260,7 @@ class SentsBatchIterator:
 
             self._processes.append(p)
 
-    def batches(self):
+    def batches(self) -> Generator[EncoderInData, None, None]:
         if not self._processes:
             raise RuntimeError("Batch Iterator is not initialized!")
 
@@ -191,124 +268,209 @@ class SentsBatchIterator:
         proc_cnt = len(self._processes)
         while finished_processes < proc_cnt:
             logging.debug("sents queue len: %s", self._out_queue.qsize())
-            batch = self._out_queue.get()
+            batch: tuple | None = self._out_queue.get()
             if batch is None:
                 finished_processes += 1
                 continue
-            yield batch
+            with deserialize_enc_in_data(batch, self._shared_tensors_holder) as b:
+                # logging.error(
+                #     "Batch deserialized %s, max len %s",
+                #     b.seq_encoder_input.batch_size,
+                #     b.seq_encoder_input.max_len,
+                # )
+                yield b
+            # slot_num, shapes, sent_ids = batch
+            # eid = EncoderInData(seq_encoder_input=None, text_ids=sent_ids)
+            # yield self._shared_tensors_holder.recreate_batch(slot_num, shapes)
 
         for p in self._processes:
             p.join()
         self._processes = []
 
 
-# ** docs batch generators
+# ** Docs batch generators
+
+
 class BaseBatchGenerator:
     def __init__(
-        self, tp_conf: TextProcessorConf, conf: DocEncoderConf, tp_state_dict, eval_mode=True
+        self,
+        enc_input_type: EncoderInputType,
+        conf: DocEncoderConf,
+        tp_conf: TextProcessorConf,
+        tp_state_dict,
+        pad_opts: PadOpts = PadOpts(),
+        eval_mode=True,
     ) -> None:
+        self._enc_input_type = enc_input_type
         self._conf = conf
         self._tp = TextProcessor(tp_conf, inference_mode=eval_mode)
         self._tp.load_state_dict(tp_state_dict)
+        self._pad_opts = pad_opts
 
-    def batches(self, items: list[Any], fetcher):
-        docs = []
-        doc_lengths = []
+    def _create_in_data(
+        self,
+        segmented_texts: list[list[int]],
+        text_lengths: list[list[int]],
+        text_ids: list[str | int],
+    ):
+        # TODO create textRepr
+        return EncoderInData(
+            SeqEncoderBatchedInput.from_input_ids(
+                self._enc_input_type, segmented_texts, self._tp.vocab().pad_idx(), self._pad_opts
+            ),
+            text_ids,
+            TextsRepr(segmented_texts, text_lengths),
+        )
+
+    def batches(self, generator_func: TextGenFuncT):
+        docs: list[list[int]] = []
+        doc_lengths: list[list[int]] = []
         cur_token_cnt = 0
         cur_segments_cnt = 0
-        batch_idx_list = []
-        m = self._conf.bucket_multiplier
-        truncate_length = m * self._conf.max_tokens if self._conf.truncate_long_docs else 0
-        for idx, doc in fetcher(items):
-            if isinstance(doc, str):
-                doc = doc.split('\n')
+        text_ids_list = []
+        # TODO
+        # m = self._conf.bucket_multiplier
+        m = 1
+        truncate_length = m * self._conf.max_tokens
+        for text_id, text in generator_func():
+            if isinstance(text, str):
+                text = text.split('\n')
 
             segmented_text, doc_segments_length = self._tp.prepare_text(
-                doc, truncate_length_in_tokens=truncate_length
+                text, truncate_length_in_tokens=truncate_length
             )
             token_cnt = sum(len(s) for s in segmented_text)
+            if token_cnt == truncate_length:
+                logging.warning(
+                    "text_truncated; text_id=%s, nsegments=%s, ntokens=%s",
+                    text_id,
+                    len(segmented_text),
+                    token_cnt,
+                )
             if not token_cnt:
                 segmented_text = [[self._tp.vocab().pad_idx()]]
                 doc_segments_length = [1]
                 token_cnt = 1
 
             if docs and (
-                (
-                    self._conf.max_sents
-                    and cur_segments_cnt + len(segmented_text) > m * self._conf.max_sents
-                )
-                or (self._conf.max_tokens and cur_token_cnt + token_cnt > m * self._conf.max_tokens)
+                cur_segments_cnt + len(segmented_text) > m * self._conf.max_sents
+                or cur_token_cnt + token_cnt > m * self._conf.max_tokens
             ):
-                yield docs, doc_lengths, batch_idx_list
+                yield self._create_in_data(docs, doc_lengths, text_ids_list)
+                # yield docs, doc_lengths, batch_idx_list
                 docs = []
                 doc_lengths = []
-                batch_idx_list = []
+                text_ids_list = []
                 cur_segments_cnt = 0
                 cur_token_cnt = 0
 
-            docs.append(segmented_text)
+            docs.extend(segmented_text)
             doc_lengths.append(doc_segments_length)
-            batch_idx_list.append(idx)
+            text_ids_list.append(text_id)
             cur_segments_cnt += len(segmented_text)
             cur_token_cnt += token_cnt
         if docs:
-            yield docs, doc_lengths, batch_idx_list
+            yield self._create_in_data(docs, doc_lengths, text_ids_list)
+            # yield docs, doc_lengths, text_ids_list
 
 
-def _proc_wrapper_for_item_list(
-    queue: multiprocessing.Queue, items: list[Any], fetcher, offset, *args, **kwargs
+# def _proc_wrapper_for_item_list(
+#     queue: multiprocessing.Queue, items: list[Any], fetcher, offset, *args, **kwargs
+# ):
+#     try:
+#         generator = BaseBatchGenerator(*args, **kwargs)
+#         for docs, doc_lengths, batch_idx_list in generator.batches(items, fetcher):
+#             batch_idx_list = [offset + i for i in batch_idx_list]
+#             queue.put((docs, doc_lengths, batch_idx_list))
+#     except Exception as e:
+#         # print(type(e), str(e))
+#         logging.exception("Failed to process batches: %s", e)
+
+#     queue.put(None)
+
+
+# def _proc_wrapper_for_item_generator(
+#     in_queue: multiprocessing.Queue, out_queue: multiprocessing.Queue, fetcher, *args, **kwargs
+# ):
+#     try:
+#         generator = BaseBatchGenerator(*args, **kwargs)
+
+#         while True:
+#             items = in_queue.get()
+#             if items is None:
+#                 break
+#             for docs, doc_lengths, batch_idx_list in generator.batches(items, fetcher):
+#                 batch_items = [items[i] for i in batch_idx_list]
+#                 out_queue.put((docs, doc_lengths, batch_items))
+#     except Exception as e:
+#         # print(type(e), str(e))
+#         logging.exception("Failed to process batches: %s", e)
+
+#     out_queue.put(None)
+
+
+def _proc_wrapper_for_texts_generator(
+    queue: multiprocessing.Queue,
+    generator_func: SentsGenFuncT,
+    shared_tensors_holder: EncInputSharedTensors,
+    *args,
+    **kwargs,
 ):
+    torch.set_num_threads(1)
     try:
-        generator = BaseBatchGenerator(*args, **kwargs)
-        for docs, doc_lengths, batch_idx_list in generator.batches(items, fetcher):
-            batch_idx_list = [offset + i for i in batch_idx_list]
-            queue.put((docs, doc_lengths, batch_idx_list))
+        generator = BaseBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
+        for b in generator.batches(generator_func):
+            # logging.error('proc receive from %s')
+
+            d = serialize_enc_in_data(b, shared_tensors_holder)
+            # logging.error('serialized data-1 %s, text ids %s', d[:-1], len(b.text_ids))
+            queue.put(d)
+            # slot_num, shapes = shared_tensors_holder.put_tensors(b)
+            # queue.put((slot_num, shapes, b.text_ids))
     except Exception as e:
-        # print(type(e), str(e))
+        print(type(e), str(e))
         logging.exception("Failed to process batches: %s", e)
 
     queue.put(None)
 
 
-def _proc_wrapper_for_item_generator(
-    in_queue: multiprocessing.Queue, out_queue: multiprocessing.Queue, fetcher, *args, **kwargs
-):
-    try:
-        generator = BaseBatchGenerator(*args, **kwargs)
+class BatchAsyncGenerator:
+    """The same as BaseBatchGenerator, but uses background workers for
+    producing batches.
+    """
 
-        while True:
-            items = in_queue.get()
-            if items is None:
-                break
-            for docs, doc_lengths, batch_idx_list in generator.batches(items, fetcher):
-                batch_items = [items[i] for i in batch_idx_list]
-                out_queue.put((docs, doc_lengths, batch_items))
-    except Exception as e:
-        # print(type(e), str(e))
-        logging.exception("Failed to process batches: %s", e)
-
-    out_queue.put(None)
-
-
-class BatchIterator:
     def __init__(
         self,
-        generator_args=(),
+        enc_input_type: EncoderInputType,
+        conf: DocEncoderConf,
+        other_generator_args=(),
         async_generators=1,
+        shared_tens_slots_cnt: int | None = None,
     ):
-        self._generator_args = generator_args
+        self._generator_args = (conf,) + other_generator_args
         self._async_generators = async_generators
 
         self._processes = []
         self._out_queue = multiprocessing.Queue(4 * async_generators)
 
+        if shared_tens_slots_cnt is None:
+            # It increases consumption of shared memory, but more batches might be queued.
+            slots_multiplier = 3
+            shared_tens_slots_cnt = slots_multiplier * conf.async_batch_gen
+        self._shared_tensors_holder = EncInputSharedTensors(
+            enc_input_type,
+            conf.max_tokens,
+            conf.max_sents,
+            shared_tens_slots_cnt,
+        )
+
         # input stream support
-        self._in_queue = multiprocessing.Queue(10 * async_generators)
-        self._generator_thread = None
+        # self._in_queue = multiprocessing.Queue(10 * async_generators)
+        # self._generator_thread = None
 
     def destroy(self):
         self._terminate_workers()
-        self._in_queue.close()
+        # self._in_queue.close()
         self._out_queue.close()
 
     def _terminate_workers(self):
@@ -317,59 +479,78 @@ class BatchIterator:
             p.join()
         self._processes = []
 
-    def start_workers_for_item_list(self, items: list[Any], fetcher):
-        per_worker_items = math.ceil(len(items) / self._async_generators)
-        for offs in range(0, len(items), per_worker_items):
+    # def start_workers_for_item_list(self, items: list[Any], fetcher):
+    #     per_worker_items = math.ceil(len(items) / self._async_generators)
+    #     for offs in range(0, len(items), per_worker_items):
+    #         p = multiprocessing.Process(
+    #             target=_proc_wrapper_for_item_list,
+    #             args=(
+    #                 self._out_queue,
+    #                 items[offs : offs + per_worker_items],
+    #                 fetcher,
+    #                 offs,
+    #             )
+    #             + self._generator_args,
+    #             kwargs={},
+    #         )
+    #         p.start()
+
+    #         self._processes.append(p)
+
+    # def _input_generator_thread(self, items_generator, batch_size):
+    #     try:
+    #         items_batch = []
+    #         for item in items_generator:
+    #             items_batch.append(item)
+    #             if len(items_batch) >= batch_size:
+    #                 self._in_queue.put(items_batch)
+    #                 items_batch = []
+
+    #         if items_batch:
+    #             self._in_queue.put(items_batch)
+    #     finally:
+    #         for _ in self._processes:
+    #             self._in_queue.put(None)
+
+    # def start_workers_for_stream(self, items_generator, fetcher, batch_size=10):
+    #     for _ in range(self._async_generators):
+    #         p = multiprocessing.Process(
+    #             target=_proc_wrapper_for_item_generator,
+    #             args=(
+    #                 self._in_queue,
+    #                 self._out_queue,
+    #                 fetcher,
+    #             )
+    #             + self._generator_args,
+    #             kwargs={},
+    #         )
+    #         p.start()
+
+    #         self._processes.append(p)
+
+    #     self._generator_thread = threading.Thread(
+    #         target=self._input_generator_thread, args=(items_generator, batch_size)
+    #     )
+    #     self._generator_thread.start()
+
+    def start_workers(self, generator_funcs: list[SentsGenFuncT]):
+        # logging.error("mp get start method %s", multiprocessing.get_start_method())
+        if len(generator_funcs) > self._async_generators:
+            raise RuntimeError(
+                "Passed generators number is greater than configured async generators"
+            )
+
+        proc_cnt = min(len(generator_funcs), self._async_generators)
+        for i in range(proc_cnt):
             p = multiprocessing.Process(
-                target=_proc_wrapper_for_item_list,
-                args=(
-                    self._out_queue,
-                    items[offs : offs + per_worker_items],
-                    fetcher,
-                    offs,
-                )
+                target=_proc_wrapper_for_texts_generator,
+                args=(self._out_queue, generator_funcs[i], self._shared_tensors_holder)
                 + self._generator_args,
                 kwargs={},
             )
             p.start()
 
             self._processes.append(p)
-
-    def _input_generator_thread(self, items_generator, batch_size):
-        try:
-            items_batch = []
-            for item in items_generator:
-                items_batch.append(item)
-                if len(items_batch) >= batch_size:
-                    self._in_queue.put(items_batch)
-                    items_batch = []
-
-            if items_batch:
-                self._in_queue.put(items_batch)
-        finally:
-            for _ in self._processes:
-                self._in_queue.put(None)
-
-    def start_workers_for_stream(self, items_generator, fetcher, batch_size=10):
-        for _ in range(self._async_generators):
-            p = multiprocessing.Process(
-                target=_proc_wrapper_for_item_generator,
-                args=(
-                    self._in_queue,
-                    self._out_queue,
-                    fetcher,
-                )
-                + self._generator_args,
-                kwargs={},
-            )
-            p.start()
-
-            self._processes.append(p)
-
-        self._generator_thread = threading.Thread(
-            target=self._input_generator_thread, args=(items_generator, batch_size)
-        )
-        self._generator_thread.start()
 
     def _print_debug_info_for_batch(self, batch):
         if not logging.getLogger().isEnabledFor(logging.DEBUG):
@@ -386,118 +567,158 @@ class BatchIterator:
             sent_max_len,
         )
 
-    def batches(self):
+    def batches(self) -> Generator[EncoderInData, None, None]:
         if not self._processes:
             raise RuntimeError("Batch Iterator is not initialized!")
 
         finished_processes = 0
-        while finished_processes < len(self._processes):
+        proc_cnt = len(self._processes)
+        while finished_processes < proc_cnt:
             logging.debug("queue len: %s", self._out_queue.qsize())
             batch = self._out_queue.get()
             if batch is None:
                 finished_processes += 1
                 continue
-            self._print_debug_info_for_batch(batch)
-            yield batch
+            # TODO
+            # self._print_debug_info_for_batch(batch)
+            with deserialize_enc_in_data(batch, self._shared_tensors_holder) as b:
+                yield b
 
         for p in self._processes:
             p.join()
         self._processes = []
 
-        if self._generator_thread is not None:
-            self._in_queue.close()
-            self._generator_thread.join()
+        # if self._generator_thread is not None:
+        #     self._in_queue.close()
+        #     self._generator_thread.join()
 
 
 # * Input helpers
 
 
-class _InputData:
-    def __init__(
-        self,
-        lengths_tensor: torch.Tensor,
-        tokens_tensor: torch.Tensor | None = None,
-        emb_tensor: torch.Tensor | None = None,
-        already_sorted: bool = False,
-    ) -> None:
-        self._lengths_tensor = lengths_tensor
-        self._tokens_tensor = tokens_tensor
-        self._emb_tensor = emb_tensor
-        self._already_sorted = already_sorted
+# class _InputData:
+#     def __init__(
+#         self,
+#         lengths_tensor: torch.Tensor,
+#         tokens_tensor: torch.Tensor | None = None,
+#         emb_tensor: torch.Tensor | None = None,
+#         already_sorted: bool = False,
+#     ) -> None:
+#         self._lengths_tensor = lengths_tensor
+#         self._tokens_tensor = tokens_tensor
+#         self._emb_tensor = emb_tensor
+#         self._already_sorted = already_sorted
 
-    def input_tensor(self):
-        if self._tokens_tensor is not None:
-            return self._tokens_tensor
-        if self._emb_tensor is not None:
-            return self._emb_tensor
-        raise RuntimeError("Logic error 1939")
+#     def input_tensor(self):
+#         if self._tokens_tensor is not None:
+#             return self._tokens_tensor
+#         if self._emb_tensor is not None:
+#             return self._emb_tensor
+#         raise RuntimeError("Logic error 1939")
 
-    def lengths(self):
-        return self._lengths_tensor
+#     def lengths(self):
+#         return self._lengths_tensor
 
-    def _update_kwargs(self, kwargs):
-        if 'enforce_sorted' not in kwargs:
-            kwargs['enforce_sorted'] = self._already_sorted
+#     def _update_kwargs(self, kwargs):
+#         if 'enforce_sorted' not in kwargs:
+#             kwargs['enforce_sorted'] = self._already_sorted
 
-    def input_sorted(self):
-        return self._already_sorted
+#     def input_sorted(self):
+#         return self._already_sorted
 
-    def as_kwargs(self):
-        if self._tokens_tensor is not None:
-            kwargs = {
-                'input_token_ids': self._tokens_tensor,
-                'input_seq_lengths': self._lengths_tensor,
-            }
+#     def as_kwargs(self):
+#         if self._tokens_tensor is not None:
+#             kwargs = {
+#                 'input_token_ids': self._tokens_tensor,
+#                 'input_seq_lengths': self._lengths_tensor,
+#             }
 
-        elif self._emb_tensor is not None:
-            kwargs = {
-                'input_embs': self._emb_tensor,
-                'input_seq_lengths': self._lengths_tensor,
-                'padded_seq_len': self._emb_tensor.shape[1],
-            }
-        else:
-            raise RuntimeError("Logic error 1940")
-        self._update_kwargs(kwargs)
-        return kwargs
+#         elif self._emb_tensor is not None:
+#             kwargs = {
+#                 'input_embs': self._emb_tensor,
+#                 'input_seq_lengths': self._lengths_tensor,
+#                 'padded_seq_len': self._emb_tensor.shape[1],
+#             }
+#         else:
+#             raise RuntimeError("Logic error 1940")
+#         self._update_kwargs(kwargs)
+#         return kwargs
 
-    def create_callback_for_split_input(
-        self, encoder: SeqEncoder, embed: TokenEmbedding | None = None
-    ):
-        if self._tokens_tensor is not None:
+#     def create_callback_for_split_input(
+#         self, encoder: SeqEncoder, embed: TokenEmbedding | None = None
+#     ):
+#         if self._tokens_tensor is not None:
 
-            def _enc_cb(chunk, chunk_lengths, **kwargs):
-                self._update_kwargs(kwargs)
-                if embed is not None:
-                    embs = embed(chunk)
-                    return encoder(
-                        input_embs=embs,
-                        input_seq_lengths=chunk_lengths,
-                        padded_seq_len=chunk.shape[1],
-                        **kwargs,
-                    )
-                return encoder(input_token_ids=chunk, input_seq_lengths=chunk_lengths, **kwargs)
+#             def _enc_cb(chunk, chunk_lengths, **kwargs):
+#                 self._update_kwargs(kwargs)
+#                 if embed is not None:
+#                     embs = embed(chunk)
+#                     return encoder(
+#                         input_embs=embs,
+#                         input_seq_lengths=chunk_lengths,
+#                         padded_seq_len=chunk.shape[1],
+#                         **kwargs,
+#                     )
+#                 return encoder(input_token_ids=chunk, input_seq_lengths=chunk_lengths, **kwargs)
 
-            return _enc_cb
+#             return _enc_cb
 
-        if self._emb_tensor is not None:
+#         if self._emb_tensor is not None:
 
-            def _enc_cb(chunk, chunk_lengths, **kwargs):
-                self._update_kwargs(kwargs)
-                padded_seq_len = chunk.shape[1]
-                return encoder(
-                    input_embs=chunk,
-                    input_seq_lengths=chunk_lengths,
-                    padded_seq_len=padded_seq_len,
-                    **kwargs,
-                )
+#             def _enc_cb(chunk, chunk_lengths, **kwargs):
+#                 self._update_kwargs(kwargs)
+#                 padded_seq_len = chunk.shape[1]
+#                 return encoder(
+#                     input_embs=chunk,
+#                     input_seq_lengths=chunk_lengths,
+#                     padded_seq_len=padded_seq_len,
+#                     **kwargs,
+#                 )
 
-            return _enc_cb
+#             return _enc_cb
 
-        raise RuntimeError("Logic error 1941")
+#         raise RuntimeError("Logic error 1941")
+
+
+# def _create_callback_for_split_input(encoder: SeqEncoder, embed: TokenEmbedding | None = None):
+#     if embed is not None:
+#         embs = embed(chunk)
+
+#     if self._tokens_tensor is not None:
+
+#         def _enc_cb(input_data: SeqEncoderBatchedInput, **kwargs):
+#             # self._update_kwargs(kwargs)
+#             if embed is not None:
+#                 embs = embed(chunk)
+#                 return encoder(
+#                     input_embs=embs,
+#                     input_seq_lengths=chunk_lengths,
+#                     padded_seq_len=chunk.shape[1],
+#                     **kwargs,
+#                 )
+#             return encoder(input_token_ids=chunk, input_seq_lengths=chunk_lengths, **kwargs)
+
+#         return _enc_cb
+
+#     if self._emb_tensor is not None:
+
+#         def _enc_cb(chunk, chunk_lengths, **kwargs):
+#             self._update_kwargs(kwargs)
+#             padded_seq_len = chunk.shape[1]
+#             return encoder(
+#                 input_embs=chunk,
+#                 input_seq_lengths=chunk_lengths,
+#                 padded_seq_len=padded_seq_len,
+#                 **kwargs,
+#             )
+
+#         return _enc_cb
+
+#     raise RuntimeError("Logic error 1941")
 
 
 def encode_input_data(
-    input_data: _InputData,
+    input_data: SeqEncoderBatchedInput,
     encoder: SeqEncoder,
     embed: TokenEmbedding | None = None,
     collect_on_cpu=False,
@@ -505,23 +726,40 @@ def encode_input_data(
     max_chunk_size=1024,
     max_tokens_in_chunk=48_000,
 ):
-    enc_cb = input_data.create_callback_for_split_input(encoder, embed)
+    def _enc_cb(input_data: SeqEncoderBatchedInput, **kwargs):
+        # self._update_kwargs(kwargs)
+        if embed is not None:
+            input_data.embed_(embed)
+            # embs = embed(chunk)
 
-    if not split_data:
-        # TODO handle collect_on_cpu == True ??
-        return enc_cb(input_data.input_tensor(), input_data.lengths()).pooled_out
+        return encoder(input_data, **kwargs)
 
-    return split_input_and_embed(
-        enc_cb,
-        input_data.input_tensor(),
-        input_data.lengths(),
-        max_chunk_size=max_chunk_size,
-        max_tokens_in_chunk=max_tokens_in_chunk,
-        collect_on_cpu=collect_on_cpu,
-        pad_to_multiple_of=encoder.pad_to_multiple_of,
-        already_sorted=input_data.input_sorted(),
-        padding_side=encoder.get_padding_side(),
-    )
+    # logging.error("Encode input data: bs %s, max len %s", input_data.batch_size, input_data.max_len)
+
+    if encoder.input_type() == EncoderInputType.PADDED:
+        # enc_cb = _create_callback_for_split_input(encoder, embed)
+
+        if not split_data:
+            # TODO handle collect_on_cpu == True ??
+            return _enc_cb(input_data).pooled_out
+
+        return split_padded_input_and_encode(
+            _enc_cb,
+            input_data,
+            max_chunk_size=max_chunk_size,
+            max_tokens_in_chunk=max_tokens_in_chunk,
+            collect_on_cpu=collect_on_cpu,
+            # TODO
+            # already_sorted=input_data.input_sorted(),
+            pad_opts=PadOpts(encoder.pad_to_multiple_of, encoder.get_padding_side()),
+        )
+    else:
+        if embed is not None:
+            input_data.embed_(embed)
+        enc_out = encoder(input_data)
+        if collect_on_cpu:
+            return enc_out.pooled_out.cpu()
+        return enc_out.pooled_out
 
 
 # * Encode modules
@@ -547,23 +785,25 @@ class BaseSentEncodeModule(torch.nn.Module):
             return self.sent_layer
         raise RuntimeError("No encode layers in Sent Encode module")
 
-    def _prepare_input_data(self, doc_segments: list[list[int]], already_sorted=False):
-        max_len = len(max(doc_segments, key=len))
+    def _prepare_input_data(self, input_data: EncoderInData):
+        input_data.seq_encoder_input.to_(self.device)
+        return input_data
+        # max_len = len(max(doc_segments, key=len))
 
-        tokens_tensor, lengths_tensor = create_padded_tensor(
-            doc_segments,
-            max_len,
-            pad_idx=self._pad_idx,
-            device=self.device,
-            pad_to_multiple_of=self.first_encode_layer().pad_to_multiple_of,
-            padding_side=self.first_encode_layer().get_padding_side(),
-        )
+        # tokens_tensor, lengths_tensor = create_padded_tensor(
+        #     doc_segments,
+        #     max_len,
+        #     pad_idx=self._pad_idx,
+        #     device=self.device,
+        #     pad_to_multiple_of=self.first_encode_layer().pad_to_multiple_of,
+        #     padding_side=self.first_encode_layer().get_padding_side(),
+        # )
 
-        return _InputData(
-            tokens_tensor=tokens_tensor,
-            lengths_tensor=lengths_tensor,
-            already_sorted=already_sorted,
-        )
+        # return _InputData(
+        #     tokens_tensor=tokens_tensor,
+        #     lengths_tensor=lengths_tensor,
+        #     already_sorted=already_sorted,
+        # )
 
     def _encode_sents_impl(
         self,
@@ -575,6 +815,7 @@ class BaseSentEncodeModule(torch.nn.Module):
         max_tokens_in_chunk=48_000,
     ):
         assert self.sent_layer is not None, "Logic error 38389"
+        # TODO
         input_data = self._prepare_input_data(sents, already_sorted=already_sorted)
         return encode_input_data(
             input_data,
@@ -615,6 +856,9 @@ class BaseEncodeModule(BaseSentEncodeModule):
     def doc_embs_dim(self):
         return self.doc_layer.out_embs_dim()
 
+    def input_type(self):
+        return self.first_encode_layer().input_type()
+
     def first_encode_layer(self) -> SeqEncoder:
         if self.sent_layer is not None:
             return self.sent_layer
@@ -636,26 +880,26 @@ class BaseEncodeModule(BaseSentEncodeModule):
 
     def _encode_docs_impl(
         self,
-        doc_segments: list[list[int]],
-        doc_lengths: list[list[int]],
+        input_data: EncoderInData,
         split_input=True,
         max_chunk_size=1024,
         max_tokens_in_chunk=48_000,
         batch_info: dict | None = None,
     ):
-        """Docs is represented as sequence of segments in a flat list doc_segments"""
+
+        # """Docs is represented as sequence of segments in a flat list doc_segments"""
 
         if batch_info is None:
             batch_info = {}
 
-        input_data = self._prepare_input_data(doc_segments)
+        input_data = self._prepare_input_data(input_data)
 
         if self.sent_layer is not None:
             # 1. document is a sequence of sentences
 
             with self._sent_level_ctx_mgr():
                 sent_embs = encode_input_data(
-                    input_data,
+                    input_data.seq_encoder_input,
                     self.sent_layer,
                     embed=self.embed,
                     split_data=split_input,
@@ -664,31 +908,52 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 )
 
             if self.frag_layer is not None:
-                frag_len: list[int] = []
-                doc_len_list: list[int] = []
-                for fragments in doc_lengths:
-                    frag_len.extend(fragments)
-                    doc_len_list.append(len(fragments))
+                # frag_len: list[int] = []
+                # doc_len_list: list[int] = []
+                # for fragments in doc_lengths:
+                #     frag_len.extend(fragments)
+                #     doc_len_list.append(len(fragments))
+                #
+                if input_data.texts_repr.second_level_lengths is None:
+                    raise RuntimeError(
+                        "Fragment layer is not None but second_level_lengths is None"
+                    )
 
-                len_tensor = torch.as_tensor(frag_len, dtype=torch.int64, device=sent_embs.device)
+                input_for_frag_layer = SeqEncoderBatchedInput.from_embs(
+                    self.frag_layer.input_type(),
+                    sent_embs,
+                    input_data.texts_repr.second_level_lengths.to(sent_embs.device),
+                    padded_prepend_with_zero=self.frag_layer.beg_seq_param is not None,
+                )
+
+                # len_tensor = torch.as_tensor(frag_len, dtype=torch.int64, device=sent_embs.device)
                 embs = self.frag_layer(
-                    input_embs=sent_embs,
-                    input_seq_lengths=len_tensor,
-                    enforce_sorted=False,
-                    padded_seq_len=batch_info.get('fragment_len'),
+                    input_for_frag_layer
+                    # padded_seq_len=batch_info.get('fragment_len'),
                 ).pooled_out
-                padded_seq_len = batch_info.get('doc_len_in_frags')
+                # padded_seq_len = batch_info.get('doc_len_in_frags')
+                # TODO temp
+                doc_len_tens = input_data.texts_repr.third_level_lengths
+                # if doc_len_tens is None:
+                #     doc_len_tens = torch.ones((embs.shape[0]), dtype=torch.int32)
+                assert doc_len_tens is not None, "Logic error 3425181"
             else:
                 embs = sent_embs
-                doc_len_list = [l for d in doc_lengths for l in d]
-                padded_seq_len = batch_info.get('doc_len_in_sents')
+                # doc_len_list = [l for d in doc_lengths for l in d]
+                # padded_seq_len = batch_info.get('doc_len_in_sents')
+                doc_len_tens = input_data.texts_repr.second_level_lengths
+                assert doc_len_tens is not None, "Logic error 3425182"
 
-            len_tensor = torch.as_tensor(doc_len_list, dtype=torch.int64, device=embs.device)
+            input_for_doc_layer = SeqEncoderBatchedInput.from_embs(
+                self.doc_layer.input_type(),
+                embs,
+                doc_len_tens.to(embs.device),
+                padded_prepend_with_zero=self.doc_layer.beg_seq_param is not None,
+            )
+            # len_tensor = torch.as_tensor(doc_len_list, dtype=torch.int64, device=embs.device)
             doc_embs = self.doc_layer(
-                input_embs=embs,
-                input_seq_lengths=len_tensor,
-                enforce_sorted=False,
-                padded_seq_len=padded_seq_len,
+                input_for_doc_layer
+                # padded_seq_len=padded_seq_len,
             ).pooled_out
             return doc_embs
 
@@ -696,7 +961,7 @@ class BaseEncodeModule(BaseSentEncodeModule):
             # 2. document is a sequence of fragments
 
             embs = encode_input_data(
-                input_data,
+                input_data.seq_encoder_input,
                 self.frag_layer,
                 embed=self.embed,
                 split_data=split_input,
@@ -704,15 +969,25 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 max_tokens_in_chunk=max_tokens_in_chunk,
             )
 
-            len_tensor = torch.as_tensor(
-                [l for d in doc_lengths for l in d], dtype=torch.int64, device=embs.device
+            if input_data.texts_repr.second_level_lengths is None:
+                raise RuntimeError("Fragment layer is not None but second_level_lengths is None")
+
+            input_for_frag_layer = SeqEncoderBatchedInput.from_embs(
+                self.frag_layer.input_type(),
+                embs,
+                input_data.texts_repr.second_level_lengths.to(embs.device),
+                padded_prepend_with_zero=self.frag_layer.beg_seq_param is not None,
             )
-            doc_embs = self.doc_layer(input_embs=embs, input_seq_lengths=len_tensor).pooled_out
+
+            # len_tensor = torch.as_tensor(
+            #     [l for d in doc_lengths for l in d], dtype=torch.int64, device=embs.device
+            # )
+            doc_embs = self.doc_layer(input_for_frag_layer).pooled_out
             return doc_embs
 
         # 3. document is a sequence of tokens
         return encode_input_data(
-            input_data,
+            input_data.seq_encoder_input,
             self.doc_layer,
             self.embed,
             split_data=split_input,
@@ -735,6 +1010,9 @@ def _adjust_enc_config(
     # if override is not None:
     #     return OmegaConf.structured(OmegaConf.merge(config, OmegaConf.to_container(override)))
     if override is not None:
+        if override.input_type is not None:
+            config.input_type = override.input_type
+
         if override.transformers_torch_fp16 is not None:
             config.transformers_torch_fp16 = override.transformers_torch_fp16
         if override.use_adapter is not None:
@@ -904,33 +1182,53 @@ class EncodeModule(BaseEncodeModule):
         if frag_state_dict:
             self._load_layer(self.frag_layer, frag_state_dict)
 
-    def create_sents_batch_generator(self, eval_mode=True):
-        return BaseSentsBatchGenerator(self._tp_conf, self._conf, self._tp_state_dict, eval_mode)
-
-    def create_sents_batch_iterator(self, eval_mode=True):
-        return SentsBatchIterator(
-            (self._tp_conf, self._conf, self._tp_state_dict, eval_mode), self._conf.async_batch_gen
+    def _create_pad_opts(self):
+        return PadOpts(
+            self.first_encode_layer().pad_to_multiple_of,
+            self.first_encode_layer().get_padding_side(),
         )
 
-    def create_batch_generator(self, eval_mode=True):
-        return BaseBatchGenerator(self._tp_conf, self._conf, self._tp_state_dict, eval_mode)
+    def create_sents_batch_generator(self, eval_mode=True):
+        po = self._create_pad_opts()
+        return BaseSentsBatchGenerator(
+            self.input_type(), self._conf, self._tp_conf, self._tp_state_dict, po, eval_mode
+        )
 
-    def create_batch_iterator(self, eval_mode=True):
-        return BatchIterator(
-            (self._tp_conf, self._conf, self._tp_state_dict, eval_mode),
+    def create_sents_batch_async_generator(self, eval_mode=True):
+        po = self._create_pad_opts()
+        return SentsBatchAsyncGenerator(
+            self.input_type(),
+            self._conf,
+            (self._tp_conf, self._tp_state_dict, po, eval_mode),
             self._conf.async_batch_gen,
         )
 
-    def encode_sents(self, sents: list[list[int]], collect_on_cpu=False, already_sorted=False):
+    def create_batch_generator(self, eval_mode=True):
+        po = self._create_pad_opts()
+        return BaseBatchGenerator(
+            self.input_type(), self._conf, self._tp_conf, self._tp_state_dict, po, eval_mode
+        )
+
+    def create_batch_async_generator(self, eval_mode=True):
+        po = self._create_pad_opts()
+        return BatchAsyncGenerator(
+            self.input_type(),
+            self._conf,
+            (self._tp_conf, self._tp_state_dict, po, eval_mode),
+            self._conf.async_batch_gen,
+        )
+
+    def encode_sents(self, input_data: EncoderInData, collect_on_cpu=False, already_sorted=False):
         if self.sent_layer is not None:
             encoder = self.sent_layer.cast_to_base()
         elif self.frag_layer is None and self.doc_layer is not None:
             encoder = self.doc_layer
         else:
             raise RuntimeError("Sentence encoding is not supported!")
-        input_data = self._prepare_input_data(sents, already_sorted=already_sorted)
+
+        input_data = self._prepare_input_data(input_data)
         return encode_input_data(
-            input_data,
+            input_data.seq_encoder_input,
             encoder,
             embed=self.embed,
             collect_on_cpu=collect_on_cpu,
@@ -939,19 +1237,16 @@ class EncodeModule(BaseEncodeModule):
             max_tokens_in_chunk=self._conf.max_tokens,
         )
 
-    def encode_docs(self, docs: list[list[list[int]]], doc_lengths: list[list[int]]):
-        """Each doc is a list of tokenized sequences."""
-        all_segments = [s for d in docs for s in d]
+    def encode_docs(self, input_data: EncoderInData):
         return self._encode_docs_impl(
-            all_segments,
-            doc_lengths,
+            input_data,
             split_input=True,
             max_chunk_size=self._conf.max_sents,
             max_tokens_in_chunk=self._conf.max_tokens,
         )
 
-    def forward(self, docs, doc_lengths):
-        return self.encode_docs(docs, doc_lengths)
+    def forward(self, input_data: EncoderInData):
+        return self.encode_docs(input_data)
 
 
 # * Main classes
@@ -971,30 +1266,78 @@ class DocEncodeStat:
         self.docs_cnt = 0
 
 
-def file_path_fetcher(paths):
-    for idx, path in enumerate(paths):
-        with open(path, 'r', encoding='utf8', errors='ignore') as fp:
-            sents = []
-            for s in fp:
-                sents.append(s.rstrip())
-            yield idx, sents
+# def file_path_fetcher(paths):
+#     for idx, path in enumerate(paths):
+#         with open(path, 'r', encoding='utf8', errors='ignore') as fp:
+#             sents = []
+#             for s in fp:
+#                 sents.append(s.rstrip())
+#             yield idx, sents
 
 
-def _create_sents_gen_func(fn, offset, limit, first_column_is_id, sep):
-    def _gen():
-        with open(fn, 'r') as inpf:
-            if first_column_is_id:
-                for line in itertools.islice(inpf, offset, offset + limit):
-                    sent_id, sent = line.rstrip().split(sep, 1)
+class TextsFromPathListGen:
+    def __init__(self, paths: list[str] | list[Path], offs: int = 0):
+        self.paths = paths
+        self.offs = offs
+
+    def __call__(self):
+        for idx, path in enumerate(self.paths):
+            with open(path, 'r', encoding='utf8', errors='ignore') as fp:
+                sents = []
+                for s in fp:
+                    sents.append(s.rstrip())
+                yield self.offs + idx, sents
+
+
+def create_split_of_text_gens(text_id_list: list[Any], nsplits: int, gen_cls):
+    per_worker_items = math.ceil(len(text_id_list) / nsplits)
+    gens = []
+    for offs in range(0, len(text_id_list), per_worker_items):
+        gens.append(gen_cls(text_id_list[offs : offs + per_worker_items], offs))
+    return gens
+
+
+class SentsFromFileGen:
+    def __init__(self, fn: str, offset: int, limit: int, first_column_is_id: bool, sep: str):
+        self.fn = fn
+        self.offset = offset
+        self.limit = limit
+        self.first_column_is_id = first_column_is_id
+        self.sep = sep
+
+    def __call__(self):
+        with open(self.fn, 'r') as inpf:
+            if self.first_column_is_id:
+                for line in itertools.islice(inpf, self.offset, self.offset + self.limit):
+                    sent_id, sent = line.rstrip().split(self.sep, 1)
                     yield sent_id, sent
             else:
-                for i, line in enumerate(itertools.islice(inpf, offset, offset + limit)):
-                    yield i + offset, line.rstrip()
+                for i, line in enumerate(
+                    itertools.islice(inpf, self.offset, self.offset + self.limit)
+                ):
+                    yield i + self.offset, line.rstrip()
 
-    return _gen
+
+# def _create_sents_gen_func(fn: str, offset: int, limit: int, first_column_is_id: bool, sep: str):
+#     def _gen():
+#         with open(fn, 'r') as inpf:
+#             if first_column_is_id:
+#                 for line in itertools.islice(inpf, offset, offset + limit):
+#                     sent_id, sent = line.rstrip().split(sep, 1)
+#                     yield sent_id, sent
+#             else:
+#                 for i, line in enumerate(itertools.islice(inpf, offset, offset + limit)):
+#                     yield i + offset, line.rstrip()
+
+#     return _gen
 
 
 class DocEncoder:
+    """This class provides efficient methods for offline encoding batch of
+    texts. It could be used for encoding stream of texts, but it will not be
+    efficient at this.
+    """
+
     def __init__(self, conf: DocEncoderConf, eval_mode: bool = True) -> None:
         self._enc_module = EncodeModule(conf, eval_mode)
         self._enc_module.train(not eval_mode)
@@ -1022,17 +1365,17 @@ class DocEncoder:
 
         return sdpa_mods
 
-    def _encode_docs(self, docs: list[list[list[int]]], doc_lengths: list[list[int]]):
+    def _encode_docs(self, input_data: EncoderInData):
         with torch.inference_mode(self._eval_mode):
             with autocast(self._enc_module.device.type, enabled=self.conf().enable_amp):
                 with sdpa_kernel(self._sdpa_mods()):
-                    return self._enc_module.encode_docs(docs, doc_lengths)
+                    return self._enc_module.encode_docs(input_data)
 
-    def _encode_sents(self, sents):
+    def _encode_sents(self, input_data: EncoderInData):
         with torch.inference_mode(self._eval_mode):
             with autocast(self._enc_module.device.type, enabled=self.conf().enable_amp):
                 with sdpa_kernel(self._sdpa_mods()):
-                    return self._enc_module.encode_sents(sents, collect_on_cpu=True)
+                    return self._enc_module.encode_sents(input_data, collect_on_cpu=True)
 
     def load_params_from_checkpoint(self, checkpoint_path):
         self._enc_module.load_params_from_checkpoint(checkpoint_path)
@@ -1051,10 +1394,10 @@ class DocEncoder:
         def _gen():
             yield from enumerate(sents)
 
-        for sent_tokens, sent_ids in batch_gen.batches(_gen):
-            sent_embs = self._encode_sents(sent_tokens)
+        for input_data in batch_gen.batches(_gen):
+            sent_embs = self._encode_sents(input_data)
             all_embs.append(sent_embs.to(device='cpu'))
-            all_ids.extend(sent_ids)
+            all_ids.extend(input_data.text_ids)
 
         stacked = torch.vstack(all_embs)
         assert all_ids == list(range(len(sents))), "Misaligned data 3812"
@@ -1064,11 +1407,11 @@ class DocEncoder:
 
         return stacked.numpy()
 
-    def encode_sents_stream(
-        self, sents_generator, sents_batch_size=4096
+    def encode_sents_generator(
+        self, sents_generator: Generator[tuple[str, ...], None, None], sents_batch_size=512
     ) -> collections.abc.Iterable[tuple[list[str], np.ndarray, Any]]:
-        """Encode stream of sents (represented via generator) to vectors.
-        `sents_generator` should yield a sent text. It can also yield extra
+        """Encode batch of sents (produced by generator) to vectors.
+        `sents_generator` should yield a sentence text. It can also yield extra
         fields that will be yielded back with vectors. At first it collects
         sents in a batch of size `sents_batch_size`. Then invokes `encode_sents`
         on each batch.
@@ -1092,7 +1435,9 @@ class DocEncoder:
             embs = self.encode_sents(sents_batch)
             yield sents_batch, embs, sents_misc
 
-    def encode_sents_from_generators(self, generator_funcs, stat: SentEncodeStat | None = None):
+    def encode_sents_from_generators(
+        self, generator_funcs: Sequence[SentsGenFuncT], stat: SentEncodeStat | None = None
+    ):
         """Low level function that utilizes async batch preparation to speed up encoding for some cases.
         You can pass up to async_batch_gen generator functions.
         Each function should produce a unique set of tuples: (sent_id, sent_text).
@@ -1104,29 +1449,45 @@ class DocEncoder:
                     for i, line in enumerate(itertools.islice(inpf, offset, offset + limit)):
                         yield offset + i, line.strip()
             return _gen
+        encode_sents_from_generators([create_gen_func('/f/p', 0, 100), create_gen_func('/f/p', 100, 100)])
 
 
-        encode_sents_from_generators([create_gen_func(0, 100), create_gen_func(100, 100)])
+        or
+
+        class SentsGen:
+            def __init__(self, fn, offset, limit):
+                self.fn = fn
+                self.offset = offset
+                self.limit = limit
+
+            def __call__(self):
+                with open(self.fn, 'r') as inpf:
+                    for i, line in enumerate(itertools.islice(inpf, self.offset, self.offset + self.limit)):
+                        yield self.offset + i, line.strip()
+
+        encode_sents_from_generators([SentsGen('/f/p', 0, 100), SentsGen('/f/p', 100, 100)])
         """
 
         if not self._enc_module.sent_encoding_supported():
             raise RuntimeError("Sent encoding is unsupported by this model!")
-        batch_iterator = self._enc_module.create_sents_batch_iterator()
-        batch_iterator.start_workers(generator_funcs)
+        # TODO create async generator onece at start
+        # Need other queue to send requests
+        batch_generator = self._enc_module.create_sents_batch_async_generator()
+        batch_generator.start_workers(generator_funcs)
 
         try:
-            for sent_tokens, sent_ids in batch_iterator.batches():
+            for batch in batch_generator.batches():
                 if stat is not None:
-                    stat.total_tokens_cnt += sum(len(s) for s in sent_tokens)
-                    stat.sents_cnt += len(sent_tokens)
+                    stat.total_tokens_cnt += batch.seq_encoder_input.ntokens()
+                    stat.sents_cnt += batch.seq_encoder_input.batch_size
 
-                sent_embs = self._encode_sents(sent_tokens)
+                sent_embs = self._encode_sents(batch)
                 if self.conf().normalize_vecs:
                     sent_embs = F.normalize(sent_embs, p=2, dim=1)
                 sent_embs = sent_embs.to(device='cpu').numpy()
-                yield sent_ids, sent_embs
+                yield batch.text_ids, sent_embs
         finally:
-            batch_iterator.destroy()
+            batch_generator.destroy()
 
     def generate_sent_embs_from_file(
         self,
@@ -1144,7 +1505,7 @@ class DocEncoder:
         proc_num = self.conf().async_batch_gen
         per_proc = math.ceil(line_cnt / proc_num)
         gens = [
-            _create_sents_gen_func(
+            SentsFromFileGen(
                 file_path, offs, per_proc, first_column_is_id=first_column_is_id, sep=sep
             )
             for offs in range(0, line_cnt, per_proc)
@@ -1173,10 +1534,11 @@ class DocEncoder:
         assert len(sent_ids) == stacked.shape[0], "Missaligned data 83292"
         return sent_ids, stacked
 
-    def _update_doc_stat(self, docs: list[list[list[int]]], stat: DocEncodeStat):
-        stat.docs_cnt += len(docs)
-        stat.total_sents_cnt += sum(len(d) for d in docs)
-        stat.total_tokens_cnt += sum(len(s) for d in docs for s in d)
+    def _update_doc_stat(self, input_data: EncoderInData, stat: DocEncodeStat):
+
+        stat.docs_cnt += len(input_data.text_ids)
+        stat.total_sents_cnt += input_data.seq_encoder_input.batch_size
+        stat.total_tokens_cnt += input_data.seq_encoder_input.ntokens()
 
     def _reorder_collected_arrays(self, stacked_array, idxs):
         assert stacked_array.shape[0] == len(
@@ -1192,21 +1554,30 @@ class DocEncoder:
     def encode_docs_from_path_list(
         self, path_list: list[str] | list[Path], stat: DocEncodeStat | None = None
     ) -> np.ndarray:
-        """This method encodes a texts from a path_list into vectors and returns them.
-        Texts should be presegmented, i.e. each sentence should be placed on separate line.
+        """This method encodes texts from a path_list into vectors and returns them.
+        Texts should be presegmented, i.e. each sentence should be placed on a separate line.
         """
         embs = []
         embs_idxs = []
-        batch_iter = self._enc_module.create_batch_iterator()
+        batch_iter = self._enc_module.create_batch_async_generator()
 
-        batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
+        # per_worker_items = math.ceil(len(path_list) / self.conf().async_batch_gen)
+        # gens = []
+        # for offs in range(0, len(path_list), per_worker_items):
+        #     gens.append(TextsFromPathListGen(path_list[offs : offs + per_worker_items], offs))
+        gens = create_split_of_text_gens(
+            path_list, self.conf().async_batch_gen, TextsFromPathListGen
+        )
+
+        # batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
+        batch_iter.start_workers(gens)
         try:
-            for docs, doc_lengths, idxs in batch_iter.batches():
+            for input_data in batch_iter.batches():
                 if stat is not None:
-                    self._update_doc_stat(docs, stat)
-                doc_embs = self._encode_docs(docs, doc_lengths)
+                    self._update_doc_stat(input_data, stat)
+                doc_embs = self._encode_docs(input_data)
                 embs.append(doc_embs.to(device='cpu'))
-                embs_idxs.extend(idxs)
+                embs_idxs.extend(input_data.text_ids)
 
             stacked = torch.vstack(embs)
             assert stacked.shape[0] == len(
@@ -1239,16 +1610,16 @@ class DocEncoder:
         a list of sentences or a text where each sentence is placed on a new
         line."""
 
-        def dummy_fetcher(items):
-            yield from enumerate(items)
+        def dummy_fetcher():
+            yield from enumerate(docs)
 
         embs = []
 
         batch_generator = self._enc_module.create_batch_generator()
-        for batch, doc_lengths, _ in batch_generator.batches(docs, fetcher=dummy_fetcher):
+        for input_data in batch_generator.batches(dummy_fetcher):
             if stat is not None:
-                self._update_doc_stat(batch, stat)
-            doc_embs = self._encode_docs(batch, doc_lengths)
+                self._update_doc_stat(input_data, stat)
+            doc_embs = self._encode_docs(input_data)
             embs.append(doc_embs.to(device='cpu'))
         stacked = torch.vstack(embs)
         assert len(stacked) == len(docs)
@@ -1258,8 +1629,9 @@ class DocEncoder:
 
         return stacked.numpy()
 
-    def encode_docs_stream(
-        self, doc_id_generator, fetcher, batch_size: int = 10, stat: DocEncodeStat | None = None
+    # TODO doc string
+    def encode_docs_from_generators(
+        self, generator_funcs: list[TextGenFuncT], stat: DocEncodeStat | None = None
     ) -> collections.abc.Iterable[tuple[list[Any], np.ndarray]]:
         """The most general method that accepts a generator of document ids and a function `fetcher`.
         `fetcher` will be invoked on a batch of ids to get a text of a documents.
@@ -1278,17 +1650,15 @@ class DocEncoder:
         This method yields the tuple of doc id (that was returned by `doc_id_generator`) and doc vectors.
         """
 
-        batch_iter = self._enc_module.create_batch_iterator()
-        batch_iter.start_workers_for_stream(
-            doc_id_generator, fetcher=fetcher, batch_size=batch_size
-        )
+        batch_async_gen = self._enc_module.create_batch_async_generator()
+        batch_async_gen.start_workers(generator_funcs)
         try:
-            for docs, doc_lengths, ids in batch_iter.batches():
+            for input_data in batch_async_gen.batches():
                 if stat is not None:
-                    self._update_doc_stat(docs, stat)
-                doc_embs = self._encode_docs(docs, doc_lengths)
+                    self._update_doc_stat(input_data, stat)
+                doc_embs = self._encode_docs(input_data)
                 if self.conf().normalize_vecs:
                     doc_embs = F.normalize(doc_embs, p=2, dim=1)
-                yield ids, doc_embs.to(device='cpu').numpy()
+                yield input_data.text_ids, doc_embs.to(device='cpu').numpy()
         finally:
-            batch_iter.destroy()
+            batch_async_gen.destroy()

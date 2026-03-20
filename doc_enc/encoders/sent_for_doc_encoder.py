@@ -10,6 +10,7 @@ from torch import nn
 from doc_enc.encoders import enc_out
 from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_config import SeqEncoderConf
+from doc_enc.encoders.enc_in import SeqEncoderBatchedInput
 from doc_enc.encoders.seq_encoder import SeqEncoder
 
 
@@ -75,16 +76,18 @@ class SentForDocEncoder(SeqEncoder):
 
     def forward(
         self,
-        input_embs: torch.Tensor | None = None,
-        input_seq_lengths: torch.IntTensor | None = None,
-        input_token_ids: torch.Tensor | None = None,
+        input_batch: SeqEncoderBatchedInput,
+        # input_embs: torch.Tensor | None = None,
+        # input_seq_lengths: torch.IntTensor | None = None,
+        # input_token_ids: torch.Tensor | None = None,
         **kwargs,
     ) -> enc_out.BaseEncoderOut:
         with self._maybe_no_grad():
             sent_enc_result = super().forward(
-                input_embs=input_embs,
-                input_seq_lengths=input_seq_lengths,
-                input_token_ids=input_token_ids,
+                input_batch,
+                # input_embs=input_embs,
+                # input_seq_lengths=input_seq_lengths,
+                # input_token_ids=input_token_ids,
                 **kwargs,
             )
 
