@@ -149,20 +149,29 @@ def eval_cli(conf: Config) -> None:
         doc_encoder = DocEncoder(conf.doc_encoder)
 
     if not conf.eval_checkpoints:
-        return _eval_and_bench(conf, doc_encoder)
+        try:
+            return _eval_and_bench(conf, doc_encoder)
+        except Exception as e:
+            logging.exception("Failed to eval: %s", e)
+        finally:
+            doc_encoder.destroy()
 
-    logging.error('eval gest satat mp %s', multiprocessing.get_start_method())
     base_dir = Path(conf.doc_encoder.model_path).parent
-    for p in conf.eval_checkpoints:
-        checkpoints = base_dir.glob(p)
-        for cp in checkpoints:
-            logging.info("loading parameters from: %s", cp)
-            if conf.cache_embeddings:
-                assert conf.model_id is not None
-                del doc_encoder
-                doc_encoder = CachingDocEncoder(conf.doc_encoder, conf.model_id + '-' + cp.stem)
-            doc_encoder.load_params_from_checkpoint(cp)
-            _eval_and_bench(conf, doc_encoder, checkpoint=cp.with_suffix('').name)
+    try:
+        for p in conf.eval_checkpoints:
+            checkpoints = base_dir.glob(p)
+            for cp in checkpoints:
+                logging.info("loading parameters from: %s", cp)
+                if conf.cache_embeddings:
+                    assert conf.model_id is not None
+                    doc_encoder.destroy()
+                    doc_encoder = CachingDocEncoder(conf.doc_encoder, conf.model_id + '-' + cp.stem)
+                doc_encoder.load_params_from_checkpoint(cp)
+                _eval_and_bench(conf, doc_encoder, checkpoint=cp.with_suffix('').name)
+    except Exception as e:
+        logging.exception("Failed to eval: %s", e)
+    finally:
+        doc_encoder.destroy()
 
 
 if __name__ == "__main__":

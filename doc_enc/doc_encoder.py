@@ -10,6 +10,7 @@ import dataclasses
 from pathlib import Path
 import multiprocessing
 import collections.abc
+import threading
 
 import numpy as np
 import torch
@@ -410,8 +411,9 @@ class BaseBatchGenerator:
 
 
 def _proc_wrapper_for_texts_generator(
+    in_queue: multiprocessing.Queue,
     queue: multiprocessing.Queue,
-    generator_func: SentsGenFuncT,
+    # generator_func: SentsGenFuncT,
     shared_tensors_holder: EncInputSharedTensors,
     *args,
     **kwargs,
@@ -419,19 +421,24 @@ def _proc_wrapper_for_texts_generator(
     torch.set_num_threads(1)
     try:
         generator = BaseBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
-        for b in generator.batches(generator_func):
-            # logging.error('proc receive from %s')
 
-            d = serialize_enc_in_data(b, shared_tensors_holder)
-            # logging.error('serialized data-1 %s, text ids %s', d[:-1], len(b.text_ids))
-            queue.put(d)
-            # slot_num, shapes = shared_tensors_holder.put_tensors(b)
-            # queue.put((slot_num, shapes, b.text_ids))
+        while True:
+            generator_func = in_queue.get()
+            if generator_func is None:
+                break
+            for b in generator.batches(generator_func):
+                # logging.error('proc receive from %s')
+
+                d = serialize_enc_in_data(b, shared_tensors_holder)
+                # logging.error('serialized data-1 %s, text ids %s', d[:-1], len(b.text_ids))
+                queue.put(d)
+                # slot_num, shapes = shared_tensors_holder.put_tensors(b)
+                # queue.put((slot_num, shapes, b.text_ids))
+            queue.put(None)
+
     except Exception as e:
         print(type(e), str(e))
         logging.exception("Failed to process batches: %s", e)
-
-    queue.put(None)
 
 
 class BatchAsyncGenerator:
@@ -464,13 +471,11 @@ class BatchAsyncGenerator:
             shared_tens_slots_cnt,
         )
 
-        # input stream support
-        # self._in_queue = multiprocessing.Queue(10 * async_generators)
-        # self._generator_thread = None
+        self._in_queue = multiprocessing.Queue(3 * async_generators)
 
     def destroy(self):
         self._terminate_workers()
-        # self._in_queue.close()
+        self._in_queue.close()
         self._out_queue.close()
 
     def _terminate_workers(self):
@@ -497,20 +502,9 @@ class BatchAsyncGenerator:
 
     #         self._processes.append(p)
 
-    # def _input_generator_thread(self, items_generator, batch_size):
-    #     try:
-    #         items_batch = []
-    #         for item in items_generator:
-    #             items_batch.append(item)
-    #             if len(items_batch) >= batch_size:
-    #                 self._in_queue.put(items_batch)
-    #                 items_batch = []
-
-    #         if items_batch:
-    #             self._in_queue.put(items_batch)
-    #     finally:
-    #         for _ in self._processes:
-    #             self._in_queue.put(None)
+    def _input_generator_thread(self, gens: Sequence[TextGenFuncT]):
+        for func in gens:
+            self._in_queue.put(func)
 
     # def start_workers_for_stream(self, items_generator, fetcher, batch_size=10):
     #     for _ in range(self._async_generators):
@@ -533,18 +527,19 @@ class BatchAsyncGenerator:
     #     )
     #     self._generator_thread.start()
 
-    def start_workers(self, generator_funcs: list[SentsGenFuncT]):
+    def start_workers(self):
         # logging.error("mp get start method %s", multiprocessing.get_start_method())
-        if len(generator_funcs) > self._async_generators:
-            raise RuntimeError(
-                "Passed generators number is greater than configured async generators"
-            )
+        # if len(generator_funcs) > self._async_generators:
+        #     raise RuntimeError(
+        #         "Passed generators number is greater than configured async generators"
+        #     )
 
-        proc_cnt = min(len(generator_funcs), self._async_generators)
-        for i in range(proc_cnt):
+        # proc_cnt = min(len(generator_funcs), self._async_generators)
+        proc_cnt = self._async_generators
+        for _ in range(proc_cnt):
             p = multiprocessing.Process(
                 target=_proc_wrapper_for_texts_generator,
-                args=(self._out_queue, generator_funcs[i], self._shared_tensors_holder)
+                args=(self._in_queue, self._out_queue, self._shared_tensors_holder)
                 + self._generator_args,
                 kwargs={},
             )
@@ -567,26 +562,35 @@ class BatchAsyncGenerator:
             sent_max_len,
         )
 
-    def batches(self) -> Generator[EncoderInData, None, None]:
+    def batches(
+        self, generator_funcs: Sequence[TextGenFuncT]
+    ) -> Generator[EncoderInData, None, None]:
         if not self._processes:
             raise RuntimeError("Batch Iterator is not initialized!")
 
-        finished_processes = 0
-        proc_cnt = len(self._processes)
-        while finished_processes < proc_cnt:
+        # generator_funcs could have many generators and in_queue has a limited
+        # capacity. If we put all generator_funcs to in_queue here we could
+        # block indefinetely. We could remove length limit of an in_queue, but I
+        # prefer a more general approach that would work even we will allow to
+        # pass generator of generator_funcs.
+        gen_thread = threading.Thread(target=self._input_generator_thread, args=(generator_funcs,))
+        gen_thread.start()
+
+        ngens = len(generator_funcs)
+
+        finished_gens = 0
+        while finished_gens < ngens:
             logging.debug("queue len: %s", self._out_queue.qsize())
             batch = self._out_queue.get()
             if batch is None:
-                finished_processes += 1
+                finished_gens += 1
                 continue
             # TODO
             # self._print_debug_info_for_batch(batch)
             with deserialize_enc_in_data(batch, self._shared_tensors_holder) as b:
                 yield b
 
-        for p in self._processes:
-            p.join()
-        self._processes = []
+        gen_thread.join()
 
         # if self._generator_thread is not None:
         #     self._in_queue.close()
@@ -1343,6 +1347,19 @@ class DocEncoder:
         self._enc_module.train(not eval_mode)
         self._eval_mode = eval_mode
 
+        self._batch_gen = self._enc_module.create_batch_async_generator()
+        self._batch_gen.start_workers()
+
+        self._destroyed = False
+
+    def __del__(self):
+        self.destroy()
+
+    def destroy(self):
+        if not self._destroyed:
+            self._batch_gen.destroy()
+            self._destroyed = True
+
     def sent_encoding_supported(self):
         return self._enc_module.sent_encoding_supported()
 
@@ -1559,7 +1576,7 @@ class DocEncoder:
         """
         embs = []
         embs_idxs = []
-        batch_iter = self._enc_module.create_batch_async_generator()
+        # batch_iter = self._enc_module.create_batch_async_generator()
 
         # per_worker_items = math.ceil(len(path_list) / self.conf().async_batch_gen)
         # gens = []
@@ -1570,27 +1587,24 @@ class DocEncoder:
         )
 
         # batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
-        batch_iter.start_workers(gens)
-        try:
-            for input_data in batch_iter.batches():
-                if stat is not None:
-                    self._update_doc_stat(input_data, stat)
-                doc_embs = self._encode_docs(input_data)
-                embs.append(doc_embs.to(device='cpu'))
-                embs_idxs.extend(input_data.text_ids)
+        # batch_iter.start_workers(gens)
+        for input_data in self._batch_gen.batches(gens):
+            if stat is not None:
+                self._update_doc_stat(input_data, stat)
+            doc_embs = self._encode_docs(input_data)
+            embs.append(doc_embs.to(device='cpu'))
+            embs_idxs.extend(input_data.text_ids)
 
-            stacked = torch.vstack(embs)
-            assert stacked.shape[0] == len(
-                path_list
-            ), f"Missaligned data with paths: {stacked.shape[0]} != {len(path_list)}"
+        stacked = torch.vstack(embs)
+        assert stacked.shape[0] == len(
+            path_list
+        ), f"Missaligned data with paths: {stacked.shape[0]} != {len(path_list)}"
 
-            if self.conf().normalize_vecs:
-                stacked = F.normalize(stacked, p=2, dim=1)
+        if self.conf().normalize_vecs:
+            stacked = F.normalize(stacked, p=2, dim=1)
 
-            reordered_embs = self._reorder_collected_arrays(stacked, embs_idxs)
-            return reordered_embs.numpy()
-        finally:
-            batch_iter.destroy()
+        reordered_embs = self._reorder_collected_arrays(stacked, embs_idxs)
+        return reordered_embs.numpy()
 
     def encode_docs_from_dir(
         self, path: Path, stat: DocEncodeStat | None = None

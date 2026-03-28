@@ -119,7 +119,7 @@ class TransformersAutoModel(BaseTransformersAutoModel):
         if attn_impl := kwargs.get('attn_implementation', ''):
             self.fa_enabled = attn_impl[:-2].endswith('flash_attention')
 
-        self._input_type = self._init_input_type()
+        self._input_type = self._init_input_type(config)
 
         logging.info("Create Transformers model with kwargs: %s", kwargs)
         auto_model = AutoModel.from_pretrained(
@@ -154,15 +154,15 @@ class TransformersAutoModel(BaseTransformersAutoModel):
 
         super().__init__(config, model)
 
-    def _init_input_type(self):
-        if self.config.input_type is None:
+    def _init_input_type(self, config: BaseEncoderConf):
+        if config.input_type is None:
             if self.fa_enabled:
                 return EncoderInputType.JAGGED
             return EncoderInputType.PADDED
 
-        if self.config.input_type not in (EncoderInputType.JAGGED, EncoderInputType.PADDED):
-            raise RuntimeError(f"Unsupported input type: {self.config.input_type}")
-        return self.config.input_type
+        if config.input_type not in (EncoderInputType.JAGGED, EncoderInputType.PADDED):
+            raise RuntimeError(f"Unsupported input type: {config.input_type}")
+        return config.input_type
 
     def input_type(self) -> EncoderInputType:
         return self._input_type
