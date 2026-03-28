@@ -6,7 +6,7 @@ from doc_enc.tokenizer import TokenizerType, TokenizerConf
 from doc_enc.doc_encoder import (
     DocEncoderConf,
     BatchAsyncGenerator,
-    SentsBatchAsyncGenerator,
+    # SentsBatchAsyncGenerator,
     create_split_of_text_gens,
 )
 
@@ -120,7 +120,7 @@ class SentsGen:
 
 
 def test_sents_batch_async_gen_packed_1():
-    batch_iter = SentsBatchAsyncGenerator(
+    batch_iter = BatchAsyncGenerator(
         EncoderInputType.PACKED,
         DocEncoderConf(model_path=''),
         other_generator_args=(
@@ -131,37 +131,40 @@ def test_sents_batch_async_gen_packed_1():
         shared_tens_slots_cnt=1,
     )
 
-    batch_iter.start_workers([SentsGen(0), SentsGen(1)])
+    try:
+        batch_iter.start_workers()
 
-    for batch in batch_iter.batches():
-        seb, batch_ids, *_ = batch
-        pd = seb.get_packed_seq()
+        for batch in batch_iter.batches([SentsGen(0), SentsGen(1)], input_are_sents=True):
+            seb, batch_ids, *_ = batch
+            pd = seb.get_packed_seq()
 
-        if batch_ids == ['id1', 'id2']:
-            assert seb.batch_size == 2
-            assert seb.max_len == 3
+            if batch_ids == ['id1', 'id2']:
+                assert seb.batch_size == 2
+                assert seb.max_len == 3
 
-            assert pd.data.shape == (4,)
-            assert pd.data.tolist() == [111, 121, 112, 120]
-            assert pd.batch_sizes.tolist() == [2, 1, 1]
-            assert pd.sorted_indices is not None
-            assert pd.sorted_indices.tolist() == [0, 1]
-        elif batch_ids == ['id10', 'id11', 'id12', 'id13']:
-            assert seb.batch_size == 4
-            assert seb.max_len == 4
+                assert pd.data.shape == (4,)
+                assert pd.data.tolist() == [111, 121, 112, 120]
+                assert pd.batch_sizes.tolist() == [2, 1, 1]
+                assert pd.sorted_indices is not None
+                assert pd.sorted_indices.tolist() == [0, 1]
+            elif batch_ids == ['id10', 'id11', 'id12', 'id13']:
+                assert seb.batch_size == 4
+                assert seb.max_len == 4
 
-            assert pd.data.shape == (9,)
-            # empty seq is replaced with "<pad>"
-            assert pd.data.tolist()[:6] == [4, 2, 1, 0, 5, 3]
-            assert pd.batch_sizes.tolist() == [4, 2, 2, 1]
-            assert pd.sorted_indices is not None
-            assert pd.sorted_indices.tolist() == [3, 2, 0, 1]
-        else:
-            raise RuntimeError("Unexpected result!")
+                assert pd.data.shape == (9,)
+                # empty seq is replaced with "<pad>"
+                assert pd.data.tolist()[:6] == [4, 2, 1, 0, 5, 3]
+                assert pd.batch_sizes.tolist() == [4, 2, 2, 1]
+                assert pd.sorted_indices is not None
+                assert pd.sorted_indices.tolist() == [3, 2, 0, 1]
+            else:
+                raise RuntimeError("Unexpected result!")
+    finally:
+        batch_iter.destroy()
 
 
 def test_sents_batch_async_gen_jagged_1():
-    batch_iter = SentsBatchAsyncGenerator(
+    batch_iter = BatchAsyncGenerator(
         EncoderInputType.JAGGED,
         DocEncoderConf(model_path=''),
         other_generator_args=(
@@ -170,40 +173,42 @@ def test_sents_batch_async_gen_jagged_1():
         ),
         async_generators=2,
     )
+    try:
+        batch_iter.start_workers()
 
-    batch_iter.start_workers([SentsGen(0), SentsGen(1)])
+        for batch in batch_iter.batches([SentsGen(0), SentsGen(1)], input_are_sents=True):
+            seb, batch_ids, *_ = batch
+            jagt = seb.get_jagged()
+            jagt_w_pos = seb.get_jagged_w_pos_ids()
 
-    for batch in batch_iter.batches():
-        seb, batch_ids, *_ = batch
-        jagt = seb.get_jagged()
-        jagt_w_pos = seb.get_jagged_w_pos_ids()
+            if batch_ids == ['id1', 'id2']:
+                assert seb.batch_size == 2
+                assert seb.max_len == 3
 
-        if batch_ids == ['id1', 'id2']:
-            assert seb.batch_size == 2
-            assert seb.max_len == 3
+                assert jagt.data.shape == (4,)
+                assert jagt.data.tolist() == [111, 112, 120, 121]
+                assert jagt.lengths.tolist() == [3, 1]
 
-            assert jagt.data.shape == (4,)
-            assert jagt.data.tolist() == [111, 112, 120, 121]
-            assert jagt.lengths.tolist() == [3, 1]
+                assert jagt_w_pos.position_ids.tolist() == [0, 1, 2, 0]
+            elif batch_ids == ['id10', 'id11', 'id12', 'id13']:
+                assert seb.batch_size == 4
+                assert seb.max_len == 4
 
-            assert jagt_w_pos.position_ids.tolist() == [0, 1, 2, 0]
-        elif batch_ids == ['id10', 'id11', 'id12', 'id13']:
-            assert seb.batch_size == 4
-            assert seb.max_len == 4
+                assert jagt.data.shape == (9,)
+                assert jagt.data.tolist() == [1, 0, 2, 3, 4, 4, 5, 6, 7]
+                assert jagt.lengths.tolist() == [1, 1, 3, 4]
 
-            assert jagt.data.shape == (9,)
-            assert jagt.data.tolist() == [1, 0, 2, 3, 4, 4, 5, 6, 7]
-            assert jagt.lengths.tolist() == [1, 1, 3, 4]
+                assert jagt_w_pos.position_ids.tolist() == [0, 0, 0, 1, 2, 0, 1, 2, 3]
 
-            assert jagt_w_pos.position_ids.tolist() == [0, 0, 0, 1, 2, 0, 1, 2, 3]
-
-        else:
-            raise RuntimeError("Unexpected result!")
+            else:
+                raise RuntimeError("Unexpected result!")
+    finally:
+        batch_iter.destroy()
 
 
 def test_sents_batch_async_gen_padded_1():
 
-    batch_iter = SentsBatchAsyncGenerator(
+    batch_iter = BatchAsyncGenerator(
         EncoderInputType.PADDED,
         DocEncoderConf(model_path=''),
         other_generator_args=(
@@ -212,28 +217,35 @@ def test_sents_batch_async_gen_padded_1():
         ),
         async_generators=2,
     )
+    try:
+        batch_iter.start_workers()
 
-    batch_iter.start_workers([SentsGen(0), SentsGen(1)])
+        for batch in batch_iter.batches([SentsGen(0), SentsGen(1)], input_are_sents=True):
+            seb, batch_ids, *_ = batch
+            padded = seb.get_padded()
 
-    for batch in batch_iter.batches():
-        seb, batch_ids, *_ = batch
-        padded = seb.get_padded()
+            if batch_ids == ['id1', 'id2']:
+                assert seb.batch_size == 2
+                assert seb.max_len == 3
 
-        if batch_ids == ['id1', 'id2']:
-            assert seb.batch_size == 2
-            assert seb.max_len == 3
+                assert padded.data.shape == (2, 3)
+                assert padded.data.tolist() == [[111, 112, 120], [121, 0, 0]]
+                assert padded.lengths.tolist() == [3, 1]
 
-            assert padded.data.shape == (2, 3)
-            assert padded.data.tolist() == [[111, 112, 120], [121, 0, 0]]
-            assert padded.lengths.tolist() == [3, 1]
+            elif batch_ids == ['id10', 'id11', 'id12', 'id13']:
+                assert seb.batch_size == 4
+                assert seb.max_len == 4
 
-        elif batch_ids == ['id10', 'id11', 'id12', 'id13']:
-            assert seb.batch_size == 4
-            assert seb.max_len == 4
+                assert padded.data.shape == (4, 4)
+                assert padded.data.tolist() == [
+                    [1, 0, 0, 0],
+                    [0, 0, 0, 0],
+                    [2, 3, 4, 0],
+                    [4, 5, 6, 7],
+                ]
+                assert padded.lengths.tolist() == [1, 1, 3, 4]
 
-            assert padded.data.shape == (4, 4)
-            assert padded.data.tolist() == [[1, 0, 0, 0], [0, 0, 0, 0], [2, 3, 4, 0], [4, 5, 6, 7]]
-            assert padded.lengths.tolist() == [1, 1, 3, 4]
-
-        else:
-            raise RuntimeError("Unexpected result!")
+            else:
+                raise RuntimeError("Unexpected result!")
+    finally:
+        batch_iter.destroy()

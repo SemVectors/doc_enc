@@ -130,7 +130,7 @@ class TextProcessor:
             sent_gen = (l.rstrip() for l in f)
             return self.prepare_text(sent_gen)
 
-    def prepare_sent(self, sent_str):
+    def prepare_sent(self, sent_str: str):
         tokens = self._tokenizer(sent_str)
         tokens = tokens[: self._conf.max_sent_len]
         return tokens

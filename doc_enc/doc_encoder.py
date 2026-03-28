@@ -96,200 +96,11 @@ class DocEncoderConf:
 # * Batch helpers
 
 
-# ** sents batch generators
-
 SentsGenFuncT = Callable[[], Generator[tuple[str | int, str | list[str]], None, None]]
 TextGenFuncT = SentsGenFuncT
 
 
-class BaseSentsBatchGenerator:
-    def __init__(
-        self,
-        enc_input_type: EncoderInputType,
-        conf: DocEncoderConf,
-        tp_conf: TextProcessorConf,
-        tp_state_dict,
-        pad_opts: PadOpts = PadOpts(),
-        eval_mode=True,
-    ) -> None:
-        self._enc_input_type = enc_input_type
-        self._conf = conf
-        self._tp = TextProcessor(tp_conf, inference_mode=eval_mode)
-        self._tp.load_state_dict(tp_state_dict)
-        self._pad_opts = pad_opts
-
-    # TODO move
-    # def _prepare_batch(self, sents: list[list[int]]):
-    #     if self._enc_input_type == EncoderInputType.PADDED:
-    #         raise NotImplementedError(f"{self._enc_input_type} not implemented")
-    #     if self._enc_input_type == EncoderInputType.PACKED:
-    #         tensor_list = [torch.tensor(s, dtype=torch.int32) for s in sents]
-    #         return torch.nn.utils.rnn.pack_sequence(tensor_list, enforce_sorted=False)
-
-    #     raise RuntimeError(f"Unsupported enc input type: {self._enc_input_type}")
-
-    def _create_in_data(self, sents: list[list[int]], sent_ids: list[str | int]):
-        return EncoderInData(
-            SeqEncoderBatchedInput.from_input_ids(
-                self._enc_input_type, sents, self._tp.vocab().pad_idx(), self._pad_opts
-            ),
-            sent_ids,
-            texts_repr=TextsRepr(sents, []),
-        )
-
-    def batches(self, generator_func: SentsGenFuncT) -> Generator[EncoderInData, None, None]:
-        sents: list[list[int]] = []
-        cur_token_cnt: int = 0
-        batch_sent_ids: list[str | int] = []
-
-        # TODO collect more data sort them by length?
-        # Only do it for PADDed and Packed?
-        # m = self._conf.bucket_multiplier
-        m = 1
-        # logging.error('start batches in generator %s')
-
-        for sent_id, sent_str in generator_func():
-            tokens = self._tp.prepare_sent(sent_str)
-            # TODO what to do with empty sequences?
-            if not tokens:
-                tokens = [self._tp.vocab().pad_idx()]
-
-            if sents and (
-                # TODO rename to max_seqs
-                len(sents) + 1 > m * self._conf.max_sents
-                or cur_token_cnt + len(tokens) > m * self._conf.max_tokens
-            ):
-
-                # logging.error('yielding some on  %s', cur_token_cnt)
-
-                yield self._create_in_data(sents, batch_sent_ids)
-                sents = []
-                batch_sent_ids = []
-                cur_token_cnt = 0
-
-            sents.append(tokens)
-            batch_sent_ids.append(sent_id)
-            cur_token_cnt += len(tokens)
-        if sents:
-            # logging.error('yielding last on  %s', cur_token_cnt)
-
-            yield self._create_in_data(sents, batch_sent_ids)
-
-
-def _proc_wrapper_for_sents_generator(
-    queue: multiprocessing.Queue,
-    generator_func: SentsGenFuncT,
-    shared_tensors_holder: EncInputSharedTensors,
-    *args,
-    **kwargs,
-):
-    torch.set_num_threads(1)
-    try:
-        generator = BaseSentsBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
-        for b in generator.batches(generator_func):
-            # logging.error('proc receive from %s')
-
-            d = serialize_enc_in_data(b, shared_tensors_holder)
-            # logging.error('serialized data-1 %s, text ids %s', d[:-1], len(b.text_ids))
-            queue.put(d)
-            # slot_num, shapes = shared_tensors_holder.put_tensors(b)
-            # queue.put((slot_num, shapes, b.text_ids))
-    except Exception as e:
-        print(type(e), str(e))
-        logging.exception("Failed to process batches: %s", e)
-
-    queue.put(None)
-
-
-class SentsBatchAsyncGenerator:
-    """The same as BaseSentsBatchGenerator, but uses background workers for
-    producing batches.
-    """
-
-    def __init__(
-        self,
-        enc_input_type: EncoderInputType,
-        conf: DocEncoderConf,
-        other_generator_args=(),
-        async_generators=1,
-        shared_tens_slots_cnt: int | None = None,
-    ):
-        self._generator_args = (conf,) + other_generator_args
-        self._async_generators = async_generators
-
-        self._processes = []
-        self._out_queue = multiprocessing.Queue(async_generators)
-
-        if shared_tens_slots_cnt is None:
-            # It increases consumption of shared memory, but more batches might be queued.
-            slots_multiplier = 3
-            shared_tens_slots_cnt = slots_multiplier * conf.async_batch_gen
-        self._shared_tensors_holder = EncInputSharedTensors(
-            enc_input_type,
-            conf.max_tokens,
-            conf.max_sents,
-            shared_tens_slots_cnt,
-        )
-
-    def destroy(self):
-        self._terminate_workers()
-        self._out_queue.close()
-
-    def _terminate_workers(self):
-        for p in self._processes:
-            p.terminate()
-            p.join()
-        self._processes = []
-
-    def start_workers(self, generator_funcs: Sequence[SentsGenFuncT]):
-        # logging.error("mp get start method %s", multiprocessing.get_start_method())
-        if len(generator_funcs) > self._async_generators:
-            raise RuntimeError(
-                "Passed generators number is greater than configured async generators"
-            )
-
-        proc_cnt = min(len(generator_funcs), self._async_generators)
-        for i in range(proc_cnt):
-            p = multiprocessing.Process(
-                target=_proc_wrapper_for_sents_generator,
-                # TODO it is strange that you pass all inited tensort to other proc (pickle and so on)
-                args=(self._out_queue, generator_funcs[i], self._shared_tensors_holder)
-                + self._generator_args,
-                kwargs={},
-            )
-            p.start()
-
-            self._processes.append(p)
-
-    def batches(self) -> Generator[EncoderInData, None, None]:
-        if not self._processes:
-            raise RuntimeError("Batch Iterator is not initialized!")
-
-        finished_processes = 0
-        proc_cnt = len(self._processes)
-        while finished_processes < proc_cnt:
-            logging.debug("sents queue len: %s", self._out_queue.qsize())
-            batch: tuple | None = self._out_queue.get()
-            if batch is None:
-                finished_processes += 1
-                continue
-            with deserialize_enc_in_data(batch, self._shared_tensors_holder) as b:
-                # logging.error(
-                #     "Batch deserialized %s, max len %s",
-                #     b.seq_encoder_input.batch_size,
-                #     b.seq_encoder_input.max_len,
-                # )
-                yield b
-            # slot_num, shapes, sent_ids = batch
-            # eid = EncoderInData(seq_encoder_input=None, text_ids=sent_ids)
-            # yield self._shared_tensors_holder.recreate_batch(slot_num, shapes)
-
-        for p in self._processes:
-            p.join()
-        self._processes = []
-
-
-# ** Docs batch generators
+# ** Texts batch generators
 
 
 class BaseBatchGenerator:
@@ -308,13 +119,25 @@ class BaseBatchGenerator:
         self._tp.load_state_dict(tp_state_dict)
         self._pad_opts = pad_opts
 
+    def _prepare_sent(
+        self, text: str | list[str], truncate_length_in_tokens: int
+    ) -> tuple[list[list[int]], list[int]]:
+        assert isinstance(text, str), "Prepare sent works only with str type."
+        return ([self._tp.prepare_sent(text)], [1])
+
+    def _prepare_text(
+        self, text: str | list[str], truncate_length_in_tokens: int
+    ) -> tuple[list[list[int]], list[int]]:
+        if isinstance(text, str):
+            text = text.split('\n')
+        return self._tp.prepare_text(text, truncate_length_in_tokens=truncate_length_in_tokens)
+
     def _create_in_data(
         self,
         segmented_texts: list[list[int]],
         text_lengths: list[list[int]],
         text_ids: list[str | int],
     ):
-        # TODO create textRepr
         return EncoderInData(
             SeqEncoderBatchedInput.from_input_ids(
                 self._enc_input_type, segmented_texts, self._tp.vocab().pad_idx(), self._pad_opts
@@ -323,97 +146,63 @@ class BaseBatchGenerator:
             TextsRepr(segmented_texts, text_lengths),
         )
 
-    def batches(self, generator_func: TextGenFuncT):
-        docs: list[list[int]] = []
-        doc_lengths: list[list[int]] = []
-        cur_token_cnt = 0
-        cur_segments_cnt = 0
-        text_ids_list = []
-        # TODO
+    def batches(self, generator_func: TextGenFuncT, input_are_sents: bool = False):
+        texts: list[list[int]] = []
+        text_lengths: list[list[int]] = []
+        text_ids_list: list[str | int] = []
+        cur_tokens_cnt = 0
+        cur_seqs_cnt = 0
+
+        if input_are_sents:
+            prepare_text_f = self._prepare_sent
+        else:
+            prepare_text_f = self._prepare_text
+
+        # TODO collect more data sort them by length?
+        # Only do it for PADDed and Packed?
         # m = self._conf.bucket_multiplier
         m = 1
-        truncate_length = m * self._conf.max_tokens
+        truncate_length = self._conf.max_tokens
         for text_id, text in generator_func():
-            if isinstance(text, str):
-                text = text.split('\n')
-
-            segmented_text, doc_segments_length = self._tp.prepare_text(
+            segmented_text, text_segments_length = prepare_text_f(
                 text, truncate_length_in_tokens=truncate_length
             )
-            token_cnt = sum(len(s) for s in segmented_text)
-            if token_cnt == truncate_length:
+            tokens_cnt = sum(len(s) for s in segmented_text)
+            if tokens_cnt == truncate_length:
                 logging.warning(
                     "text_truncated; text_id=%s, nsegments=%s, ntokens=%s",
                     text_id,
                     len(segmented_text),
-                    token_cnt,
+                    tokens_cnt,
                 )
-            if not token_cnt:
+            if not tokens_cnt:
                 segmented_text = [[self._tp.vocab().pad_idx()]]
-                doc_segments_length = [1]
-                token_cnt = 1
+                text_segments_length = [1]
+                tokens_cnt = 1
 
-            if docs and (
-                cur_segments_cnt + len(segmented_text) > m * self._conf.max_sents
-                or cur_token_cnt + token_cnt > m * self._conf.max_tokens
+            if texts and (
+                cur_seqs_cnt + len(segmented_text) > m * self._conf.max_sents
+                or cur_tokens_cnt + tokens_cnt > m * self._conf.max_tokens
             ):
-                yield self._create_in_data(docs, doc_lengths, text_ids_list)
-                # yield docs, doc_lengths, batch_idx_list
-                docs = []
-                doc_lengths = []
+                yield self._create_in_data(texts, text_lengths, text_ids_list)
+                texts = []
+                text_lengths = []
                 text_ids_list = []
-                cur_segments_cnt = 0
-                cur_token_cnt = 0
+                cur_seqs_cnt = 0
+                cur_tokens_cnt = 0
 
-            docs.extend(segmented_text)
-            doc_lengths.append(doc_segments_length)
+            texts.extend(segmented_text)
+            text_lengths.append(text_segments_length)
             text_ids_list.append(text_id)
-            cur_segments_cnt += len(segmented_text)
-            cur_token_cnt += token_cnt
-        if docs:
-            yield self._create_in_data(docs, doc_lengths, text_ids_list)
-            # yield docs, doc_lengths, text_ids_list
-
-
-# def _proc_wrapper_for_item_list(
-#     queue: multiprocessing.Queue, items: list[Any], fetcher, offset, *args, **kwargs
-# ):
-#     try:
-#         generator = BaseBatchGenerator(*args, **kwargs)
-#         for docs, doc_lengths, batch_idx_list in generator.batches(items, fetcher):
-#             batch_idx_list = [offset + i for i in batch_idx_list]
-#             queue.put((docs, doc_lengths, batch_idx_list))
-#     except Exception as e:
-#         # print(type(e), str(e))
-#         logging.exception("Failed to process batches: %s", e)
-
-#     queue.put(None)
-
-
-# def _proc_wrapper_for_item_generator(
-#     in_queue: multiprocessing.Queue, out_queue: multiprocessing.Queue, fetcher, *args, **kwargs
-# ):
-#     try:
-#         generator = BaseBatchGenerator(*args, **kwargs)
-
-#         while True:
-#             items = in_queue.get()
-#             if items is None:
-#                 break
-#             for docs, doc_lengths, batch_idx_list in generator.batches(items, fetcher):
-#                 batch_items = [items[i] for i in batch_idx_list]
-#                 out_queue.put((docs, doc_lengths, batch_items))
-#     except Exception as e:
-#         # print(type(e), str(e))
-#         logging.exception("Failed to process batches: %s", e)
-
-#     out_queue.put(None)
+            cur_seqs_cnt += len(segmented_text)
+            cur_tokens_cnt += tokens_cnt
+        if texts:
+            yield self._create_in_data(texts, text_lengths, text_ids_list)
 
 
 def _proc_wrapper_for_texts_generator(
     in_queue: multiprocessing.Queue,
     queue: multiprocessing.Queue,
-    # generator_func: SentsGenFuncT,
     shared_tensors_holder: EncInputSharedTensors,
     *args,
     **kwargs,
@@ -423,17 +212,13 @@ def _proc_wrapper_for_texts_generator(
         generator = BaseBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
 
         while True:
-            generator_func = in_queue.get()
+            generator_func, input_are_sents = in_queue.get()
             if generator_func is None:
                 break
-            for b in generator.batches(generator_func):
-                # logging.error('proc receive from %s')
+            for b in generator.batches(generator_func, input_are_sents):
 
                 d = serialize_enc_in_data(b, shared_tensors_holder)
-                # logging.error('serialized data-1 %s, text ids %s', d[:-1], len(b.text_ids))
                 queue.put(d)
-                # slot_num, shapes = shared_tensors_holder.put_tensors(b)
-                # queue.put((slot_num, shapes, b.text_ids))
             queue.put(None)
 
     except Exception as e:
@@ -471,7 +256,8 @@ class BatchAsyncGenerator:
             shared_tens_slots_cnt,
         )
 
-        self._in_queue = multiprocessing.Queue(3 * async_generators)
+        self._in_queue_capacity = 3 * async_generators
+        self._in_queue = multiprocessing.Queue(self._in_queue_capacity)
 
     def destroy(self):
         self._terminate_workers()
@@ -484,57 +270,11 @@ class BatchAsyncGenerator:
             p.join()
         self._processes = []
 
-    # def start_workers_for_item_list(self, items: list[Any], fetcher):
-    #     per_worker_items = math.ceil(len(items) / self._async_generators)
-    #     for offs in range(0, len(items), per_worker_items):
-    #         p = multiprocessing.Process(
-    #             target=_proc_wrapper_for_item_list,
-    #             args=(
-    #                 self._out_queue,
-    #                 items[offs : offs + per_worker_items],
-    #                 fetcher,
-    #                 offs,
-    #             )
-    #             + self._generator_args,
-    #             kwargs={},
-    #         )
-    #         p.start()
-
-    #         self._processes.append(p)
-
-    def _input_generator_thread(self, gens: Sequence[TextGenFuncT]):
+    def _input_generator_thread(self, gens: Sequence[TextGenFuncT], input_are_sents: bool):
         for func in gens:
-            self._in_queue.put(func)
-
-    # def start_workers_for_stream(self, items_generator, fetcher, batch_size=10):
-    #     for _ in range(self._async_generators):
-    #         p = multiprocessing.Process(
-    #             target=_proc_wrapper_for_item_generator,
-    #             args=(
-    #                 self._in_queue,
-    #                 self._out_queue,
-    #                 fetcher,
-    #             )
-    #             + self._generator_args,
-    #             kwargs={},
-    #         )
-    #         p.start()
-
-    #         self._processes.append(p)
-
-    #     self._generator_thread = threading.Thread(
-    #         target=self._input_generator_thread, args=(items_generator, batch_size)
-    #     )
-    #     self._generator_thread.start()
+            self._in_queue.put((func, input_are_sents))
 
     def start_workers(self):
-        # logging.error("mp get start method %s", multiprocessing.get_start_method())
-        # if len(generator_funcs) > self._async_generators:
-        #     raise RuntimeError(
-        #         "Passed generators number is greater than configured async generators"
-        #     )
-
-        # proc_cnt = min(len(generator_funcs), self._async_generators)
         proc_cnt = self._async_generators
         for _ in range(proc_cnt):
             p = multiprocessing.Process(
@@ -563,20 +303,26 @@ class BatchAsyncGenerator:
         )
 
     def batches(
-        self, generator_funcs: Sequence[TextGenFuncT]
+        self, generator_funcs: Sequence[TextGenFuncT], input_are_sents: bool = False
     ) -> Generator[EncoderInData, None, None]:
         if not self._processes:
             raise RuntimeError("Batch Iterator is not initialized!")
 
-        # generator_funcs could have many generators and in_queue has a limited
-        # capacity. If we put all generator_funcs to in_queue here we could
-        # block indefinetely. We could remove length limit of an in_queue, but I
-        # prefer a more general approach that would work even we will allow to
-        # pass generator of generator_funcs.
-        gen_thread = threading.Thread(target=self._input_generator_thread, args=(generator_funcs,))
-        gen_thread.start()
-
         ngens = len(generator_funcs)
+        if ngens < self._in_queue_capacity:
+            for g in generator_funcs:
+                self._in_queue.put((g, input_are_sents))
+            gen_thread = None
+        else:
+            # generator_funcs could have many generators and in_queue has a limited
+            # capacity. If we put all generator_funcs to in_queue here we could
+            # block indefinetely. We could remove length limit of an in_queue, but I
+            # prefer a more general approach that would work even we will allow to
+            # pass generator of generator_funcs.
+            gen_thread = threading.Thread(
+                target=self._input_generator_thread, args=(generator_funcs, input_are_sents)
+            )
+            gen_thread.start()
 
         finished_gens = 0
         while finished_gens < ngens:
@@ -590,135 +336,11 @@ class BatchAsyncGenerator:
             with deserialize_enc_in_data(batch, self._shared_tensors_holder) as b:
                 yield b
 
-        gen_thread.join()
-
-        # if self._generator_thread is not None:
-        #     self._in_queue.close()
-        #     self._generator_thread.join()
+        if gen_thread is not None:
+            gen_thread.join()
 
 
 # * Input helpers
-
-
-# class _InputData:
-#     def __init__(
-#         self,
-#         lengths_tensor: torch.Tensor,
-#         tokens_tensor: torch.Tensor | None = None,
-#         emb_tensor: torch.Tensor | None = None,
-#         already_sorted: bool = False,
-#     ) -> None:
-#         self._lengths_tensor = lengths_tensor
-#         self._tokens_tensor = tokens_tensor
-#         self._emb_tensor = emb_tensor
-#         self._already_sorted = already_sorted
-
-#     def input_tensor(self):
-#         if self._tokens_tensor is not None:
-#             return self._tokens_tensor
-#         if self._emb_tensor is not None:
-#             return self._emb_tensor
-#         raise RuntimeError("Logic error 1939")
-
-#     def lengths(self):
-#         return self._lengths_tensor
-
-#     def _update_kwargs(self, kwargs):
-#         if 'enforce_sorted' not in kwargs:
-#             kwargs['enforce_sorted'] = self._already_sorted
-
-#     def input_sorted(self):
-#         return self._already_sorted
-
-#     def as_kwargs(self):
-#         if self._tokens_tensor is not None:
-#             kwargs = {
-#                 'input_token_ids': self._tokens_tensor,
-#                 'input_seq_lengths': self._lengths_tensor,
-#             }
-
-#         elif self._emb_tensor is not None:
-#             kwargs = {
-#                 'input_embs': self._emb_tensor,
-#                 'input_seq_lengths': self._lengths_tensor,
-#                 'padded_seq_len': self._emb_tensor.shape[1],
-#             }
-#         else:
-#             raise RuntimeError("Logic error 1940")
-#         self._update_kwargs(kwargs)
-#         return kwargs
-
-#     def create_callback_for_split_input(
-#         self, encoder: SeqEncoder, embed: TokenEmbedding | None = None
-#     ):
-#         if self._tokens_tensor is not None:
-
-#             def _enc_cb(chunk, chunk_lengths, **kwargs):
-#                 self._update_kwargs(kwargs)
-#                 if embed is not None:
-#                     embs = embed(chunk)
-#                     return encoder(
-#                         input_embs=embs,
-#                         input_seq_lengths=chunk_lengths,
-#                         padded_seq_len=chunk.shape[1],
-#                         **kwargs,
-#                     )
-#                 return encoder(input_token_ids=chunk, input_seq_lengths=chunk_lengths, **kwargs)
-
-#             return _enc_cb
-
-#         if self._emb_tensor is not None:
-
-#             def _enc_cb(chunk, chunk_lengths, **kwargs):
-#                 self._update_kwargs(kwargs)
-#                 padded_seq_len = chunk.shape[1]
-#                 return encoder(
-#                     input_embs=chunk,
-#                     input_seq_lengths=chunk_lengths,
-#                     padded_seq_len=padded_seq_len,
-#                     **kwargs,
-#                 )
-
-#             return _enc_cb
-
-#         raise RuntimeError("Logic error 1941")
-
-
-# def _create_callback_for_split_input(encoder: SeqEncoder, embed: TokenEmbedding | None = None):
-#     if embed is not None:
-#         embs = embed(chunk)
-
-#     if self._tokens_tensor is not None:
-
-#         def _enc_cb(input_data: SeqEncoderBatchedInput, **kwargs):
-#             # self._update_kwargs(kwargs)
-#             if embed is not None:
-#                 embs = embed(chunk)
-#                 return encoder(
-#                     input_embs=embs,
-#                     input_seq_lengths=chunk_lengths,
-#                     padded_seq_len=chunk.shape[1],
-#                     **kwargs,
-#                 )
-#             return encoder(input_token_ids=chunk, input_seq_lengths=chunk_lengths, **kwargs)
-
-#         return _enc_cb
-
-#     if self._emb_tensor is not None:
-
-#         def _enc_cb(chunk, chunk_lengths, **kwargs):
-#             self._update_kwargs(kwargs)
-#             padded_seq_len = chunk.shape[1]
-#             return encoder(
-#                 input_embs=chunk,
-#                 input_seq_lengths=chunk_lengths,
-#                 padded_seq_len=padded_seq_len,
-#                 **kwargs,
-#             )
-
-#         return _enc_cb
-
-#     raise RuntimeError("Logic error 1941")
 
 
 def encode_input_data(
@@ -731,17 +353,14 @@ def encode_input_data(
     max_tokens_in_chunk=48_000,
 ):
     def _enc_cb(input_data: SeqEncoderBatchedInput, **kwargs):
-        # self._update_kwargs(kwargs)
         if embed is not None:
             input_data.embed_(embed)
-            # embs = embed(chunk)
 
         return encoder(input_data, **kwargs)
 
     # logging.error("Encode input data: bs %s, max len %s", input_data.batch_size, input_data.max_len)
 
     if encoder.input_type() == EncoderInputType.PADDED:
-        # enc_cb = _create_callback_for_split_input(encoder, embed)
 
         if not split_data:
             # TODO handle collect_on_cpu == True ??
@@ -1192,21 +811,6 @@ class EncodeModule(BaseEncodeModule):
             self.first_encode_layer().get_padding_side(),
         )
 
-    def create_sents_batch_generator(self, eval_mode=True):
-        po = self._create_pad_opts()
-        return BaseSentsBatchGenerator(
-            self.input_type(), self._conf, self._tp_conf, self._tp_state_dict, po, eval_mode
-        )
-
-    def create_sents_batch_async_generator(self, eval_mode=True):
-        po = self._create_pad_opts()
-        return SentsBatchAsyncGenerator(
-            self.input_type(),
-            self._conf,
-            (self._tp_conf, self._tp_state_dict, po, eval_mode),
-            self._conf.async_batch_gen,
-        )
-
     def create_batch_generator(self, eval_mode=True):
         po = self._create_pad_opts()
         return BaseBatchGenerator(
@@ -1403,7 +1007,7 @@ class DocEncoder:
         if not self._enc_module.sent_encoding_supported():
             raise RuntimeError("Sent encoding is unsupported by this model!")
 
-        batch_gen = self._enc_module.create_sents_batch_generator()
+        batch_gen = self._enc_module.create_batch_generator()
 
         all_embs = []
         all_ids = []
@@ -1487,24 +1091,19 @@ class DocEncoder:
 
         if not self._enc_module.sent_encoding_supported():
             raise RuntimeError("Sent encoding is unsupported by this model!")
-        # TODO create async generator onece at start
-        # Need other queue to send requests
-        batch_generator = self._enc_module.create_sents_batch_async_generator()
-        batch_generator.start_workers(generator_funcs)
+        # batch_generator = self._enc_module.create_batch_async_generator()
+        # batch_generator.start_workers()
 
-        try:
-            for batch in batch_generator.batches():
-                if stat is not None:
-                    stat.total_tokens_cnt += batch.seq_encoder_input.ntokens()
-                    stat.sents_cnt += batch.seq_encoder_input.batch_size
+        for batch in self._batch_gen.batches(generator_funcs, input_are_sents=True):
+            if stat is not None:
+                stat.total_tokens_cnt += batch.seq_encoder_input.ntokens()
+                stat.sents_cnt += batch.seq_encoder_input.batch_size
 
-                sent_embs = self._encode_sents(batch)
-                if self.conf().normalize_vecs:
-                    sent_embs = F.normalize(sent_embs, p=2, dim=1)
-                sent_embs = sent_embs.to(device='cpu').numpy()
-                yield batch.text_ids, sent_embs
-        finally:
-            batch_generator.destroy()
+            sent_embs = self._encode_sents(batch)
+            if self.conf().normalize_vecs:
+                sent_embs = F.normalize(sent_embs, p=2, dim=1)
+            sent_embs = sent_embs.to(device='cpu').numpy()
+            yield batch.text_ids, sent_embs
 
     def generate_sent_embs_from_file(
         self,
@@ -1664,15 +1263,12 @@ class DocEncoder:
         This method yields the tuple of doc id (that was returned by `doc_id_generator`) and doc vectors.
         """
 
-        batch_async_gen = self._enc_module.create_batch_async_generator()
-        batch_async_gen.start_workers(generator_funcs)
-        try:
-            for input_data in batch_async_gen.batches():
-                if stat is not None:
-                    self._update_doc_stat(input_data, stat)
-                doc_embs = self._encode_docs(input_data)
-                if self.conf().normalize_vecs:
-                    doc_embs = F.normalize(doc_embs, p=2, dim=1)
-                yield input_data.text_ids, doc_embs.to(device='cpu').numpy()
-        finally:
-            batch_async_gen.destroy()
+        # batch_async_gen = self._enc_module.create_batch_async_generator()
+        # batch_async_gen.start_workers()
+        for input_data in self._batch_gen.batches(generator_funcs):
+            if stat is not None:
+                self._update_doc_stat(input_data, stat)
+            doc_embs = self._encode_docs(input_data)
+            if self.conf().normalize_vecs:
+                doc_embs = F.normalize(doc_embs, p=2, dim=1)
+            yield input_data.text_ids, doc_embs.to(device='cpu').numpy()
