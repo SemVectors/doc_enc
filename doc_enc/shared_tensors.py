@@ -53,11 +53,12 @@ class TorchSharedTensorsHolder:
             functools.reduce(lambda c, i: i * c, shape, 1) for shape in self._buf_shapes
         ]
 
-        self._shared_tensors_pool = []
+        self._shared_tensors_pool: list[list[torch.Tensor]] = []
         for _ in range(slots_cnt):
-            tensors = []
+            tensors: list[torch.Tensor] = []
             for shape, dtype in zip(self._buf_shapes, self._dtypes):
-                t = torch.empty(shape, dtype=dtype)
+                count = functools.reduce(lambda c, i: i * c, shape, 1)
+                t = torch.empty((count,), dtype=dtype)
                 t.share_memory_()
                 tensors.append(t)
             self._shared_tensors_pool.append(tensors)
@@ -78,10 +79,14 @@ class TorchSharedTensorsHolder:
         ts = self._shared_tensors_pool[slot]
         tensors = []
         for shared_tensor, dtype, shape in zip(ts, self._dtypes, shapes, strict=True):
+
             if shape is not None:
                 # access to underluing buffer that is resided in shared memory
                 buf = shared_tensor.numpy().data
                 count = functools.reduce(lambda c, i: i * c, shape, 1)
+                # Shared tensor has shape that is >= the shape of actual tensor,
+                # so we cant just use .view() on shared tensor. Create tensor
+                # that has the same number of elements that actual tensor.
                 t = torch.frombuffer(buf, dtype=dtype, count=count).view(shape)
                 tensors.append(t)
             else:
@@ -124,12 +129,7 @@ class TorchSharedTensorsHolder:
             if ten.dtype != dtype:
                 raise RuntimeError(f"Mismatching dtype: got {ten.dtype}, expected {dtype}!")
 
-            # access to underluing buffer that is resided in shared memory
-            buf = shared_tensor.numpy().data
-            # We need to create temp tensor that has the same number of elements that ten
-            temp_tensor = torch.frombuffer(buf, dtype=ten.dtype, count=numel).view(ten.size())
-            # copy tensor to shared memory
-            temp_tensor[:] = ten
+            shared_tensor[:numel] = ten.view(numel)
         return free_slot
 
 
