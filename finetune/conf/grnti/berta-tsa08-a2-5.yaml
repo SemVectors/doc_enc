@@ -33,7 +33,6 @@ max_sents: 512
 max_tokens: 7_000
 bucket_multiplier: 6
 
-truncate_long_docs: true
 validation_metric: macro_F1
 
 save_dev_eval_stat: true

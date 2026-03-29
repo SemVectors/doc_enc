@@ -135,8 +135,8 @@ class SeqEncoder(nn.Module):
         if enc_state := state_dict['encoder']:
             self.encoder.load_state_dict(enc_state, **kwargs)
 
-        if 'beg_seq_param' in state_dict:
-            self.beg_seq_param = state_dict['beg_seq_param']
+        if self.beg_seq_param is not None:
+            self.beg_seq_param.data = state_dict['beg_seq_param']
 
         if 'pos_emb' in state_dict:
             self.pos_emb.load_state_dict(state_dict['pos_emb'], **kwargs)

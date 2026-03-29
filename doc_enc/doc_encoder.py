@@ -120,17 +120,21 @@ class BaseBatchGenerator:
         self._pad_opts = pad_opts
 
     def _prepare_sent(
-        self, text: str | list[str], truncate_length_in_tokens: int
+        self, text: str | list[str], truncate_length_in_tokens: int, truncate_length_in_seqs: int
     ) -> tuple[list[list[int]], list[int]]:
         assert isinstance(text, str), "Prepare sent works only with str type."
         return ([self._tp.prepare_sent(text)], [1])
 
     def _prepare_text(
-        self, text: str | list[str], truncate_length_in_tokens: int
+        self, text: str | list[str], truncate_length_in_tokens: int, truncate_length_in_seqs: int
     ) -> tuple[list[list[int]], list[int]]:
         if isinstance(text, str):
             text = text.split('\n')
-        return self._tp.prepare_text(text, truncate_length_in_tokens=truncate_length_in_tokens)
+        return self._tp.prepare_text(
+            text,
+            truncate_length_in_tokens=truncate_length_in_tokens,
+            truncate_length_in_seqs=truncate_length_in_seqs,
+        )
 
     def _create_in_data(
         self,
@@ -162,14 +166,23 @@ class BaseBatchGenerator:
         # Only do it for PADDed and Packed?
         # m = self._conf.bucket_multiplier
         m = 1
-        truncate_length = self._conf.max_tokens
+        truncate_length_in_tokens = self._conf.max_tokens
+        truncate_length_in_seqs = self._conf.max_sents
+
         for text_id, text in generator_func():
             segmented_text, text_segments_length = prepare_text_f(
-                text, truncate_length_in_tokens=truncate_length
+                text,
+                truncate_length_in_tokens=truncate_length_in_tokens,
+                truncate_length_in_seqs=truncate_length_in_seqs,
             )
+
             tokens_cnt = sum(len(s) for s in segmented_text)
-            if tokens_cnt == truncate_length:
-                logging.warning(
+            if (
+                len(segmented_text) == truncate_length_in_seqs
+                or tokens_cnt == truncate_length_in_tokens
+            ):
+                # TODO how to signal about truncation?
+                logging.debug(
                     "text_truncated; text_id=%s, nsegments=%s, ntokens=%s",
                     text_id,
                     len(segmented_text),
@@ -258,6 +271,9 @@ class BatchAsyncGenerator:
 
         self._in_queue_capacity = 3 * async_generators
         self._in_queue = multiprocessing.Queue(self._in_queue_capacity)
+
+    def nproc(self):
+        return self._async_generators
 
     def destroy(self):
         self._terminate_workers()
@@ -819,12 +835,14 @@ class EncodeModule(BaseEncodeModule):
 
     def create_batch_async_generator(self, eval_mode=True):
         po = self._create_pad_opts()
-        return BatchAsyncGenerator(
+        gen = BatchAsyncGenerator(
             self.input_type(),
             self._conf,
             (self._tp_conf, self._tp_state_dict, po, eval_mode),
             self._conf.async_batch_gen,
         )
+        gen.start_workers()
+        return gen
 
     def encode_sents(self, input_data: EncoderInData, collect_on_cpu=False, already_sorted=False):
         if self.sent_layer is not None:
@@ -897,7 +915,9 @@ class TextsFromPathListGen:
                 yield self.offs + idx, sents
 
 
-def create_split_of_text_gens(text_id_list: list[Any], nsplits: int, gen_cls):
+def create_text_gens_from_ids_list(
+    text_id_list: list[Any], nsplits: int, gen_cls: type = TextsFromPathListGen
+):
     per_worker_items = math.ceil(len(text_id_list) / nsplits)
     gens = []
     for offs in range(0, len(text_id_list), per_worker_items):
@@ -952,7 +972,6 @@ class DocEncoder:
         self._eval_mode = eval_mode
 
         self._batch_gen = self._enc_module.create_batch_async_generator()
-        self._batch_gen.start_workers()
 
         self._destroyed = False
 
@@ -1181,8 +1200,8 @@ class DocEncoder:
         # gens = []
         # for offs in range(0, len(path_list), per_worker_items):
         #     gens.append(TextsFromPathListGen(path_list[offs : offs + per_worker_items], offs))
-        gens = create_split_of_text_gens(
-            path_list, self.conf().async_batch_gen, TextsFromPathListGen
+        gens = create_text_gens_from_ids_list(
+            path_list, 10 * self.conf().async_batch_gen, TextsFromPathListGen
         )
 
         # batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)

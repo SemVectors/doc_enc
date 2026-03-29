@@ -7,7 +7,7 @@ from doc_enc.doc_encoder import (
     DocEncoderConf,
     BatchAsyncGenerator,
     # SentsBatchAsyncGenerator,
-    create_split_of_text_gens,
+    create_text_gens_from_ids_list,
 )
 
 
@@ -44,7 +44,7 @@ def test_batch_async_gen_1():
         ['331 332', '321', '331'],
         ['411', '421 422', '431 432 433 434'],
     ]
-    gens = create_split_of_text_gens(items, 2, _Fetcher)
+    gens = create_text_gens_from_ids_list(items, 2, _Fetcher)
     try:
         batch_iter.start_workers()
         for batch in batch_iter.batches(gens):

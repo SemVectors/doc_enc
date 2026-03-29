@@ -56,7 +56,10 @@ class TextProcessor:
         return False
 
     def prepare_text(
-        self, text_sents: Iterable[str], truncate_length_in_tokens: int = 0
+        self,
+        text_sents: Iterable[str],
+        truncate_length_in_tokens: int = 0,
+        truncate_length_in_seqs: int = 0,
     ) -> tuple[list[list[int]], list[int]]:
         segmented_text: list[list[int]] = []
         doc_segments_length: list[int] = []
@@ -78,6 +81,10 @@ class TextProcessor:
                     ):
                         tokens = tokens[: truncate_length_in_tokens - cur_len_in_tokens]
                     segmented_text.append(tokens)
+
+                    if truncate_length_in_seqs and len(segmented_text) >= truncate_length_in_seqs:
+                        break
+
                     cur_len_in_tokens += len(tokens)
                     if cur_len_in_tokens == truncate_length_in_tokens:
                         break
@@ -107,6 +114,10 @@ class TextProcessor:
                 ):
                     tokens = tokens[: truncate_length_in_tokens - cur_len_in_tokens]
                 segmented_text.append(tokens)
+
+                if truncate_length_in_seqs and len(segmented_text) >= truncate_length_in_seqs:
+                    break
+
                 cur_len_in_tokens += len(tokens)
                 if cur_len_in_tokens == truncate_length_in_tokens:
                     break

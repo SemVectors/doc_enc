@@ -7,7 +7,13 @@ import os
 import numpy as np
 import torch
 
-from doc_enc.doc_encoder import DocEncoder, DocEncoderConf, file_path_fetcher, TextProcOverride, ConfOverrides
+from doc_enc.doc_encoder import (
+    DocEncoder,
+    DocEncoderConf,
+    TextProcOverride,
+    ConfOverrides,
+    create_text_gens_from_ids_list,
+)
 from doc_enc.doc_classifier import DocClassifier
 
 from doc_enc.utils import global_init
@@ -40,7 +46,9 @@ def _compute_embs(args, doc_encoder: DocEncoder):
     batch_i = 0
     embs = []
     ids = []
-    for batch_ids, batch_embs in doc_encoder.encode_docs_stream(
+
+    gens = create_text_gens_from_ids_list(path_list, batch_gen.nproc())
+    for batch_ids, batch_embs in doc_encoder.encode_docs_from_generators(
         _paths_gen(args.input_file), fetcher=file_path_fetcher, batch_size=args.batch_size
     ):
         embs.append(batch_embs)
@@ -53,6 +61,7 @@ def _compute_embs(args, doc_encoder: DocEncoder):
     if ids:
         _save(args, output_dir_path, ids, embs, batch_i)
 
+
 def _create_doc_enc_conf(args):
     conf = DocEncoderConf(
         model_path=args.model_path,
@@ -62,12 +71,13 @@ def _create_doc_enc_conf(args):
         enable_amp=args.enable_amp,
         bucket_multiplier=args.bucket_multiplier,
         async_batch_gen=args.async_batch_gen,
-        ensure_flash_attn = args.ensure_flash_attn
+        ensure_flash_attn=args.ensure_flash_attn,
     )
     if args.max_seq_len != -1:
         conf.overrides = ConfOverrides(text_proc=TextProcOverride(args.max_seq_len))
-    
+
     return conf
+
 
 def run_compute_embs(args):
     conf = _create_doc_enc_conf(args)

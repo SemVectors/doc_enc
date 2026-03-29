@@ -4,7 +4,7 @@ defaults:
   - _self_
 
 model_path: >-
-  /home/dvzubarev/Workspace/projects/semvectors/tuning/trans/doc_trans_full1-9-4/model.pt
+  /home/dvzubarev/Workspace/projects/semvectors/models/doc-1-9-4.pt
 use_gpu: 0
 train_meta_path: >-
   /home/dvzubarev/Workspace/projects/semvectors/finetune-data/classif-mini/train.csv

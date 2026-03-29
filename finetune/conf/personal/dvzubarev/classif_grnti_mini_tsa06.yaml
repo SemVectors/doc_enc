@@ -6,7 +6,6 @@ defaults:
 max_sents: 2048
 max_tokens: 96_000
 enable_amp: true
-truncate_long_docs: true
 async_batch_gen: 1
 # lr: 0.00005
 lr: 0.0001

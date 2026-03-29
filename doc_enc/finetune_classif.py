@@ -11,6 +11,7 @@ import re
 import random
 from enum import IntEnum
 from typing import Any, List, Optional
+import typing
 
 
 import hydra
@@ -28,7 +29,13 @@ from torch.amp.autocast_mode import autocast
 import torch.nn.functional as F
 
 
-from doc_enc.doc_encoder import DocEncoderConf, EncodeModule, BatchIterator, file_path_fetcher
+from doc_enc.doc_encoder import (
+    DocEncoderConf,
+    EncodeModule,
+    BatchAsyncGenerator,
+    create_text_gens_from_ids_list,
+)
+from doc_enc.encoders.enc_in import EncoderInData
 from doc_enc.utils import global_init
 
 # * Configs
@@ -183,15 +190,15 @@ class DocClassifierModule(nn.Module):
 
         self.predictor: AbcPredictor | None = None
 
-    def forward(self, docs, doc_fragments):
-        embeddings = self.encoder(docs, doc_fragments)
+    def forward(self, input_data: EncoderInData):
+        embeddings = self.encoder(input_data)
         if self.encoder.last_encode_layer().conf.transformers_torch_fp16:
             embeddings = embeddings.to(dtype=torch.float32)
         return self.cls_head(embeddings)
 
-    def predictions_with_weights(self, docs, doc_fragments) -> list[list[tuple[str, float]]]:
+    def predictions_with_weights(self, input_data: EncoderInData) -> list[list[tuple[str, float]]]:
         assert self.predictor is not None, "DocClassifierModule: predictor is not inited!"
-        outputs = self.forward(docs, doc_fragments)
+        outputs = self.forward(input_data)
         return self.predictor.predictions_with_weights(outputs)
 
 
@@ -265,11 +272,11 @@ class ClassifDataStat:
         self.cumul_labels_per_text = 0
 
 
-class ClassifBatchIterator:
+class ClassifBatchAsyncGenerator:
     def __init__(
-        self, meta_path, base_data_dir, docs_iter: BatchIterator, labels_mapping, device=None
+        self, meta_path, base_data_dir, docs_gen: BatchAsyncGenerator, labels_mapping, device=None
     ) -> None:
-        self._docs_iter = docs_iter
+        self._docs_gen = docs_gen
 
         self._path_list = []
         self._labels_list: list[list[int]] = []
@@ -321,7 +328,7 @@ class ClassifBatchIterator:
         return len(self._labels_list)
 
     def destroy(self):
-        self._docs_iter.destroy()
+        self._docs_gen.destroy()
 
     def multi_label(self):
         return self._multi_label
@@ -330,9 +337,9 @@ class ClassifBatchIterator:
         return self._device if self._device is not None else torch.device('cpu')
 
     def batches(self):
-        self._docs_iter.start_workers_for_item_list(self._path_list, file_path_fetcher)
-
-        for docs, doc_fragments, idxs in self._docs_iter.batches():
+        gens = create_text_gens_from_ids_list(self._path_list, 10 * self._docs_gen.nproc())
+        for input_data in self._docs_gen.batches(gens):
+            idxs = typing.cast(list[int], input_data.text_ids)
             if self._multi_label:
                 # Loss function (BCE) expects target to have float type
                 labels = torch.full(
@@ -348,7 +355,7 @@ class ClassifBatchIterator:
                 labels = torch.as_tensor(
                     [self._labels_list[i][0] for i in idxs], dtype=torch.long, device=self._device
                 )
-            yield docs, doc_fragments, labels
+            yield input_data, labels
 
 
 # * Predictors
@@ -1122,7 +1129,7 @@ def _train_classif(conf: ClassifFineTuneConf):
     model = _create_clsf_module(conf)
     logging.info("Model:\n%s", model)
 
-    train_iter = ClassifBatchIterator(
+    train_iter = ClassifBatchAsyncGenerator(
         conf.train_meta_path,
         conf.data_dir,
         model.encoder.create_batch_async_generator(eval_mode=False),
@@ -1146,7 +1153,7 @@ def classif_fine_tune(conf: ClassifFineTuneConf):
         logging.info("Evaling on test:")
         logging.info("Loading saved model from %s", conf.model_path)
 
-        model = load_clsf_module(conf)
+        model = load_clsf_module(conf, eval_mode=True)
         conf.nlabels = model.nlabels
         labels_mapping = model.encoder._state_dict['labels_mapping']
         labels_index = model.encoder._state_dict['labels_index']
@@ -1224,7 +1231,7 @@ def _calc_loss(outputs: torch.Tensor, labels: torch.Tensor, multi_label: bool):
 
 def _train_loop(
     conf: ClassifFineTuneConf,
-    train_iter: ClassifBatchIterator,
+    train_iter: ClassifBatchAsyncGenerator,
     model: DocClassifierModule,
     labels_data: LabelsData,
 ):
@@ -1251,14 +1258,14 @@ def _train_loop(
     while update_nums < conf.max_updates:
         epoch += 1
         logging.info("Starting %s epoch", epoch)
-        for docs, doc_fragments, labels in train_iter.batches():
+        for input_data, labels in train_iter.batches():
             # zero the parameter gradients
             model.train(mode=True)
             optimizer.zero_grad()
 
             # forward + backward + optimize
             with autocast(train_iter.device().type, enabled=conf.enable_amp):
-                outputs = model(docs, doc_fragments)
+                outputs = model(input_data)
                 loss = _calc_loss(outputs, labels, train_iter.multi_label())
 
             scaler.scale(loss).backward()
@@ -1475,37 +1482,39 @@ def eval_on_dataset(
 ):
     model.eval()
     device = model.encoder.device
-    test_iter = ClassifBatchIterator(
+    test_iter = ClassifBatchAsyncGenerator(
         meta_path,
         conf.data_dir,
         model.encoder.create_batch_async_generator(eval_mode=True),
         labels_mapping=labels_data.labels_mapping,
         device=device,
     )
-
-    if test_iter.multi_label():
-        if model.predictor is not None:
-            evalor = MultiLabelTestEvaluator(conf.nlabels, predictor=model.predictor)
+    try:
+        if test_iter.multi_label():
+            if model.predictor is not None:
+                evalor = MultiLabelTestEvaluator(conf.nlabels, predictor=model.predictor)
+            else:
+                assert last_eval_results is not None, "Logic error dev 821"
+                evalor = MultiLabelDevEvaluator(
+                    conf,
+                    device=device,
+                    labels_data=labels_data,
+                    last_eval_results=last_eval_results,
+                    labels_stat=labels_stat,
+                )
         else:
-            assert last_eval_results is not None, "Logic error dev 821"
-            evalor = MultiLabelDevEvaluator(
-                conf,
-                device=device,
-                labels_data=labels_data,
-                last_eval_results=last_eval_results,
-                labels_stat=labels_stat,
-            )
-    else:
-        evalor = MultiClassEvaluator(conf.nlabels)
+            evalor = MultiClassEvaluator(conf.nlabels)
 
-    for docs, doc_fragments, labels in test_iter.batches():
+        for input_data, labels in test_iter.batches():
 
-        with autocast(device.type, enabled=conf.enable_amp):
-            output = model(docs, doc_fragments)
+            with autocast(device.type, enabled=conf.enable_amp):
+                output = model(input_data)
 
-        evalor(output, labels)
+            evalor(output, labels)
 
-    return evalor.compute()
+        return evalor.compute()
+    finally:
+        test_iter.destroy()
 
 
 def _save_model(
@@ -1536,5 +1545,5 @@ def fine_tune_classif_cli(conf: ClassifFineTuneConf) -> None:
 
 
 if __name__ == "__main__":
-    global_init()
+    # global_init()
     fine_tune_classif_cli()

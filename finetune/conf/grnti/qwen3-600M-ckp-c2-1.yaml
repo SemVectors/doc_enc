@@ -32,7 +32,6 @@ max_sents: 8192
 max_tokens: 6_500
 bucket_multiplier: 4
 
-truncate_long_docs: true
 
 validation_metric: macro_F1
 

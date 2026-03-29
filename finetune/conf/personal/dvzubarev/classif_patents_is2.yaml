@@ -19,4 +19,3 @@ max_sents: 4096
 max_tokens: 160_000
 bucket_multiplier: 3
 lr: 0.00007
-truncate_long_docs: true
