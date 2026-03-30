@@ -117,7 +117,9 @@ class TransformersAutoModel(BaseTransformersAutoModel):
 
         self.fa_enabled = False
         if attn_impl := kwargs.get('attn_implementation', ''):
-            self.fa_enabled = attn_impl[:-2].endswith('flash_attention')
+            self.fa_enabled = attn_impl.endswith('flash_attention') or attn_impl[:-2].endswith(
+                'flash_attention'
+            )
 
         self._input_type = self._init_input_type(config)
 

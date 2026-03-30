@@ -95,9 +95,9 @@ class TextsRepr:
         self.first_level_lengths = torch.tensor([len(s) for s in text_segments], dtype=torch.int32)
         self.second_level_lengths = None
         self.third_level_lengths = None
-        is_trivial = all(len(ls) == 1 and ls[0] == 1 for ls in text_lengths)
+        # is_trivial = not text_lengths or all(len(ls) == 1 and ls[0] == 1 for ls in text_lengths)
 
-        if not is_trivial:
+        if text_lengths:
             self.second_level_lengths = torch.tensor(
                 [lng for s in text_lengths for lng in s], dtype=torch.int32
             )

@@ -75,7 +75,7 @@ def split_padded_input_and_encode(
             raise RuntimeError("Unknown value of padding_side: " + pad_opts.padding_side)
 
         input_data = SeqEncoderBatchedInput(EncoderInputType.PADDED)
-        logging.error("Split chunk: bs %s, max len %s", cnt, chunk_max_len)
+        # logging.error("Split chunk: bs %s, max len %s", cnt, chunk_max_len)
         input_data.batch_size = cnt
         input_data.max_len = chunk_max_len
         input_data.batch = orig_padded._replace(

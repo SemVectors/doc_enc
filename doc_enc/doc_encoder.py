@@ -141,13 +141,18 @@ class BaseBatchGenerator:
         segmented_texts: list[list[int]],
         text_lengths: list[list[int]],
         text_ids: list[str | int],
+        input_are_sents: bool = False,
     ):
         return EncoderInData(
             SeqEncoderBatchedInput.from_input_ids(
                 self._enc_input_type, segmented_texts, self._tp.vocab().pad_idx(), self._pad_opts
             ),
             text_ids,
-            TextsRepr(segmented_texts, text_lengths),
+            (
+                TextsRepr(segmented_texts, text_lengths)
+                if not input_are_sents
+                else TextsRepr(segmented_texts, [])
+            ),
         )
 
     def batches(self, generator_func: TextGenFuncT, input_are_sents: bool = False):
@@ -168,6 +173,8 @@ class BaseBatchGenerator:
         m = 1
         truncate_length_in_tokens = self._conf.max_tokens
         truncate_length_in_seqs = self._conf.max_sents
+        ntruncated_by_tokens = 0
+        ntruncated_by_seqs = 0
 
         for text_id, text in generator_func():
             segmented_text, text_segments_length = prepare_text_f(
@@ -177,17 +184,20 @@ class BaseBatchGenerator:
             )
 
             tokens_cnt = sum(len(s) for s in segmented_text)
-            if (
-                len(segmented_text) == truncate_length_in_seqs
-                or tokens_cnt == truncate_length_in_tokens
+            if (by_seqs := len(segmented_text) == truncate_length_in_seqs) or (
+                tokens_cnt == truncate_length_in_tokens
             ):
-                # TODO how to signal about truncation?
                 logging.debug(
                     "text_truncated; text_id=%s, nsegments=%s, ntokens=%s",
                     text_id,
                     len(segmented_text),
                     tokens_cnt,
                 )
+                if by_seqs:
+                    ntruncated_by_seqs += 1
+                else:
+                    ntruncated_by_tokens += 1
+
             if not tokens_cnt:
                 segmented_text = [[self._tp.vocab().pad_idx()]]
                 text_segments_length = [1]
@@ -197,7 +207,9 @@ class BaseBatchGenerator:
                 cur_seqs_cnt + len(segmented_text) > m * self._conf.max_sents
                 or cur_tokens_cnt + tokens_cnt > m * self._conf.max_tokens
             ):
-                yield self._create_in_data(texts, text_lengths, text_ids_list)
+                yield self._create_in_data(
+                    texts, text_lengths, text_ids_list, input_are_sents=input_are_sents
+                )
                 texts = []
                 text_lengths = []
                 text_ids_list = []
@@ -210,7 +222,16 @@ class BaseBatchGenerator:
             cur_seqs_cnt += len(segmented_text)
             cur_tokens_cnt += tokens_cnt
         if texts:
-            yield self._create_in_data(texts, text_lengths, text_ids_list)
+            yield self._create_in_data(
+                texts, text_lengths, text_ids_list, input_are_sents=input_are_sents
+            )
+
+        if ntruncated_by_tokens or ntruncated_by_seqs:
+            logging.debug(
+                "text_truncated: by_tokens=%s, by_seqs_cnt=%s",
+                ntruncated_by_tokens,
+                ntruncated_by_seqs,
+            )
 
 
 def _proc_wrapper_for_texts_generator(
