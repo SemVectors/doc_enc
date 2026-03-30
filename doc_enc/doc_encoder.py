@@ -324,19 +324,20 @@ class BatchAsyncGenerator:
 
             self._processes.append(p)
 
-    def _print_debug_info_for_batch(self, batch):
+    def _print_debug_info_for_batch(self, batch: EncoderInData):
         if not logging.getLogger().isEnabledFor(logging.DEBUG):
             return
-        docs, *_ = batch
-        doc_max_len = max([len(d) for d in docs])
-        sent_max_len = max([len(s) for d in docs for s in d])
+
+        seqs_cnt = 0
+        if batch.texts_repr.second_level_lengths:
+            seqs_cnt = batch.texts_repr.second_level_lengths.shape[0]
+
         logging.debug(
-            "docs_cnt=%s, segments_cnt=%s, tokens_cnt=%s; doc_max_len=%s, sent_max_len=%s",
-            len(docs),
-            sum(len(d) for d in docs),
-            sum(len(s) for d in docs for s in d),
-            doc_max_len,
-            sent_max_len,
+            "docs_cnt=%s, segments_cnt=%s, tokens_cnt=%s; seq_max_len=%s",
+            len(batch.text_ids),
+            seqs_cnt,
+            batch.seq_encoder_input.ntokens(),
+            batch.seq_encoder_input.max_len,
         )
 
     def batches(
@@ -368,9 +369,8 @@ class BatchAsyncGenerator:
             if batch is None:
                 finished_gens += 1
                 continue
-            # TODO
-            # self._print_debug_info_for_batch(batch)
             with deserialize_enc_in_data(batch, self._shared_tensors_holder) as b:
+                self._print_debug_info_for_batch(batch)
                 yield b
 
         if gen_thread is not None:
