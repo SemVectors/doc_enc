@@ -246,9 +246,10 @@ def _proc_wrapper_for_texts_generator(
         generator = BaseBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
 
         while True:
-            generator_func, input_are_sents = in_queue.get()
-            if generator_func is None:
+            indata = in_queue.get()
+            if indata is None:
                 break
+            generator_func, input_are_sents = indata
             for b in generator.batches(generator_func, input_are_sents):
 
                 d = serialize_enc_in_data(b, shared_tensors_holder)
@@ -270,36 +271,58 @@ class BatchAsyncGenerator:
         enc_input_type: EncoderInputType,
         conf: DocEncoderConf,
         other_generator_args=(),
-        async_generators=1,
-        shared_tens_slots_cnt: int | None = None,
+        nworkers=1,
+        fix_batch_order: bool = False,
     ):
+        """fix_batch_order is used to ensure determinism while
+        training/fine-tunining. When it is true, batches will be always
+        generated in the same order.
+
+        """
         self._generator_args = (conf,) + other_generator_args
-        self._async_generators = async_generators
+        self._nworkers = nworkers
 
         self._processes = []
-        self._out_queue = multiprocessing.Queue(4 * async_generators)
+        self._out_queues: list[multiprocessing.Queue] = []
+        self._shared_tensors_holders: list[EncInputSharedTensors] = []
+        self._fix_batch_order = fix_batch_order
 
-        if shared_tens_slots_cnt is None:
-            # It increases consumption of shared memory, but more batches might be queued.
-            slots_multiplier = 3
-            shared_tens_slots_cnt = slots_multiplier * conf.async_batch_gen
-        self._shared_tensors_holder = EncInputSharedTensors(
-            enc_input_type,
-            conf.max_tokens,
-            conf.max_sents,
-            shared_tens_slots_cnt,
-        )
+        cap_m = 3
+        if fix_batch_order:
+            self._out_queues = [multiprocessing.Queue(cap_m) for _ in range(nworkers)]
+            self._shared_tensors_holders = [
+                EncInputSharedTensors(enc_input_type, conf.max_tokens, conf.max_sents, cap_m)
+                for _ in range(nworkers)
+            ]
 
-        self._in_queue_capacity = 3 * async_generators
-        self._in_queue = multiprocessing.Queue(self._in_queue_capacity)
+        else:
+            self._out_queues = [multiprocessing.Queue(cap_m * nworkers)]
+            self._shared_tensors_holders = [
+                EncInputSharedTensors(
+                    enc_input_type,
+                    conf.max_tokens,
+                    conf.max_sents,
+                    cap_m * nworkers,
+                )
+            ]
 
-    def nproc(self):
-        return self._async_generators
+        self._in_queue = multiprocessing.Queue()
+
+    def nworkers(self):
+        return self._nworkers
+
+    def is_batch_order_fixed(self):
+        return self._fix_batch_order
 
     def destroy(self):
         self._terminate_workers()
         self._in_queue.close()
-        self._out_queue.close()
+        # Generator might be destroyed before batches() is exhausted.
+        self._in_queue.cancel_join_thread()
+
+        for out_q in self._out_queues:
+            out_q.close()
+            out_q.cancel_join_thread()
 
     def _terminate_workers(self):
         for p in self._processes:
@@ -312,12 +335,18 @@ class BatchAsyncGenerator:
             self._in_queue.put((func, input_are_sents))
 
     def start_workers(self):
-        proc_cnt = self._async_generators
-        for _ in range(proc_cnt):
+        proc_cnt = self._nworkers
+        for i in range(proc_cnt):
+            if self._fix_batch_order:
+                out_q = self._out_queues[i]
+                t_holder = self._shared_tensors_holders[i]
+            else:
+                out_q = self._out_queues[0]
+                t_holder = self._shared_tensors_holders[0]
+
             p = multiprocessing.Process(
                 target=_proc_wrapper_for_texts_generator,
-                args=(self._in_queue, self._out_queue, self._shared_tensors_holder)
-                + self._generator_args,
+                args=(self._in_queue, out_q, t_holder) + self._generator_args,
                 kwargs={},
             )
             p.start()
@@ -329,7 +358,7 @@ class BatchAsyncGenerator:
             return
 
         seqs_cnt = 0
-        if batch.texts_repr.second_level_lengths:
+        if batch.texts_repr.second_level_lengths is not None:
             seqs_cnt = batch.texts_repr.second_level_lengths.shape[0]
 
         logging.debug(
@@ -340,41 +369,75 @@ class BatchAsyncGenerator:
             batch.seq_encoder_input.max_len,
         )
 
+    def _fixed_batch_order_queue_gen(self):
+        last_q_idx = 0
+        finished = [False] * self._nworkers
+        nfinished = 0
+        while nfinished < self._nworkers:
+            is_finished = yield last_q_idx
+            if is_finished:
+                finished[last_q_idx] = True
+                nfinished += 1
+                # for send invoker
+                yield 0
+            # condition to prevent infinite loop when all(f for f in finished)
+            while nfinished < self._nworkers:
+                last_q_idx = (last_q_idx + 1) % self._nworkers
+                if not finished[last_q_idx]:
+                    break
+
+    def _simple_queue_gen(self, ngens: int):
+        completed_gens = 0
+        while completed_gens < ngens:
+            is_finished = yield 0
+            if is_finished:
+                completed_gens += 1
+                # for send invoker
+                yield 0
+
     def batches(
         self, generator_funcs: Sequence[TextGenFuncT], input_are_sents: bool = False
     ) -> Generator[EncoderInData, None, None]:
+        """When class is created with fix_batch_order == True, length of
+        generator_funcs should be <= # of workers (set by nworkers in
+        the constructor).
+
+        """
         if not self._processes:
             raise RuntimeError("Batch Iterator is not initialized!")
 
-        ngens = len(generator_funcs)
-        if ngens < self._in_queue_capacity:
-            for g in generator_funcs:
-                self._in_queue.put((g, input_are_sents))
-            gen_thread = None
-        else:
-            # generator_funcs could have many generators and in_queue has a limited
-            # capacity. If we put all generator_funcs to in_queue here we could
-            # block indefinetely. We could remove length limit of an in_queue, but I
-            # prefer a more general approach that would work even we will allow to
-            # pass generator of generator_funcs.
-            gen_thread = threading.Thread(
-                target=self._input_generator_thread, args=(generator_funcs, input_are_sents)
+        if self._in_queue.qsize() != 0 or any(q.qsize() for q in self._out_queues):
+            raise RuntimeError(
+                "Previous batches are not fully exhausted! Destroy generator and create it anew!"
             )
-            gen_thread.start()
 
-        finished_gens = 0
-        while finished_gens < ngens:
-            logging.debug("queue len: %s", self._out_queue.qsize())
-            batch = self._out_queue.get()
+        ngens = len(generator_funcs)
+        if self._fix_batch_order and ngens != self._nworkers:
+            raise RuntimeError(
+                "AsyncGenerator was create with fix_batch_order==True, len(generator_funcs) should be == # of workers."
+            )
+
+        for g in generator_funcs:
+            self._in_queue.put((g, input_are_sents))
+
+        if not self._fix_batch_order:
+            consume_order_gen = self._simple_queue_gen(ngens)
+        else:
+            consume_order_gen = self._fixed_batch_order_queue_gen()
+
+        for q_idx in consume_order_gen:
+            out_q = self._out_queues[q_idx]
+            logging.debug("queue len: %s", out_q.qsize())
+            batch = out_q.get()
+
             if batch is None:
-                finished_gens += 1
+                consume_order_gen.send(True)
                 continue
-            with deserialize_enc_in_data(batch, self._shared_tensors_holder) as b:
-                self._print_debug_info_for_batch(batch)
-                yield b
 
-        if gen_thread is not None:
-            gen_thread.join()
+            shared_t = self._shared_tensors_holders[q_idx]
+            with deserialize_enc_in_data(batch, shared_t) as b:
+                self._print_debug_info_for_batch(b)
+                yield b
 
 
 # * Input helpers
@@ -854,13 +917,14 @@ class EncodeModule(BaseEncodeModule):
             self.input_type(), self._conf, self._tp_conf, self._tp_state_dict, po, eval_mode
         )
 
-    def create_batch_async_generator(self, eval_mode=True):
+    def create_batch_async_generator(self, eval_mode=True, fix_batch_order: bool = False):
         po = self._create_pad_opts()
         gen = BatchAsyncGenerator(
             self.input_type(),
             self._conf,
             (self._tp_conf, self._tp_state_dict, po, eval_mode),
             self._conf.async_batch_gen,
+            fix_batch_order=fix_batch_order,
         )
         gen.start_workers()
         return gen

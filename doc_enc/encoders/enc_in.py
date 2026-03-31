@@ -213,14 +213,7 @@ class SeqEncoderBatchedInput:
 
     def to_(self, device: torch.device):
         if isinstance(self.batch, PackedSequence):
-            # batch_sizes must be on cpu.
-            ps = self.batch
-            self.batch = PackedSequence(
-                ps.data.to(device),
-                ps.batch_sizes,
-                None if ps.sorted_indices is None else ps.sorted_indices.to(device),
-                None if ps.unsorted_indices is None else ps.unsorted_indices.to(device),
-            )
+            self.batch = self.batch.to(device)
             return self
         if isinstance(self.batch, (JaggedInputTensor, PaddedTensor)):
             b = self.batch

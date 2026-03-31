@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import pytest
+
 from doc_enc.encoders.enc_in import EncoderInputType
 from doc_enc.text_processor import TextProcessorConf
 from doc_enc.tokenizer import TokenizerType, TokenizerConf
@@ -35,7 +37,7 @@ def test_batch_async_gen_1():
         EncoderInputType.JAGGED,
         DocEncoderConf(model_path=''),
         other_generator_args=(_create_tp_conf(), {}),
-        async_generators=2,
+        nworkers=2,
     )
 
     items = [
@@ -71,6 +73,54 @@ def test_batch_async_gen_1():
         batch_iter.destroy()
 
 
+def test_batch_async_gen_2():
+
+    batch_iter = BatchAsyncGenerator(
+        EncoderInputType.JAGGED,
+        DocEncoderConf(model_path=''),
+        other_generator_args=(_create_tp_conf(), {}),
+        nworkers=2,
+    )
+
+    try:
+        items = [['111 112', '121', '131']] * 300
+        gens = create_text_gens_from_ids_list(items, 50, _Fetcher)
+
+        batch_iter.start_workers()
+        batches_gen = batch_iter.batches(gens)
+        next(batches_gen)
+
+        # Check that generator could properly handle destruction when not all batches are consumed.
+    finally:
+        batch_iter.destroy()
+
+
+def test_batch_async_gen_3():
+
+    batch_iter = BatchAsyncGenerator(
+        EncoderInputType.JAGGED,
+        DocEncoderConf(model_path=''),
+        other_generator_args=(_create_tp_conf(), {}),
+        nworkers=2,
+    )
+
+    try:
+        items = [['111 112', '121', '131']] * 600
+        gens = create_text_gens_from_ids_list(items, 50, _Fetcher)
+
+        batch_iter.start_workers()
+        batches_gen = batch_iter.batches(gens)
+        next(batches_gen)
+
+        # Check that generator raises exception
+
+        with pytest.raises(RuntimeError, match='Previous batches are not fully exhausted.*'):
+            next(batch_iter.batches([]))
+
+    finally:
+        batch_iter.destroy()
+
+
 # def _lookup_fetcher(ids):
 #     items = {
 #         '1': ['111 112', '121', '131'],
@@ -84,7 +134,7 @@ def test_batch_async_gen_1():
 
 # def test_batch_iter_2():
 #     batch_iter = BatchIterator(
-#         generator_args=(_create_tp_conf(), DocEncoderConf(model_path=''), {}), async_generators=2
+#         generator_args=(_create_tp_conf(), DocEncoderConf(model_path=''), {}), nworkers=2
 #     )
 
 #     item_ids = ['1', '2', '30', '40']
@@ -127,7 +177,7 @@ def test_sents_batch_async_gen_packed_1():
             _create_tp_conf(),
             {},
         ),
-        async_generators=2,
+        nworkers=2,
         shared_tens_slots_cnt=1,
     )
 
@@ -171,7 +221,7 @@ def test_sents_batch_async_gen_jagged_1():
             _create_tp_conf(),
             {},
         ),
-        async_generators=2,
+        nworkers=2,
     )
     try:
         batch_iter.start_workers()
@@ -215,7 +265,7 @@ def test_sents_batch_async_gen_padded_1():
             _create_tp_conf(),
             {},
         ),
-        async_generators=2,
+        nworkers=2,
     )
     try:
         batch_iter.start_workers()

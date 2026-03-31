@@ -337,7 +337,8 @@ class ClassifBatchAsyncGenerator:
         return self._device if self._device is not None else torch.device('cpu')
 
     def batches(self):
-        gens = create_text_gens_from_ids_list(self._path_list, 10 * self._docs_gen.nproc())
+        (m := 1) if self._docs_gen.is_batch_order_fixed() else (m := 10)
+        gens = create_text_gens_from_ids_list(self._path_list, m * self._docs_gen.nworkers())
         for input_data in self._docs_gen.batches(gens):
             idxs = typing.cast(list[int], input_data.text_ids)
             if self._multi_label:
@@ -1129,17 +1130,17 @@ def _train_classif(conf: ClassifFineTuneConf):
     model = _create_clsf_module(conf)
     logging.info("Model:\n%s", model)
 
-    train_iter = ClassifBatchAsyncGenerator(
+    train_data = ClassifBatchAsyncGenerator(
         conf.train_meta_path,
         conf.data_dir,
-        model.encoder.create_batch_async_generator(eval_mode=False),
+        model.encoder.create_batch_async_generator(eval_mode=False, fix_batch_order=True),
         labels_mapping=labels_data.labels_mapping,
         device=model.encoder.device,
     )
     try:
-        _train_loop(conf, train_iter, model, labels_data=labels_data)
+        _train_loop(conf, train_data, model, labels_data=labels_data)
     finally:
-        train_iter.destroy()
+        train_data.destroy()
 
 
 def classif_fine_tune(conf: ClassifFineTuneConf):
@@ -1231,7 +1232,7 @@ def _calc_loss(outputs: torch.Tensor, labels: torch.Tensor, multi_label: bool):
 
 def _train_loop(
     conf: ClassifFineTuneConf,
-    train_iter: ClassifBatchAsyncGenerator,
+    train_data: ClassifBatchAsyncGenerator,
     model: DocClassifierModule,
     labels_data: LabelsData,
 ):
@@ -1250,23 +1251,23 @@ def _train_loop(
     epoch = 0
     running_stat = RunningStat()
     labels_stat = LabelStat(conf.nlabels)
-    if train_iter.multi_label:
-        predictor = create_predictor('threshold', conf.nlabels, train_iter.device(), {}, [])
+    if train_data.multi_label:
+        predictor = create_predictor('threshold', conf.nlabels, train_data.device(), {}, [])
     else:
-        predictor = create_predictor('topk', conf.nlabels, train_iter.device(), {'topk': 1}, [])
+        predictor = create_predictor('topk', conf.nlabels, train_data.device(), {'topk': 1}, [])
 
     while update_nums < conf.max_updates:
         epoch += 1
         logging.info("Starting %s epoch", epoch)
-        for input_data, labels in train_iter.batches():
+        for input_data, labels in train_data.batches():
             # zero the parameter gradients
             model.train(mode=True)
             optimizer.zero_grad()
 
             # forward + backward + optimize
-            with autocast(train_iter.device().type, enabled=conf.enable_amp):
+            with autocast(train_data.device().type, enabled=conf.enable_amp):
                 outputs = model(input_data)
-                loss = _calc_loss(outputs, labels, train_iter.multi_label())
+                loss = _calc_loss(outputs, labels, train_data.multi_label())
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -1274,7 +1275,7 @@ def _train_loop(
             scheduler.step()
             running_stat.loss += loss.item()
             running_stat.docs += labels.size(0)
-            running_stat.update_running_metric(outputs, labels, train_iter.multi_label(), predictor)
+            running_stat.update_running_metric(outputs, labels, train_data.multi_label(), predictor)
             labels_stat.update(labels)
             update_nums += 1
 
@@ -1297,7 +1298,7 @@ def _train_loop(
                 predictor = create_predictor(
                     last_eval_result['predictor'],
                     conf.nlabels,
-                    train_iter.device(),
+                    train_data.device(),
                     last_eval_result['_predictor_data'],
                     [],
                 )

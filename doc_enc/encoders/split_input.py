@@ -90,7 +90,6 @@ def split_padded_input_and_encode(
     embeddings = torch.vstack(embs)
 
     if sorted_indices is not None:
-        # TODO see rnn utils for more efficient?
         unsorted_indices = torch.empty_like(
             sorted_indices, memory_format=torch.legacy_contiguous_format, device=embeddings.device
         )

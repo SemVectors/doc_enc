@@ -31,7 +31,7 @@ class DocClassifier:
         results = [[]] * len(path_list)
         batch_gen = self._enc_module.create_batch_async_generator()
 
-        gens = create_text_gens_from_ids_list(path_list, 10 * batch_gen.nproc())
+        gens = create_text_gens_from_ids_list(path_list, 10 * batch_gen.nworkers())
         try:
             for input_data in batch_gen.batches(gens):
 
