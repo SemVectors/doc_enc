@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import torch
 
 
 class BaseEncoderOut(NamedTuple):
     pooled_out: torch.Tensor
-    encoder_out: torch.Tensor
+    encoder_out: Optional[torch.Tensor]
     out_lengths: torch.Tensor
 
 
