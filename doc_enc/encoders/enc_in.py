@@ -230,19 +230,26 @@ class SeqEncoderBatchedInput:
             lengths = self.batch.lengths
             orig = self.batch.data
             assert len(orig.shape) == 2, "Unsupported dimension prepend_tensor_ jagged"
+            emb_dim = orig.shape[-1]
             new_data = torch.zeros(
                 orig.shape[0] + lengths.shape[0],
-                orig.shape[-1],
+                emb_dim,
                 dtype=orig.dtype,
                 device=orig.device,
             )
-            toffs = 0
-            soffs = 0
-            for lt in lengths.cpu().tolist():
-                new_data[toffs] = prep_ten
-                new_data[toffs + 1 : toffs + lt + 1] = orig[soffs : soffs + lt]
-                toffs += lt + 1
-                soffs += lt
+            lengths_as_list = lengths.tolist()
+            idxs = []
+            prep_poses = []
+            offs = 1
+            for lt in lengths_as_list:
+                prep_poses.append(offs - 1)
+                idxs.extend([i] for i in range(offs, offs + lt))
+                offs += lt + 1
+
+            # idxs_t: [N, 1]
+            idxs_t = torch.tensor(idxs, dtype=torch.int64, device=new_data.device)
+            new_data.scatter_(0, idxs_t.expand(-1, emb_dim), orig)
+            new_data[torch.tensor(prep_poses, device=orig.device)] = prep_ten.to(dtype=orig.dtype)
             self.batch = self.batch._replace(data=new_data, lengths=self.batch.lengths + 1)
             return self
         if isinstance(self.batch, PaddedTensor):
