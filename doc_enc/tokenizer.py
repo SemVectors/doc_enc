@@ -59,7 +59,7 @@ class AbcTokenizer:
     def vocab_size(self) -> int:
         raise NotImplementedError("Not implemented")
 
-    def __call__(self, sent: str) -> list[int]:
+    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
         raise NotImplementedError("Not implemented")
 
     def state_dict(self):
@@ -85,7 +85,7 @@ class Pretokenized(AbcTokenizer):
     def vocab_size(self) -> int:
         return 0
 
-    def __call__(self, sent: str) -> list[int]:
+    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
         return [int(s) for s in sent.split()]
 
 
@@ -119,26 +119,33 @@ class SentencepieceTokenizer(AbcTokenizer):
     def vocab_size(self) -> int:
         return len(self._vocab)
 
-    def _modify_sent(self, sent: list[int]):
+    def _modify_sent(self, sent: list[int], max_length: int | None):
+
         prefix = []
         if self._conf.add_bos:
             prefix = [self.bos_idx()]
         suffix = []
         if self._conf.add_eos:
             suffix = [self.eos_idx()]
+
         if not prefix and not suffix:
+            if max_length is not None:
+                return sent[:max_length]
             return sent
 
+        if max_length is not None:
+            extra_len = len(prefix) + len(suffix)
+            sent = sent[: max_length - extra_len]
         return prefix + sent + suffix
 
-    def __call__(self, sent: str) -> list[int]:
+    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
         if not self._inference_mode and self._conf.enable_sampling:
-            sent = self._vocab.SampleEncodeAsIds(
+            tokens: list[int] = self._vocab.SampleEncodeAsIds(
                 sent, alpha=self._conf.alpha, nbest_size=self._conf.nbest_size
             )
         else:
-            sent = self._vocab.EncodeAsIds(sent)
-        return self._modify_sent(sent)
+            tokens: list[int] = self._vocab.EncodeAsIds(sent)
+        return self._modify_sent(tokens, max_length)
 
     def state_dict(self):
         return {
@@ -176,8 +183,12 @@ class BaseTransformersTokenizer(AbcTokenizer):
     def vocab_size(self) -> int:
         return len(self._tokenizer)
 
-    def __call__(self, sent: str) -> list[int]:
-        return self._tokenizer(sent, truncation=True, max_length=self._max_seq_length)["input_ids"]
+    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
+        if max_length is None:
+            max_length = self._max_seq_length
+        elif self._max_seq_length is not None:
+            max_length = min(max_length, self._max_seq_length)
+        return self._tokenizer(sent, truncation=True, max_length=max_length)["input_ids"]
 
     def state_dict(self):
         d = {}
