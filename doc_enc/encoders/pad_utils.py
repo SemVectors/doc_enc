@@ -1,21 +1,7 @@
 #!/usr/bin/env python3
 
+import logging
 import torch
-
-
-def create_key_padding_mask(max_len, src_lengths, device, padding_side: str = 'right'):
-    bs = src_lengths.shape[0]
-    mask = torch.full((bs, max_len), 0, dtype=torch.float, device=device)
-    if padding_side == 'right':
-        for i, length in enumerate(src_lengths):
-            mask[i, 0:length] = 1
-    elif padding_side == 'left':
-        for i, length in enumerate(src_lengths):
-            mask[i, max_len - length :] = 1
-    else:
-        RuntimeError("Unknown padding_side value: " + padding_side)
-
-    return mask
 
 
 class PadOpts:
@@ -54,23 +40,36 @@ def pad_embs_seq(
     prepend_with_zero: bool = False,
     pad_to_multiple_of: int = 0,
 ):
-    # embs: N, dim
-    emb_dim = embs.size(1)
-    # pad sequence of embs
+    """Pad sequence of embs based on lengths tensor."""
+    # embs: [N, dim]
+    nembs, emb_dim = embs.shape
+    bs = lengths.shape[0]
     max_len: int = int(lengths.max().item()) + int(prepend_with_zero)
     if pad_to_multiple_of and max_len % pad_to_multiple_of != 0:
         max_len = ((max_len // pad_to_multiple_of) + 1) * pad_to_multiple_of
 
     padded_seq = torch.zeros(
-        (len(lengths) * max_len, emb_dim),
+        (bs * max_len, emb_dim),
         device=embs.device,
         dtype=embs.dtype,
     )
     idx = []
     offs = 0 + int(prepend_with_zero)
-    for lt in lengths:
-        idx.extend([i] for i in range(offs, offs + int(lt.item())))
+    lengths_as_list = lengths.tolist()
+    for lt in lengths_as_list:
+        idx.extend([i] for i in range(offs, offs + lt))
         offs += max_len
-    idx = torch.tensor(idx, dtype=torch.int64, device=embs.device).expand(-1, emb_dim)
-    padded_seq.scatter_(0, idx, embs)
-    return padded_seq, max_len
+    # idx: [N, 1]
+    idx = torch.tensor(idx, dtype=torch.int64, device=embs.device)
+    padded_seq.scatter_(0, idx.expand(-1, emb_dim), embs)
+    padded_seq = padded_seq.reshape(-1, max_len, emb_dim)
+
+    # Create padding mask
+    mask = torch.full((bs * max_len,), False, dtype=torch.bool, device=embs.device)
+    mask.scatter_(0, idx.squeeze(1), torch.tensor(True, device=idx.device).expand(nembs))
+    mask = mask.reshape(bs, max_len)
+
+    if prepend_with_zero:
+        mask[:, 0] = True
+
+    return padded_seq, mask

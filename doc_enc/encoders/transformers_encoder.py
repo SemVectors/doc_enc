@@ -24,7 +24,6 @@ from doc_enc.encoders.enc_config import BaseEncoderConf
 from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_in import EncoderInputType, SeqEncoderBatchedInput
 from doc_enc.encoders.enc_out import BaseEncoderOut
-from doc_enc.encoders.pad_utils import create_key_padding_mask
 
 
 class BaseTransformersAutoModel(BaseEncoder):
@@ -181,9 +180,9 @@ class TransformersAutoModel(BaseTransformersAutoModel):
         transformers_kwargs: dict | None = None,
         **kwargs,
     ):
-        # logging.error(
-        #     'Encoder: INPUT BATCH, bs=%s, max_len = %s', input_batch.batch_size, input_batch.max_len
-        # )
+        if input_batch.embedded:
+            raise RuntimeError("Pretrained transformers encoder supports only input_ids as input!")
+
         if transformers_kwargs is None:
             transformers_kwargs = {}
 
@@ -209,9 +208,11 @@ class TransformersAutoModel(BaseTransformersAutoModel):
             position_ids = torch.arange(max_len, device=input_ids.device).unsqueeze(0)
 
             # B X L
-            attention_mask = create_key_padding_mask(
-                max_len, padded.lengths, padded.data.device, padding_side=self._get_padding_side()
-            )
+            # attention_mask = create_key_padding_mask(
+            #     max_len, padded.lengths, padded.data.device, padding_side=self._get_padding_side()
+            # )
+            assert padded.padding_mask is not None, "Padding mask should be already created!"
+            attention_mask = padded.padding_mask.float()
 
         result = self.auto_model(
             input_ids=input_ids,
@@ -282,8 +283,7 @@ class TransformersAutoModel(BaseTransformersAutoModel):
         if self.config.transformers_pooler in ('first', 'auto'):
             pooled_out = last_hidden_state[:, 0]
         elif self.config.transformers_pooler == 'last':
-            left_padding = attention_mask[:, -1].sum() == attention_mask.shape[0]
-            if left_padding:
+            if self.config.left_padding:
                 pooled_out = last_hidden_state[:, -1]
             else:
                 batch_size = last_hidden_state.shape[0]

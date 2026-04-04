@@ -36,13 +36,18 @@ def split_padded_input_and_encode(
 
     # orig_data = copy.copy(orig_input_data)
     orig_padded = orig_input_data.get_padded()
+    assert (
+        orig_padded.padding_mask is not None
+    ), "padding_mask should be inited when calling split_input"
     # TODO should be part of input data
     if not already_sorted:
         sorted_lengths, sorted_indices = torch.sort(orig_padded.lengths, descending=True)
         sorted_indices = sorted_indices.to(orig_padded.lengths.device)
         sorted_seqs = orig_padded.data[sorted_indices]
+        sorted_mask = orig_padded.padding_mask[sorted_indices]
     else:
         sorted_seqs = orig_padded.data
+        sorted_mask = orig_padded.padding_mask
         sorted_lengths = orig_padded.lengths
         sorted_indices = None
 
@@ -69,8 +74,11 @@ def split_padded_input_and_encode(
         cnt = min(max_chunk_size, cnt_by_tokens, batch_size - beg_offs)
         if pad_opts.padding_side == 'right':
             chunk = sorted_seqs[beg_offs : beg_offs + cnt, :chunk_max_len]
+            chunk_mask = sorted_mask[beg_offs : beg_offs + cnt, :chunk_max_len]
         elif pad_opts.padding_side == 'left':
             chunk = sorted_seqs[beg_offs : beg_offs + cnt, max_len - chunk_max_len :]
+            chunk_mask = sorted_mask[beg_offs : beg_offs + cnt, max_len - chunk_max_len :]
+
         else:
             raise RuntimeError("Unknown value of padding_side: " + pad_opts.padding_side)
 
@@ -79,7 +87,7 @@ def split_padded_input_and_encode(
         input_data.batch_size = cnt
         input_data.max_len = chunk_max_len
         input_data.batch = orig_padded._replace(
-            data=chunk, lengths=sorted_lengths[beg_offs : beg_offs + cnt]
+            data=chunk, lengths=sorted_lengths[beg_offs : beg_offs + cnt], padding_mask=chunk_mask
         )
 
         res = encoder(input_data, enforce_sorted=True)

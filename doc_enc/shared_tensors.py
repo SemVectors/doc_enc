@@ -265,12 +265,10 @@ class EncInputSharedTensors:
             seb.batch_size = int(pd.batch_sizes[0])
             seb.max_len = int(pd.batch_sizes.shape[0])
         elif self.enc_input_type in (EncoderInputType.JAGGED, EncoderInputType.PADDED):
-            cls = (
-                JaggedInputTensor
-                if self.enc_input_type == EncoderInputType.JAGGED
-                else PaddedTensor
-            )
-            pd = cls(*inp_tens)
+            if self.enc_input_type == EncoderInputType.JAGGED:
+                pd = JaggedInputTensor(*inp_tens)
+            else:
+                pd = PaddedTensor(*inp_tens, padding_mask=None)
             seb.batch = pd
             seb.batch_size = int(pd.lengths.shape[0])
             seb.max_len = int(pd.lengths.max())

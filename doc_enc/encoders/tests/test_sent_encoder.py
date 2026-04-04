@@ -12,8 +12,10 @@ from doc_enc.encoders.split_input import split_padded_input_and_encode
 def _create_input(data: list[list[int]]):
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
+    mask = torch.full_like(test_tensor, True, dtype=torch.bool)
+    mask[test_tensor == 0] = False
     input_data = SeqEncoderBatchedInput(EncoderInputType.PADDED)
-    input_data.batch = PaddedTensor(test_tensor, length_tensor)
+    input_data.batch = PaddedTensor(test_tensor, length_tensor, mask)
     if data:
         input_data.max_len = int(length_tensor.max())
         input_data.batch_size = len(data)
@@ -34,6 +36,11 @@ class DummyEncoder:
     ) -> Any:
         self.enforce_sorted = enforce_sorted
         padded = input_data.get_padded()
+
+        assert padded.padding_mask is not None
+        lengths_from_mask = torch.sum(padded.padding_mask.int(), 1)
+        assert lengths_from_mask.tolist() == padded.lengths.tolist()
+
         cnt, max_len = padded.data.size()
         lt = [[t[0], cnt, max_len] for t in padded.data]
         embs = torch.tensor(lt)

@@ -36,6 +36,7 @@ class JaggedWithPosIds(NamedTuple):
 class PaddedTensor(NamedTuple):
     data: torch.Tensor
     lengths: torch.Tensor
+    padding_mask: torch.Tensor | None = None
 
 
 # for padded
@@ -168,10 +169,9 @@ class SeqEncoderBatchedInput:
         if input_type == EncoderInputType.JAGGED:
             batched_input.batch = JaggedInputTensor(embs, lengths)
         elif input_type == EncoderInputType.PADDED:
-            embs, max_len = pad_embs_seq(embs, lengths, prepend_with_zero=padded_prepend_with_zero)
-            embs = embs.reshape(-1, max_len, embs.shape[-1])
+            embs, mask = pad_embs_seq(embs, lengths, prepend_with_zero=padded_prepend_with_zero)
             extra_len = int(padded_prepend_with_zero)
-            batched_input.batch = PaddedTensor(embs, lengths + extra_len)
+            batched_input.batch = PaddedTensor(embs, lengths + extra_len, mask)
             batched_input.padded_prepended_with_0 = padded_prepend_with_zero
         else:
             raise RuntimeError("Unsupported input type %s", input_type)
@@ -223,6 +223,20 @@ class SeqEncoderBatchedInput:
         raise RuntimeError(
             f"Batch is either uninitialized or has wrong format: {type(self.batch)}!"
         )
+
+    def init_padding_mask_(self, pad_idx: int, padding_side: str):
+        if self.enc_input_type == EncoderInputType.PADDED:
+            if self.embedded:
+                raise RuntimeError(
+                    "Init padding mask is not supported when input is already embedded."
+                )
+            pd = self.get_padded()
+            mask = torch.full_like(pd.data, True, dtype=torch.bool)
+            mask[pd.data == pad_idx] = False
+            if padding_side == 'left' and pd.data[0, -1] == pad_idx:
+                # In some models pad_token == end_of_text_token (Qwen3-emb)
+                mask[:, -1] = True
+            self.batch = pd._replace(padding_mask=mask)
 
     def prepend_tensor_(self, prep_ten: torch.Tensor):
 
@@ -312,7 +326,7 @@ class SeqEncoderBatchedInput:
 
     def get_padded(self):
         if isinstance(self.batch, PaddedTensor):
-            return PaddedTensor(self.batch.data, self.batch.lengths)
+            return self.batch
         raise RuntimeError(
             f"Batch is either uninitialized or has wrong format: {type(self.batch)}!"
         )

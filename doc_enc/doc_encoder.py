@@ -510,6 +510,11 @@ class BaseSentEncodeModule(torch.nn.Module):
 
     def _prepare_input_data(self, input_data: EncoderInData):
         input_data.seq_encoder_input.to_(self.device)
+        input_data.seq_encoder_input.init_padding_mask_(
+            self._pad_idx,
+            self.first_encode_layer().get_padding_side(),
+        )
+
         return input_data
         # max_len = len(max(doc_segments, key=len))
 

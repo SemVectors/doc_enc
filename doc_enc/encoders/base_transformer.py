@@ -190,13 +190,14 @@ class BaseTransformerEncoder(BaseEncoder):
     def out_embs_dim(self):
         return self.output_units
 
-    def _create_key_padding_mask(self, max_len: int, src_lengths: torch.Tensor, device):
-        bs = src_lengths.shape[0]
-        mask = torch.full((bs, max_len), False, dtype=torch.bool, device=device)
-        for i, ls in enumerate(src_lengths):
-            mask[i, 0:ls] = True
+    # def _create_key_padding_mask(self, max_len: int, src_lengths: torch.Tensor, device):
+    #     bs = src_lengths.shape[0]
+    #     mask = torch.full((bs, max_len), False, dtype=torch.bool, device=device)
+    #     lenghts_as_list = src_lengths.tolist()
+    #     for i, ls in enumerate(lenghts_as_list):
+    #         mask[i, 0:ls] = True
 
-        return mask
+    #     return mask
 
     def forward(
         self,
@@ -213,9 +214,8 @@ class BaseTransformerEncoder(BaseEncoder):
             # embs shape: batch_sz, seq_len, hidden_dim
             input_embs = inp.data
             lengths = inp.lengths
-            key_padding_mask = self._create_key_padding_mask(
-                input_embs.size()[1], lengths, input_embs.device
-            )
+            key_padding_mask = inp.padding_mask
+            assert key_padding_mask is not None, "Padding mask should be already created!"
 
         else:
             raise RuntimeError(
