@@ -8,7 +8,6 @@ from doc_enc.tokenizer import TokenizerType, TokenizerConf
 from doc_enc.doc_encoder import (
     DocEncoderConf,
     BatchAsyncGenerator,
-    # SentsBatchAsyncGenerator,
     create_text_gens_from_ids_list,
 )
 
@@ -121,39 +120,6 @@ def test_batch_async_gen_3():
         batch_iter.destroy()
 
 
-# def _lookup_fetcher(ids):
-#     items = {
-#         '1': ['111 112', '121', '131'],
-#         '2': ['211', '221 222'],
-#         '30': ['331 332', '321', '331'],
-#         '40': ['411', '421 422', '431 432 433 434'],
-#     }
-#     for idx, i in enumerate(ids):
-#         yield idx, items[i]
-
-
-# def test_batch_iter_2():
-#     batch_iter = BatchIterator(
-#         generator_args=(_create_tp_conf(), DocEncoderConf(model_path=''), {}), nworkers=2
-#     )
-
-#     item_ids = ['1', '2', '30', '40']
-#     batch_iter.start_workers_for_stream(item_ids, fetcher=_lookup_fetcher, batch_size=2)
-
-#     batches = list(batch_iter.batches())
-#     batches.sort(key=lambda t: t[-1][0])
-#     assert len(batches) == 2
-#     sents_tokens1, _, ids1 = batches[0]
-#     assert len(sents_tokens1) == 2
-#     assert sents_tokens1[0] == [[111, 112], [121], [131]]
-#     assert sents_tokens1[1] == [[211], [221, 222]]
-#     assert ids1 == ['1', '2']
-
-#     sents_tokens2, _, ids2 = batches[1]
-#     assert sents_tokens2[0] == [[331, 332], [321], [331]]
-#     assert ids2 == ['30', '40']
-
-
 # * SentsBatchAsyncGenerator
 
 
@@ -178,7 +144,6 @@ def test_sents_batch_async_gen_packed_1():
             {},
         ),
         nworkers=2,
-        shared_tens_slots_cnt=1,
     )
 
     try:

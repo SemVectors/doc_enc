@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 
+
 from typing import NamedTuple
 from enum import Enum
+
+import torch
+
+from doc_enc.encoders.enc_in import EncoderInData
 
 
 class TaskType(Enum):
@@ -20,41 +25,62 @@ class DocRetrLossType(Enum):
 
 
 class SentsBatch(NamedTuple):
-    src_id: list[int]
-    src: list[list[int]]
-    src_len: list[int]
-    tgt_id: list[int]
-    tgt: list[list[int]]
-    tgt_len: list[int]
+    src_data: EncoderInData
+    tgt_data: EncoderInData
+
+    labels: torch.Tensor
+
+    # for tests
     hn_idxs: list[list[int]]
+
+    def batch_size(self):
+        return len(self.src_data.text_ids)
+
+
+class DocRetrPairs(NamedTuple):
+    src_texts: list[list[int]]
+    src_text_lengths: list[list[int]]
+    src_ids: list[str | int]
+
+    tgt_texts: list[list[int]]
+    tgt_text_lengths: list[list[int]]
+    tgt_ids: list[str | int]
+
+    positive_idxs: list[list[int]]
     info: dict[str, int]
 
 
 class DocsBatch(NamedTuple):
-    # segmented and tokenized text for multiple documents
-    src_texts: list[list[int]]
-    # segments lengths for each document
-    src_doc_segments_length: list[list[int]]
+    src_data: EncoderInData
+    tgt_data: EncoderInData
 
-    src_sent_len: list[int]
-    # lengths of fragments in sentences
-    # filled only when document is segmented on sentences and fragments
-    src_fragment_len: list[int]
+    labels: torch.Tensor
 
-    # filled only when document is segmented on sentences
-    src_doc_len_in_sents: list[int]
-    # filled only when document is segmented on fragments
-    src_doc_len_in_frags: list[int]
-    src_ids: list[int]
+    def get_src_docs_cnt(self):
+        return len(self.src_data.text_ids)
 
-    tgt_texts: list[list[int]]
-    tgt_doc_segments_length: list[list[int]]
+    def get_tgt_docs_cnt(self):
+        return len(self.tgt_data.text_ids)
 
-    tgt_sent_len: list[int]
-    tgt_fragment_len: list[int]
-    tgt_doc_len_in_sents: list[int]
-    tgt_doc_len_in_frags: list[int]
-    tgt_ids: list[int]
+    def batch_size(self):
+        return self.get_src_docs_cnt()
 
-    positive_idxs: list[list[int]]
-    info: dict[str, int]
+    def get_positive_idxs(self) -> list[list[int]]:
+        pos_ids = []
+        pos_ids_tmp = self.labels.nonzero().tolist()
+        idx = 0
+        cur_row = []
+        for i, j in pos_ids_tmp:
+            if i == idx:
+                cur_row.append(j)
+            else:
+                idx += 1
+                if idx == i:
+                    pos_ids.append(cur_row)
+                cur_row = [j]
+        if cur_row:
+            pos_ids.append(cur_row)
+        return pos_ids
+
+    def max_positives_per_doc(self):
+        return int(torch.max(self.labels.sum(1)).item())

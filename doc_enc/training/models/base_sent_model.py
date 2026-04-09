@@ -9,6 +9,7 @@ from doc_enc.training.models.model_conf import SentModelConf
 from doc_enc.training.models.base_model import DualEncModelOutput
 
 from doc_enc.training.index.ivf_pq_model import TrainableIvfPQ
+from doc_enc.training.types import SentsBatch
 
 
 class BaseSentModel(BaseSentEncodeModule):
@@ -26,8 +27,10 @@ class BaseSentModel(BaseSentEncodeModule):
         if conf.index.enable:
             self.index = TrainableIvfPQ(conf.index)
 
-    def calc_sim_matrix(self, batch, dont_cross_device_sample=False) -> DualEncModelOutput:
+    def calc_sim_matrix(
+        self, batch: SentsBatch, dont_cross_device_sample=False
+    ) -> DualEncModelOutput:
         raise NotImplementedError("calc_sim_matrix is not implemented")
 
-    def forward(self, batch) -> DualEncModelOutput:
+    def forward(self, batch: SentsBatch) -> DualEncModelOutput:
         raise NotImplementedError("forward is not implemented")

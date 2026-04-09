@@ -4,12 +4,14 @@ import itertools
 
 import torch
 
-from doc_enc.training.types import DocsBatch, TaskType
+from doc_enc.training.types import DocsBatch, SentsBatch, TaskType
 from doc_enc.training.models.base_model import DualEncModelOutput
 
 
 class BaseMetrics:
     """Quality metrics and other stats"""
+
+    _metric_name = 'rec'
 
     def __init__(self):
         self._cnt = 0
@@ -51,12 +53,12 @@ class BaseMetrics:
         ]
 
     @classmethod
-    def fromlist(cls, l, inst=None):
+    def fromlist(cls, ml, inst=None):
         if inst is None:
             m = cls()
         else:
             m = inst
-        assert len(l) == 15, "Logic error 23822"
+        assert len(ml) == 15, "Logic error 23822"
         fields = (
             '_cnt',
             '_ncorrect',
@@ -70,16 +72,23 @@ class BaseMetrics:
             '_tgt_len_in_frags',
             '_tgt_len_in_tokens',
         )
-        for f, v in zip(fields, l[:11]):
+        for f, v in zip(fields, ml[:11]):
             m.__dict__[f] = int(v)
 
         loss_fields = ('_loss', '_dense_loss', '_ivf_loss', '_pq_loss')
-        for f, v in zip(loss_fields, l[11:]):
+        for f, v in zip(loss_fields, ml[11:]):
             m.__dict__[f] = v
 
         return m
 
-    def update_metrics(self, loss, losses_tuple, output: DualEncModelOutput, labels, batch):
+    def update_metrics(
+        self,
+        loss,
+        losses_tuple,
+        output: DualEncModelOutput,
+        labels: torch.Tensor,
+        batch: DocsBatch | SentsBatch,
+    ):
         self._cnt += 1
         self._loss += loss
         self._dense_loss += losses_tuple[0].item()
@@ -90,7 +99,12 @@ class BaseMetrics:
 
         self._update_metrics_impl(output, labels, batch)
 
-    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch):
+    def _update_metrics_impl(
+        self,
+        output: DualEncModelOutput,
+        labels: torch.Tensor,
+        batch: DocsBatch | SentsBatch,
+    ):
         raise NotImplementedError("implement in subclass")
 
     def updates_num(self):
@@ -121,11 +135,11 @@ class BaseMetrics:
 
     def metrics(self):
         rec = self._ncorrect / self._total if self._total else 0.0
-        return {'rec': rec}
+        return {self._metric_name: rec}
 
     def best_metric_for_task(self):
         m = self.metrics()
-        return 'rec', m['rec']
+        return self._metric_name, m[self._metric_name]
 
     def stats(self):
         avg_src_item_cnt = self._src_item_cnt / self._cnt if self._cnt else 0.0
@@ -163,50 +177,64 @@ class BaseMetrics:
 
 
 class SentRetrMetrics(BaseMetrics):
-    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch):
+    def _update_metrics_impl(
+        self,
+        output: DualEncModelOutput,
+        labels: torch.Tensor,
+        batch: DocsBatch | SentsBatch,
+    ):
+        assert isinstance(
+            batch, SentsBatch
+        ), "SentRetrMetrics:_update_metrics_impl batch is not instance of SentsBatch"
         _, ypredicted = torch.max(output.dense_score_matrix, 1)
         self._ncorrect += (ypredicted == labels).sum().item()
         self._total += output.dense_score_matrix.size(0)
 
-        self._src_len_in_tokens += sum(batch.src_len)
-        self._src_item_cnt += len(batch.src_len)
+        sd = batch.src_data
+        self._src_len_in_tokens += sd.seq_encoder_input.ntokens()
+        self._src_item_cnt += len(sd.text_ids)
 
-        self._tgt_len_in_tokens += sum(batch.tgt_len)
-        self._tgt_item_cnt += len(batch.tgt_len)
+        td = batch.tgt_data
+        self._tgt_len_in_tokens += td.seq_encoder_input.ntokens()
+        self._tgt_item_cnt += len(td.text_ids)
 
 
 class DocRetrMetrics(BaseMetrics):
-    def _update_metrics_impl(self, output: DualEncModelOutput, labels, batch: DocsBatch):
-        k = batch.info['max_positives_per_doc']
+    _metric_name = 'rec@10'
 
-        pidxs = batch.positive_idxs
-        if k == 1:
-            _, ypredicted = torch.max(output.dense_score_matrix, 1)
-            ll = torch.tensor(pidxs, device=ypredicted.device).squeeze()
-            self._ncorrect += (ypredicted == ll).sum().item()
-        else:
-            for i, gold_idxs in enumerate(pidxs):
-                k = len(gold_idxs)
-                if k == 0:
-                    raise RuntimeError("Imposibru!")
-                if k == 1:
-                    idx = torch.max(output.dense_score_matrix[i], 0)[1].item()
-                    self._ncorrect += idx == gold_idxs[0]
-                else:
-                    _, idxs = torch.topk(output.dense_score_matrix[i], k, 0)
-                    self._ncorrect += sum(1 for j in idxs if j in gold_idxs)
+    def _update_metrics_impl(
+        self,
+        output: DualEncModelOutput,
+        labels: torch.Tensor,
+        batch: DocsBatch | SentsBatch,
+    ):
+        assert isinstance(
+            batch, DocsBatch
+        ), "DocRetrMetrics:_update_metrics_impl batch is not instance of DocsBatch"
 
+        # k = batch.info['max_positives_per_doc']
+
+        k = min(10, batch.get_tgt_docs_cnt())
+
+        m = output.dense_score_matrix
+        vals, _ = torch.topk(m, k, 1)
+        preds = labels * torch.where(
+            m >= vals[:, -1].unsqueeze(-1), m, torch.zeros(1, device=m.device)
+        )
+        self._ncorrect += torch.sum(preds != 0).item()
         self._total += labels.sum().item()
 
-        self._src_item_cnt += len(batch.src_ids)
-        self._src_len_in_sents += sum(batch.src_doc_len_in_sents)
-        self._src_len_in_frags += sum(batch.src_doc_len_in_frags)
-        self._src_len_in_tokens += sum(len(t) for t in batch.src_texts)
+        sd = batch.src_data
+        self._src_item_cnt += len(sd.text_ids)
+        self._src_len_in_sents += sum(sd.texts_repr.text_lengths_in_sents())
+        self._src_len_in_frags += sum(sd.texts_repr.text_lengths_in_fragments())
+        self._src_len_in_tokens += sd.seq_encoder_input.ntokens()
 
-        self._tgt_item_cnt += len(batch.tgt_ids)
-        self._tgt_len_in_sents += sum(batch.tgt_doc_len_in_sents)
-        self._tgt_len_in_frags += sum(batch.tgt_doc_len_in_frags)
-        self._tgt_len_in_tokens += sum(len(t) for t in batch.tgt_texts)
+        td = batch.tgt_data
+        self._tgt_item_cnt += len(td.text_ids)
+        self._tgt_len_in_sents += sum(td.texts_repr.text_lengths_in_sents())
+        self._tgt_len_in_frags += sum(td.texts_repr.text_lengths_in_fragments())
+        self._tgt_len_in_tokens += td.seq_encoder_input.ntokens()
 
 
 def create_metrics(task: TaskType, metrics_list=None) -> BaseMetrics:

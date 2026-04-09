@@ -5,13 +5,14 @@ import tempfile
 
 import pytest
 
+from doc_enc.encoders.enc_in import EncoderInputType
 from doc_enc.training.types import SentsBatch
 
 from doc_enc.training.sents_batch_generator import (
     SentsBatchGeneratorConf,
     SentsBatchGenerator,
-    SentsBatchIterator,
-    SentsBatchIteratorConf,
+    SentsBatchAsyncGenerator,
+    SentsBatchAsyncGeneratorConf,
 )
 
 from doc_enc.tokenizer import TokenizerType, TokenizerConf
@@ -84,124 +85,173 @@ def _create_gen_opts(input_dir):
 
 def test_gen_basic(FakeTrainingData):
     conf, tok_conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=0)
+    gen = SentsBatchGenerator(
+        EncoderInputType.JAGGED, conf, tok_conf=tok_conf, split='train', line_offset=0
+    )
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
-    assert batch.info['bs'] == 4
-    assert batch.src_id == [5, 1, 2, 4]
-    assert batch.tgt_id == [5, 1, 2, 4, 40, 41, 42, 10, 11, 20, 21, 22]
-    assert len(batch.src) == 4
-    assert batch.src[0] == [1, 5, 10, 11]
+    assert batch.batch_size() == 4
+    assert batch.src_data.text_ids == [5, 1, 2, 4]
+    assert batch.tgt_data.text_ids == [5, 1, 2, 4, 40, 41, 42, 10, 11, 20, 21, 22]
+
+    src_inp = batch.src_data.seq_encoder_input
+    assert src_inp.batch_size == 4
+    assert src_inp.get_jagged().data[:4].tolist() == [1, 5, 10, 11]
+
     assert batch.hn_idxs == [[4, 5, 6], [7, 8], [9, 10, 11], []]
 
 
 def test_gen_basic_line_offset(FakeTrainingData):
     conf, tok_conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, tok_conf, split='train', line_offset=3)
+    gen = SentsBatchGenerator(EncoderInputType.JAGGED, conf, tok_conf, split='train', line_offset=3)
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
-    assert batch.info['bs'] == 3
-    assert batch.src_id == [5, 4, 6]
-    assert batch.tgt_id == [5, 4, 6, 40, 41, 42, 50]
-    assert len(batch.src) == 3
-    assert batch.src[0] == [1, 5, 10, 11]
+    assert batch.batch_size() == 3
+    assert batch.src_data.text_ids == [5, 4, 6]
+    assert batch.tgt_data.text_ids == [5, 4, 6, 40, 41, 42, 50]
+
+    src_inp = batch.src_data.seq_encoder_input
+    assert src_inp.batch_size == 3
+    assert src_inp.get_jagged().data[:4].tolist() == [1, 5, 10, 11]
+
     assert batch.hn_idxs == [[3, 4, 5], [], [6]]
 
 
 def test_gen_basic_line_cnt(FakeTrainingData):
     conf, tok_conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_cnt=3)
+    gen = SentsBatchGenerator(
+        EncoderInputType.JAGGED, conf, tok_conf=tok_conf, split='train', line_cnt=3
+    )
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
-    assert batch.info['bs'] == 3
-    assert batch.src_id == [1, 2, 3]
-    assert batch.tgt_id == [1, 2, 3, 10, 11, 20, 21, 22]
-    assert len(batch.src) == 3
-    assert batch.src[0] == [1, 2, 3, 4]
+    assert batch.batch_size() == 3
+    assert batch.src_data.text_ids == [1, 2, 3]
+    assert batch.tgt_data.text_ids == [1, 2, 3, 10, 11, 20, 21, 22]
+
+    src_inp = batch.src_data.seq_encoder_input
+    assert src_inp.batch_size == 3
+    assert src_inp.get_jagged().data[:4].tolist() == [1, 2, 3, 4]
+
     assert batch.hn_idxs == [[3, 4], [5, 6, 7], []]
 
 
 def test_gen_basic_line_cnt_and_offset(FakeTrainingData):
     conf, tok_conf = _create_gen_opts(FakeTrainingData)
-    gen = SentsBatchGenerator(conf, tok_conf=tok_conf, split='train', line_offset=2, line_cnt=3)
+    gen = SentsBatchGenerator(
+        EncoderInputType.JAGGED, conf, tok_conf=tok_conf, split='train', line_offset=2, line_cnt=3
+    )
     batches = list(gen.batches())
     assert len(batches) == 1
     batch: SentsBatch = batches[0]
-    assert batch.info['bs'] == 2
-    assert batch.src_id == [5, 4]
-    assert batch.tgt_id == [5, 4, 40, 41, 42]
-    assert len(batch.src) == 2
-    assert batch.src[0] == [1, 5, 10, 11]
+    assert batch.batch_size() == 2
+
+    assert batch.src_data.text_ids == [5, 4]
+    assert batch.tgt_data.text_ids == [5, 4, 40, 41, 42]
+
+    src_inp = batch.src_data.seq_encoder_input
+    assert src_inp.batch_size == 2
+    assert src_inp.get_jagged().data[:4].tolist() == [1, 5, 10, 11]
+
     assert batch.hn_idxs == [[2, 3, 4], []]
 
 
-def test_iterator_single_generator(FakeTrainingData):
+# * Async generator
+
+
+def test_asyng_single_generator(FakeTrainingData):
     gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
-    iter_conf = SentsBatchIteratorConf(batch_generator_conf=gen_conf, async_generators=1)
-    biter = SentsBatchIterator(iter_conf, tok_conf, {}, 'train')
+    iter_conf = SentsBatchAsyncGeneratorConf(batch_generator_conf=gen_conf, async_generators=1)
+    biter = SentsBatchAsyncGenerator(EncoderInputType.JAGGED, iter_conf, tok_conf, {}, 'train')
 
     biter.init_epoch(1)
-    res = list(biter.batches())
-    assert len(res) == 1
-    batch, labels = res[0]
-    assert batch.info['bs'] == 4
-    assert batch.src_id == [5, 1, 2, 4]
-    assert batch.tgt_id == [5, 1, 2, 4, 40, 41, 42, 10, 11, 20, 21, 22]
+    nbatches = 0
+    for batch in biter.batches():
+        nbatches += 1
+        assert batch.batch_size() == 4
+        assert batch.src_data.text_ids == [5, 1, 2, 4]
+        assert batch.tgt_data.text_ids == [5, 1, 2, 4, 40, 41, 42, 10, 11, 20, 21, 22]
 
-    assert len(batch.src) == 4
-    assert len(max(batch.src, key=len)) == 4
-    assert len(batch.tgt) == 12
-    assert len(max(batch.tgt, key=len)) == 6
-    assert labels.shape == (4,)
+        src_inp = batch.src_data.seq_encoder_input
+        assert src_inp.batch_size == 4
+        assert src_inp.max_len == 4
+
+        tgt_inp = batch.tgt_data.seq_encoder_input
+
+        assert tgt_inp.batch_size == 12
+        assert tgt_inp.max_len == 6
+        assert batch.labels.shape == (4,)
+    assert nbatches == 1
 
 
 def test_iterator_1st_rank(FakeTrainingData):
     gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
-    iter_conf = SentsBatchIteratorConf(batch_generator_conf=gen_conf, async_generators=1)
-    biter = SentsBatchIterator(iter_conf, tok_conf, {}, 'train', rank=1, world_size=2)
+    iter_conf = SentsBatchAsyncGeneratorConf(batch_generator_conf=gen_conf, async_generators=1)
+    biter = SentsBatchAsyncGenerator(
+        EncoderInputType.JAGGED, iter_conf, tok_conf, {}, 'train', rank=1, world_size=2
+    )
 
     biter.init_epoch(1)
-    res = list(biter.batches())
-    assert len(res) == 1
-    batch, _ = res[0]
-    assert batch.info['bs'] == 2
-    assert batch.src_id == [5, 6]
-    assert batch.tgt_id == [5, 6, 40, 41, 42, 50]
+    nbatches = 0
+    for batch in biter.batches():
+        nbatches += 1
+        assert batch.batch_size() == 2
+        assert batch.src_data.text_ids == [5, 6]
+        assert batch.tgt_data.text_ids == [5, 6, 40, 41, 42, 50]
 
-    assert len(batch.src) == 2
-    assert len(max(batch.src, key=len)) == 4
-    assert len(batch.tgt) == 6
-    assert len(max(batch.tgt, key=len)) == 4
+        src_inp = batch.src_data.seq_encoder_input
+        assert src_inp.batch_size == 2
+        assert src_inp.max_len == 4
+
+        tgt_inp = batch.tgt_data.seq_encoder_input
+
+        assert tgt_inp.batch_size == 6
+        assert tgt_inp.max_len == 4
+
+    assert nbatches == 1
 
 
 def test_iterator_two_generators(FakeTrainingData):
     gen_conf, tok_conf = _create_gen_opts(FakeTrainingData)
-    iter_conf = SentsBatchIteratorConf(batch_generator_conf=gen_conf, async_generators=2)
-    biter = SentsBatchIterator(iter_conf, tok_conf, {}, 'train')
+    iter_conf = SentsBatchAsyncGeneratorConf(batch_generator_conf=gen_conf, async_generators=2)
+    biter = SentsBatchAsyncGenerator(EncoderInputType.PACKED, iter_conf, tok_conf, {}, 'train')
 
     biter.init_epoch(1)
-    res = list(biter.batches())
-    assert len(res) == 2
-    res.sort(key=lambda t: t[0].src_id[0])
-    batch1, _ = res[0]
-    assert batch1.info['bs'] == 4
-    assert batch1.src_id == [1, 2, 4, 3]
-    assert batch1.tgt_id == [1, 2, 4, 3, 10, 11, 20, 21, 22]
+    nbatches = 0
+    for batch in biter.batches():
+        nbatches += 1
 
-    assert len(batch1.src) == 4
-    assert len(max(batch1.src, key=len)) == 4
-    assert len(batch1.tgt) == 9
-    assert len(max(batch1.tgt, key=len)) == 6
+        if batch.src_data.text_ids == [1, 2, 4, 3]:
+            assert batch.batch_size() == 4
+            assert batch.tgt_data.text_ids == [1, 2, 4, 3, 10, 11, 20, 21, 22]
 
-    batch2, _ = res[1]
-    assert batch2.info['bs'] == 2
-    assert batch2.src_id == [5, 6]
-    assert batch2.tgt_id == [5, 6, 40, 41, 42, 50]
+            src_inp = batch.src_data.seq_encoder_input
+            assert src_inp.batch_size == 4
+            assert src_inp.max_len == 4
+            src_ps = src_inp.get_packed_seq()
+            assert src_ps.sorted_indices is None
 
-    assert len(batch2.src) == 2
-    assert len(max(batch2.src, key=len)) == 4
-    assert len(batch2.tgt) == 6
-    assert len(max(batch2.tgt, key=len)) == 4
+            tgt_inp = batch.tgt_data.seq_encoder_input
+            assert tgt_inp.batch_size == 9
+            assert tgt_inp.max_len == 6
+
+            tgt_ps = tgt_inp.get_packed_seq()
+            assert tgt_ps.sorted_indices is not None
+
+        elif batch.src_data.text_ids == [5, 6]:
+            assert batch.batch_size() == 2
+            assert batch.tgt_data.text_ids == [5, 6, 40, 41, 42, 50]
+
+            src_inp = batch.src_data.seq_encoder_input
+            assert src_inp.batch_size == 2
+            assert src_inp.max_len == 4
+
+            tgt_inp = batch.tgt_data.seq_encoder_input
+            assert tgt_inp.batch_size == 6
+            assert tgt_inp.max_len == 4
+        else:
+            raise RuntimeError("Unexpected batch!")
+
+    assert nbatches == 2

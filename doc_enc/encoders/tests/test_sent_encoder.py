@@ -9,12 +9,13 @@ from doc_enc.encoders.pad_utils import PadOpts
 from doc_enc.encoders.split_input import split_padded_input_and_encode
 
 
-def _create_input(data: list[list[int]]):
+def _create_input(data: list[list[int]], sorted_by_length: bool = False):
     test_tensor = torch.tensor(data)
     length_tensor = torch.tensor([sum(1 for t in s if t) for s in data])
     mask = torch.full_like(test_tensor, True, dtype=torch.bool)
     mask[test_tensor == 0] = False
     input_data = SeqEncoderBatchedInput(EncoderInputType.PADDED)
+    input_data.sorted_by_length = sorted_by_length
     input_data.batch = PaddedTensor(test_tensor, length_tensor, mask)
     if data:
         input_data.max_len = int(length_tensor.max())
@@ -106,14 +107,13 @@ def test_already_sorted():
         [7, 8, 1, 6, 2],
         [1, 2, 3, 0, 0],
     ]
-    input_data = _create_input(data)
+    input_data = _create_input(data, sorted_by_length=True)
     encoder = DummyEncoder()
     r = split_padded_input_and_encode(
         encoder,
         input_data,
         max_chunk_size=2,
         max_tokens_in_chunk=15,
-        already_sorted=True,
     )
     assert r[0].tolist() == [4, 2, 5]
     assert r[1].tolist() == [7, 2, 5]

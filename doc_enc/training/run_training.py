@@ -19,6 +19,7 @@ from torch.multiprocessing.spawn import spawn as mp_spawn
 
 from doc_enc.common_types import EncoderKind
 from doc_enc.embs.emb_config import BaseEmbConf
+from doc_enc.encoders.pad_utils import PadOpts
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
 from doc_enc.tokenizer import TokenizerConf, TokenizerType, SbertTokenizer
 from doc_enc.training.batch_iterator import BatchIterator, BatchIteratorConf
@@ -46,7 +47,7 @@ class Config:
     enable_log_for_all_procs: bool = False
 
     combine_datasets_use_text_proc: bool = False
-    force_determinism: bool = False
+    force_determinism: bool = True
 
 
 cs = ConfigStore.instance()
@@ -82,7 +83,7 @@ def _init_dist_default_group(local_rank, local_world_size, port='29500'):
     if 'MASTER_PORT' not in os.environ:
         os.environ['MASTER_PORT'] = port
 
-    os.environ['NCCL_ASYNC_ERROR_HANDLING'] = '1'
+    os.environ['TORCH_NCCL_ASYNC_ERROR_HANDLING'] = '1'
     timeout = int(os.environ.get("TORCH_DIST_TIMEOUT_MIN", "5"))
     dist.init_process_group(
         'nccl', rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=timeout)
@@ -99,12 +100,6 @@ def _init_proc(local_rank, local_world_size, conf: Config):
     if conf.force_determinism:
         torch.use_deterministic_algorithms(True)
         os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-        if (
-            conf.batches.docs_batch_iterator_conf.async_generators > 1
-            or conf.batches.sents_batch_iterator_conf.async_generators > 1
-        ):
-            logging.error("set async_generators==1 in all batch_iterators")
-            raise RuntimeError("force_determinism is true but some async_generators > 1")
 
     torch.manual_seed(2022 * 8)
     random.seed(2022 * 9)
@@ -251,47 +246,43 @@ def _run_train(local_rank, local_world_size, conf: Config):
             local_rank=local_rank,
             verbose=conf.verbose,
         )
-        if conf.model.fragment is None:
-            conf.batches.docs_batch_iterator_conf.batch_generator_conf.pad_fragments_level = False
+
         pad_to_multiple_of = 0
         if conf.model.sent is not None and conf.model.sent.encoder.attention_window:
             pad_to_multiple_of = max(conf.model.sent.encoder.attention_window)
 
-        batch_device = torch.device(f'cuda:{local_rank}')
+        enc_inp_type = trainer.enc_input_type()
         train_iter = BatchIterator(
+            enc_inp_type,
             conf.batches,
             conf.text_proc,
             (conf.job_logging, conf.verbose),
             split="train",
             rank=rank,
             world_size=world_size,
-            device=batch_device,
-            pad_idx=trainer.vocab().pad_idx(),
-            pad_to_multiple_of=pad_to_multiple_of,
+            pad_opts=PadOpts(pad_to_multiple_of),
         )
 
         dev_iter = BatchIterator(
+            enc_inp_type,
             conf.batches,
             conf.text_proc,
             (conf.job_logging, conf.verbose),
             split="dev",
             rank=rank,
             world_size=world_size,
-            device=batch_device,
-            pad_idx=trainer.vocab().pad_idx(),
-            pad_to_multiple_of=pad_to_multiple_of,
+            pad_opts=PadOpts(pad_to_multiple_of),
         )
-
         trainer(train_iter, dev_iter)
 
     except Exception as e:
         logging.exception(e)
+        sys.exit(1)
+    finally:
         if train_iter is not None:
             train_iter.destroy()
         if dev_iter is not None:
             dev_iter.destroy()
-        sys.exit(1)
-    finally:
         _destroy_proc(world_size)
 
 

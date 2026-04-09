@@ -44,5 +44,5 @@ class BaseDocModel(BaseEncodeModule):
     ) -> DualEncModelOutput:
         raise NotImplementedError("calc_sim_matrix is not implemented")
 
-    def forward(self, batch: DocsBatch, labels) -> DualEncModelOutput:
+    def forward(self, batch: DocsBatch, labels: torch.Tensor) -> DualEncModelOutput:
         raise NotImplementedError("forward is not implemented")

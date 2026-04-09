@@ -78,7 +78,6 @@ batches:
       - SimRuWiki
     batch_generator_conf:
       input_dir: /train/data/docs
-      pad_src_sentences: false
       batch_total_sents_cnt: 36000
       batch_size: 384
       max_sents_per_doc: 1024

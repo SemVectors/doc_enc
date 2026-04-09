@@ -22,11 +22,12 @@ def split_padded_input_and_encode(
     max_chunk_size: int,
     max_tokens_in_chunk: int,
     collect_on_cpu: bool = False,
-    already_sorted: bool = False,
     pad_opts: PadOpts = PadOpts(),
 ) -> torch.Tensor:
     if orig_input_data.batch_size == 0:
         return torch.FloatTensor()
+
+    already_sorted = orig_input_data.sorted_by_length
 
     max_len: int = orig_input_data.max_len
     batch_size = orig_input_data.batch_size

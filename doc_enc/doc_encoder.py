@@ -10,7 +10,6 @@ import dataclasses
 from pathlib import Path
 import multiprocessing
 import collections.abc
-import threading
 
 import numpy as np
 import torch
@@ -22,6 +21,7 @@ from doc_enc.encoders.enc_in import (
     EncoderInputType,
     EncoderInData,
     SeqEncoderBatchedInput,
+    TextReprType,
     TextsRepr,
 )
 from doc_enc.inter_proc_utils import deserialize_enc_in_data, serialize_enc_in_data
@@ -115,6 +115,16 @@ class BaseBatchGenerator:
     ) -> None:
         self._enc_input_type = enc_input_type
         self._conf = conf
+
+        if tp_conf.split_into_fragments and tp_conf.split_into_sents:
+            self._text_repr_type = TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS
+        elif tp_conf.split_into_sents:
+            self._text_repr_type = TextReprType.SEQ_OF_SENTS
+        elif tp_conf.split_into_fragments:
+            self._text_repr_type = TextReprType.SEQ_OF_FRAGMENTS
+        else:
+            self._text_repr_type = TextReprType.SEQ_OF_TOKENS
+
         self._tp = TextProcessor(tp_conf, inference_mode=eval_mode)
         self._tp.load_state_dict(tp_state_dict)
         self._pad_opts = pad_opts
@@ -143,16 +153,16 @@ class BaseBatchGenerator:
         text_ids: list[str | int],
         input_are_sents: bool = False,
     ):
+        if input_are_sents:
+            text_lengths = []
+
+        texts_repr = TextsRepr(self._text_repr_type, segmented_texts, text_lengths)
         return EncoderInData(
             SeqEncoderBatchedInput.from_input_ids(
                 self._enc_input_type, segmented_texts, self._tp.vocab().pad_idx(), self._pad_opts
             ),
             text_ids,
-            (
-                TextsRepr(segmented_texts, text_lengths)
-                if not input_are_sents
-                else TextsRepr(segmented_texts, [])
-            ),
+            texts_repr,
         )
 
     def batches(self, generator_func: TextGenFuncT, input_are_sents: bool = False):
@@ -234,7 +244,7 @@ class BaseBatchGenerator:
             )
 
 
-def _proc_wrapper_for_texts_generator(
+def _proc_wrapper(
     in_queue: multiprocessing.Queue,
     queue: multiprocessing.Queue,
     shared_tensors_holder: EncInputSharedTensors,
@@ -345,7 +355,7 @@ class BatchAsyncGenerator:
                 t_holder = self._shared_tensors_holders[0]
 
             p = multiprocessing.Process(
-                target=_proc_wrapper_for_texts_generator,
+                target=_proc_wrapper,
                 args=(self._in_queue, out_q, t_holder) + self._generator_args,
                 kwargs={},
             )
@@ -472,8 +482,6 @@ def encode_input_data(
             max_chunk_size=max_chunk_size,
             max_tokens_in_chunk=max_tokens_in_chunk,
             collect_on_cpu=collect_on_cpu,
-            # TODO
-            # already_sorted=input_data.input_sorted(),
             pad_opts=PadOpts(encoder.pad_to_multiple_of, encoder.get_padding_side()),
         )
     else:
@@ -494,7 +502,7 @@ class BaseSentEncodeModule(torch.nn.Module):
         pad_idx: int,
         device: torch.device,
         embed: TokenEmbedding | None = None,
-        sent_layer: SentForDocEncoder | None = None,
+        sent_layer: SeqEncoder | None = None,
     ):
         super().__init__()
         self._pad_idx = pad_idx
@@ -535,18 +543,16 @@ class BaseSentEncodeModule(torch.nn.Module):
 
     def _encode_sents_impl(
         self,
-        sents: list[list[int]],
-        already_sorted=False,
+        input_data: EncoderInData,
         collect_on_cpu=False,
         split_sents=True,
         max_chunk_size=1024,
         max_tokens_in_chunk=48_000,
     ):
         assert self.sent_layer is not None, "Logic error 38389"
-        # TODO
-        input_data = self._prepare_input_data(sents, already_sorted=already_sorted)
+        input_data = self._prepare_input_data(input_data)
         return encode_input_data(
-            input_data,
+            input_data.seq_encoder_input,
             self.sent_layer,
             embed=self.embed,
             collect_on_cpu=collect_on_cpu,
@@ -612,13 +618,13 @@ class BaseEncodeModule(BaseSentEncodeModule):
         split_input=True,
         max_chunk_size=1024,
         max_tokens_in_chunk=48_000,
-        batch_info: dict | None = None,
+        # batch_info: dict | None = None,
     ):
 
         # """Docs is represented as sequence of segments in a flat list doc_segments"""
 
-        if batch_info is None:
-            batch_info = {}
+        # if batch_info is None:
+        #     batch_info = {}
 
         input_data = self._prepare_input_data(input_data)
 

@@ -59,8 +59,20 @@ class PaddedTensor(NamedTuple):
 #     )
 
 
+class TextReprType(enum.Enum):
+    SEQ_OF_TOKENS = 0
+    SEQ_OF_SENTS = 1
+    SEQ_OF_FRAGMENTS = 2
+    SEQ_OF_FRAGMENTS_OF_SENTS = 3
+
+
 class TextsRepr:
-    def __init__(self, text_segments: list[list[int]], text_lengths: list[list[int]]):
+    def __init__(
+        self,
+        text_repr_type: TextReprType,
+        text_segments: list[list[int]],
+        text_lengths: list[list[int]],
+    ):
         """text_segments - flat list that holds multiple texts. Each element of
         the list is a sequence of tokens that might be part of a text (fragment,
         sentence) or the whole text. In combination with text_lengths encodes
@@ -92,11 +104,11 @@ class TextsRepr:
 
         text_lengths: [ [16, 16, 5], [16, 16, 4], ...]
         """
+        self.text_repr_type = text_repr_type
         self.flat_tokens = torch.tensor([t for s in text_segments for t in s], dtype=torch.int32)
         self.first_level_lengths = torch.tensor([len(s) for s in text_segments], dtype=torch.int32)
         self.second_level_lengths = None
         self.third_level_lengths = None
-        # is_trivial = not text_lengths or all(len(ls) == 1 and ls[0] == 1 for ls in text_lengths)
 
         if text_lengths:
             self.second_level_lengths = torch.tensor(
@@ -105,6 +117,60 @@ class TextsRepr:
             self.third_level_lengths = torch.tensor(
                 [len(s) for s in text_lengths], dtype=torch.int32
             )
+
+    def nsents(self) -> int:
+        if self.text_repr_type in (
+            TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS,
+            TextReprType.SEQ_OF_SENTS,
+        ):
+            assert self.second_level_lengths is not None, "nsents: second level is none"
+            return int(self.second_level_lengths.sum().item())
+        return 0
+
+    def fragment_lengths_in_sents(self) -> list[int]:
+        if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
+            assert (
+                self.second_level_lengths is not None
+            ), "fragments_lengths_in_sents: second level is none"
+            return self.second_level_lengths.tolist()
+        return []
+
+    def text_lengths_in_sents(self) -> list[int]:
+        if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
+            assert (
+                self.third_level_lengths is not None and self.second_level_lengths is not None
+            ), "text_lengths_in_sents: third or second levels is None"
+
+            frags_len = self.third_level_lengths.tolist()
+            sl = []
+            offs = 0
+            for fl in frags_len:
+                tl = self.second_level_lengths[offs : offs + fl].sum().item()
+                sl.append(int(tl))
+                offs += fl
+            return sl
+        if self.text_repr_type == TextReprType.SEQ_OF_SENTS:
+            assert (
+                self.second_level_lengths is not None
+            ), "text_lengths_in_sents: second level is none"
+            return self.second_level_lengths.tolist()
+
+        return []
+
+    def text_lengths_in_fragments(self) -> list[int]:
+        if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
+            assert (
+                self.third_level_lengths is not None
+            ), "text_lengths_in_fragments: third level is None"
+
+            return self.third_level_lengths.tolist()
+        if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS:
+            assert (
+                self.second_level_lengths is not None
+            ), "text_lengths_in_fragments: second level is none"
+            return self.second_level_lengths.tolist()
+
+        return []
 
 
 def _call_fn_on_packed_seq(fn, ps: PackedSequence):
@@ -119,8 +185,10 @@ class SeqEncoderBatchedInput:
         text_segments: list[list[int]],
         pad_idx: int,
         pad_opts: PadOpts,
+        sorted_by_length: bool = False,
     ):
         batched_input = cls(input_type)
+        batched_input.sorted_by_length = sorted_by_length
         batched_input.max_len = max(len(s) for s in text_segments)
         batched_input.batch_size = len(text_segments)
         # logging.error(
@@ -141,7 +209,7 @@ class SeqEncoderBatchedInput:
             # logging.error('packed %s')
             tensor_list = [torch.tensor(s, dtype=torch.int32) for s in text_segments]
             # logging.error('tensor list %s')
-            batched_input.batch = pack_sequence(tensor_list, enforce_sorted=False)
+            batched_input.batch = pack_sequence(tensor_list, enforce_sorted=sorted_by_length)
             # logging.error('gatched input %s', batched_input.batch)
             return batched_input
         if input_type == EncoderInputType.JAGGED:
@@ -194,6 +262,8 @@ class SeqEncoderBatchedInput:
         # self.seqs_cnt = len(text_segments)
         # self.total_tokens_cnt = sum(len(s) for s in text_segments)
         self.embedded = False
+        self.sorted_by_length = False
+
         self.max_len = 0
         self.batch_size = 0
 

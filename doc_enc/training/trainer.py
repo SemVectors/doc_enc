@@ -4,7 +4,7 @@ import copy
 import os
 import datetime
 import contextlib
-from typing import NamedTuple
+from typing import Generator, NamedTuple, cast
 import json
 from pathlib import Path
 import multiprocessing
@@ -37,7 +37,13 @@ from doc_enc.training.train_conf import (
 )
 from doc_enc.training.batch_iterator import BatchIterator
 from doc_enc.text_processor import TextProcessorConf, TextProcessor
-from doc_enc.training.types import DocRetrLossType, TaskType, SentRetrLossType
+from doc_enc.training.types import (
+    DocRetrLossType,
+    DocsBatch,
+    SentsBatch,
+    TaskType,
+    SentRetrLossType,
+)
 from doc_enc.training.models.model_factory import create_models
 from doc_enc.training.models.model_conf import DocModelConf
 from doc_enc.training.models.base_sent_model import BaseSentModel
@@ -489,7 +495,7 @@ class Trainer(BaseTrainerUtils):
         else:
             logging.info("Skip creating DistributedDataParallel since world size == 1")
             self._sync_group = None
-            self._doc_model: nn.Module = self._local_models.doc_model
+            self._doc_model: BaseDocModel = self._local_models.doc_model
             self._sent_model = self._local_models.sent_model
             self._uneven_input_handling = contextlib.nullcontext
 
@@ -509,13 +515,26 @@ class Trainer(BaseTrainerUtils):
         if self._conf.resume_checkpoint:
             self._init_epoch = self._load_from_checkpoint()
 
+    def enc_input_type(self):
+        sent_inp = None
+        if self._local_models.sent_model is not None:
+            sent_inp = self._local_models.sent_model.first_encode_layer().input_type()
+
+        doc_inp = self._local_models.doc_model.first_encode_layer().input_type()
+        if sent_inp is not None and sent_inp != doc_inp:
+            raise RuntimeError(
+                f"sent model has input type {sent_inp}, but doc input type is {doc_inp}"
+            )
+        return doc_inp
+
     def _calc_sent_retr_loss(self, output: DualEncModelOutput, labels, batch_size):
         sim_matrix = output.dense_score_matrix
         if self._conf.sent_retr_loss_type == SentRetrLossType.CE:
-            dense_loss = self._sent_retr_criterion(sim_matrix, labels)
+            dense_loss = self._sent_retr_criterion(sim_matrix, labels.long())
         elif self._conf.sent_retr_loss_type == SentRetrLossType.BICE:
-            loss_src = self._sent_retr_criterion(sim_matrix, labels)
-            loss_tgt = self._sent_retr_criterion(sim_matrix.t()[:batch_size], labels)
+            llabels = labels.long()
+            loss_src = self._sent_retr_criterion(sim_matrix, llabels)
+            loss_tgt = self._sent_retr_criterion(sim_matrix.t()[:batch_size], llabels)
             dense_loss = loss_src + loss_tgt
         else:
             raise RuntimeError("Logic error 987")
@@ -552,11 +571,18 @@ class Trainer(BaseTrainerUtils):
             loss = dense_loss
         return loss, (dense_loss, ivf_loss, pq_loss)
 
-    def _calc_loss_and_metrics(self, task: TaskType, output: DualEncModelOutput, labels, batch):
+    def _calc_loss_and_metrics(
+        self,
+        task: TaskType,
+        output: DualEncModelOutput,
+        labels: torch.Tensor,
+        batch: DocsBatch | SentsBatch,
+    ):
+        # TODO replace info bs?
         if task == TaskType.SENT_RETR:
-            loss, losses_tuple = self._calc_sent_retr_loss(output, labels, batch.info['bs'])
-        elif task == TaskType.DOC_RETR:
-            loss, losses_tuple = self._calc_doc_retr_loss(output, labels, batch.info['bs'])
+            loss, losses_tuple = self._calc_sent_retr_loss(output, labels, batch.batch_size())
+        elif isinstance(batch, DocsBatch):
+            loss, losses_tuple = self._calc_doc_retr_loss(output, labels, batch.batch_size())
         else:
             raise RuntimeError(f"Unknown task in calc loss: {task}")
 
@@ -564,17 +590,23 @@ class Trainer(BaseTrainerUtils):
         m.update_metrics(loss.item(), losses_tuple, output, labels, batch)
         return loss, m
 
-    def _save_debug_info(self, batch, output: DualEncModelOutput, labels, meta):
+    def _save_debug_info(
+        self, batch: DocsBatch | SentsBatch, output: DualEncModelOutput, labels, meta
+    ):
         if meta['task'] == TaskType.SENT_RETR:
             meta['task'] = "sent_retr"
-            self._save_retr_debug_info(batch, output, labels, meta)
+            assert isinstance(
+                batch, SentsBatch
+            ), "task is sent_retr but batch has type != SentsBatch"
+            self._save_sent_retr_debug_info(batch, output, labels, meta)
         elif meta['task'] == TaskType.DOC_RETR:
             meta['task'] = "doc_retr"
+            assert isinstance(batch, DocsBatch), "task is doc_retr but batch has type != DocsBatch"
             self._save_doc_retr_debug_info(batch, output, labels, meta)
         else:
             raise RuntimeError("Logic error 342")
 
-    def _save_doc_retr_debug_info(self, batch, output: DualEncModelOutput, labels, meta):
+    def _save_doc_retr_debug_info(self, batch: DocsBatch, output: DualEncModelOutput, _, meta):
         score_matrix = output.dense_score_matrix
         maxk = min(5, score_matrix.size(1))
         values, indices = torch.topk(score_matrix, maxk, 1)
@@ -601,15 +633,18 @@ class Trainer(BaseTrainerUtils):
 
         unscale_factor = 1 / self._model_conf.scale if self._model_conf.scale else 1.0
         examples = []
-        for i in range(batch.info['bs']):
-            obj = {'src_batch_num': i, 'src_id': batch.src_ids[i], 'found': []}
+        src_ids = batch.src_data.text_ids
+        tgt_ids = batch.tgt_data.text_ids
+        pos_ids = batch.get_positive_idxs()
+        for i in range(batch.batch_size()):
+            obj = {'src_batch_num': i, 'src_id': src_ids[i], 'found': []}
 
             for v, idx in zip(values[i], indices[i]):
-                if idx >= len(batch.tgt_ids):
+                if idx >= len(tgt_ids):
                     # idx from other device
                     tgt_id = -1
                 else:
-                    tgt_id = batch.tgt_ids[idx]
+                    tgt_id = tgt_ids[idx]
 
                 obj['found'].append(
                     {
@@ -620,13 +655,13 @@ class Trainer(BaseTrainerUtils):
                     }
                 )
             gold = []
-            for pidx in batch.positive_idxs[i]:
+            for pidx in pos_ids[i]:
                 usim = score_matrix[i][pidx].item() * unscale_factor
 
                 gold.append(
                     {
                         'tgt_batch_num': pidx,
-                        'tgt_id': batch.tgt_ids[pidx],
+                        'tgt_id': tgt_ids[pidx],
                         'sim': score_matrix[i][pidx].item(),
                         'sim_unscaled': usim,
                         'sim_unscaled_wo_margin': usim + self._model_conf.margin,
@@ -640,7 +675,7 @@ class Trainer(BaseTrainerUtils):
             f.write(json.dumps(meta))
             f.write('\n')
 
-    def _save_retr_debug_info(self, batch, output: DualEncModelOutput, _, meta):
+    def _save_sent_retr_debug_info(self, batch: SentsBatch, output: DualEncModelOutput, _, meta):
         assert self._model_conf.sent is not None, "logic error1919"
         self._save_sent_retr_debug_info_impl(
             self._model_conf.sent,
@@ -666,7 +701,9 @@ class Trainer(BaseTrainerUtils):
                 Path(self._conf.save_path) / 'sent_pq_retr_debug_batches.jsonl',
             )
 
-    def _save_sent_retr_debug_info_impl(self, conf, batch, score_matrix, meta, outpath):
+    def _save_sent_retr_debug_info_impl(
+        self, conf, batch: SentsBatch, score_matrix: torch.Tensor, meta, outpath
+    ):
         values, indices = torch.topk(score_matrix, 3, 1)
 
         meta['num_updates'] = self._num_updates
@@ -677,14 +714,16 @@ class Trainer(BaseTrainerUtils):
 
         examples = []
         unscale_factor = 1 / conf.scale if conf.scale else 1.0
-        for i in range(len(batch.src)):
-            obj = {'src_batch_num': i, 'src_id': batch.src_id[i], 'found': []}
+        src_ids = batch.src_data.text_ids
+        tgt_ids = batch.tgt_data.text_ids
+        for i in range(len(src_ids)):
+            obj = {'src_batch_num': i, 'src_id': src_ids[i], 'found': []}
             for v, idx in zip(values[i], indices[i]):
-                if idx >= len(batch.tgt_id):
+                if idx >= len(tgt_ids):
                     # idx from other device
                     tgt_id = -1
                 else:
-                    tgt_id = batch.tgt_id[idx]
+                    tgt_id = tgt_ids[idx]
                 obj['found'].append(
                     {
                         'tgt_batch_num': idx.item(),
@@ -701,7 +740,7 @@ class Trainer(BaseTrainerUtils):
 
             obj['gold'] = {
                 'tgt_batch_num': i,
-                'tgt_id': batch.tgt_id[i],
+                'tgt_id': tgt_ids[i],
                 'sim': score_matrix[i][i].item(),
                 'sim_unscaled': score_matrix[i][i].item() * unscale_factor,
                 'sim_wo_margin': wo_margin,
@@ -713,72 +752,81 @@ class Trainer(BaseTrainerUtils):
             f.write(json.dumps(meta))
             f.write('\n')
 
-    def _debug_batch(self, task, batch, labels):
+    def _debug_batch(self, task, batch: DocsBatch | SentsBatch, labels: torch.Tensor):
         if not self._verbose:
             return
-        if task == TaskType.SENT_RETR:
-            sl = len(batch.src)
-            sm = max(batch.src_len)
-            tl = len(batch.tgt)
-            tm = max(batch.tgt_len)
+        if isinstance(batch, SentsBatch):
+            sd = batch.src_data
+            sl = sd.seq_encoder_input.batch_size
+            sm = sd.seq_encoder_input.max_len
+
+            td = batch.tgt_data
+            tl = td.seq_encoder_input.batch_size
+            tm = td.seq_encoder_input.max_len
             logging.debug('src sents shape: %s', (sl, sm))
             logging.debug('tgt sents shape: %s', (tl, tm))
-            if self._conf.print_batches:
-                logging.debug('src_len: %s', batch.src_len)
-                logging.debug('tgt_len: %s', batch.tgt_len)
-        elif task == TaskType.DOC_RETR:
+            if self._conf.print_batches and sd.texts_repr.flat_tokens is not None:
+                # TODO
+                logging.debug('src first 100 tokens: %s', sd.texts_repr.flat_tokens[:100])
+                logging.debug('tgt first 100 tokens: %s', td.texts_repr.flat_tokens[:100])
+        elif isinstance(batch, DocsBatch):
+            sd = batch.src_data
             logging.debug(
-                "src docs cnt: %s; frags cnt: %s; text segments cnt: %s, tokens cnt: %s",
-                len(batch.src_ids),
-                len(batch.src_fragment_len) if batch.src_fragment_len else '-',
-                len(batch.src_texts),
-                sum(len(s) for s in batch.src_texts),
+                "src docs cnt: %s; frags cnt: %s; sentences cnt: %s, tokens cnt: %s",
+                len(sd.text_ids),
+                sum(sd.texts_repr.text_lengths_in_fragments()),
+                sum(sd.texts_repr.text_lengths_in_sents()),
+                sd.seq_encoder_input.ntokens(),
             )
+            td = batch.tgt_data
             logging.debug(
-                "tgt docs cnt: %s; frags cnt: %s; text segments cnt: %s, tokens cnt: %s",
-                len(batch.tgt_ids),
-                len(batch.tgt_fragment_len) if batch.tgt_fragment_len else '-',
-                len(batch.tgt_texts),
-                sum(len(s) for s in batch.tgt_texts),
+                "tgt docs cnt: %s; frags cnt: %s; sentences cnt: %s, tokens cnt: %s",
+                len(td.text_ids),
+                sum(td.texts_repr.text_lengths_in_fragments()),
+                sum(td.texts_repr.text_lengths_in_sents()),
+                td.seq_encoder_input.ntokens(),
             )
-            if batch.src_sent_len:
-                src_sent_sum = sum(batch.src_sent_len)
+            if sd.texts_repr.first_level_lengths is not None:
+                src_sents_len_t = sd.texts_repr.first_level_lengths
+                src_sent_sum = src_sents_len_t.sum()
                 logging.debug(
                     "src sents len stat: max: %s; min: %s; avg: %s",
-                    max(batch.src_sent_len),
-                    min(batch.src_sent_len),
-                    src_sent_sum / len(batch.src_sent_len),
+                    src_sents_len_t.max(),
+                    src_sents_len_t.min(),
+                    src_sent_sum / int(src_sents_len_t.shape[0]),
                 )
-                tgt_sent_sum = sum(batch.tgt_sent_len)
+                tgt_sents_len_t = td.texts_repr.first_level_lengths
+                tgt_sent_sum = tgt_sents_len_t.sum()
                 logging.debug(
                     "tgt sents len stat: max: %s; min: %s; avg: %s",
-                    max(batch.tgt_sent_len),
-                    min(batch.tgt_sent_len),
-                    tgt_sent_sum / len(batch.tgt_sent_len),
+                    tgt_sents_len_t.max(),
+                    tgt_sents_len_t.min(),
+                    tgt_sent_sum / int(tgt_sents_len_t.shape[0]),
                 )
 
-            if self._conf.print_batches:
-                logging.debug(
-                    'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
-                    'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
-                    batch.src_ids,
-                    len(batch.src_texts),
-                    batch.src_sent_len,
-                    batch.src_fragment_len,
-                    batch.src_doc_len_in_sents,
-                    batch.src_doc_len_in_frags,
-                )
-                logging.debug(
-                    'tgt ids: %s\ntgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
-                    'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
-                    batch.tgt_ids,
-                    len(batch.tgt_texts),
-                    batch.tgt_sent_len,
-                    batch.tgt_fragment_len,
-                    batch.tgt_doc_len_in_sents,
-                    batch.tgt_doc_len_in_frags,
-                )
-                logging.debug("labels: %s", labels)
+            # TODO
+            # if self._conf.print_batches:
+            #     logging.debug(
+            #         'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
+            #         'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
+            #         batch.src_ids,
+            #         len(batch.src_texts),
+            #         batch.src_sent_len,
+            #         batch.src_fragment_len,
+            #         batch.src_doc_len_in_sents,
+            #         batch.src_doc_len_in_frags,
+            #     )
+            #     logging.debug(
+            #         'tgt ids: %s\ntgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
+            #         'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
+            #         batch.tgt_ids,
+            #         len(batch.tgt_texts),
+            #         batch.tgt_sent_len,
+            #         batch.tgt_fragment_len,
+            #         batch.tgt_doc_len_in_sents,
+            #         batch.tgt_doc_len_in_frags,
+            #     )
+            #     logging.debug("labels: %s", labels)
 
     def _save_gpu_memory_stat(self):
         summary = torch.cuda.memory_summary(self._device)
@@ -820,7 +868,9 @@ class Trainer(BaseTrainerUtils):
 
         self._optimizer.zero_grad()
 
-    def _run_forward(self, task, batch, labels) -> DualEncModelOutput:
+    def _run_forward(
+        self, task, batch: DocsBatch | SentsBatch, labels: torch.Tensor
+    ) -> DualEncModelOutput:
         if task == TaskType.SENT_RETR and self._sent_model is not None:
             output = self._sent_model(batch)
         elif task == TaskType.DOC_RETR:
@@ -829,16 +879,20 @@ class Trainer(BaseTrainerUtils):
             else:
                 # use_reentrant=True requires any input tensor has requires_grad field set to true
                 labels.requires_grad_(True)
-                output = torch.utils.checkpoint.checkpoint(
+                ck_output = torch.utils.checkpoint.checkpoint(
                     self._doc_model, batch, labels, use_reentrant=True
                 )
+                output = cast(DualEncModelOutput, ck_output)
         else:
             raise RuntimeError("Logic error 89837")
         return output
 
-    def _process_task_batches(self, task, task_batches):
+    def _process_task_batches(
+        self, task, task_batches: Generator[DocsBatch | SentsBatch, None, None]
+    ):
         running_metrics = create_metrics(task)
-        for batch, labels in task_batches:
+        for batch in task_batches:
+            labels = batch.labels.to(device=self._device)
             self._debug_batch(task, batch, labels)
 
             # forward pass
@@ -865,8 +919,8 @@ class Trainer(BaseTrainerUtils):
             logging.debug("update done")
 
             if self._is_master and self._conf.debug_iters:
-                l = [self._num_updates % int(v) for v in self._conf.debug_iters]
-                if not all(l):
+                ll = [self._num_updates % int(v) for v in self._conf.debug_iters]
+                if not all(ll):
                     meta = {'task': task, 'loss': loss.item()}
                     meta.update(m.metrics())
                     meta.update(m.stats())
@@ -1129,7 +1183,8 @@ class Trainer(BaseTrainerUtils):
 
                 assert model is not None, "logic error 8321"
 
-                for batch, labels in dev_iter.batches(batches_cnt=0):
+                for batch in dev_iter.batches(batches_cnt=0):
+                    labels = batch.labels.to(device=self._device)
                     output = model.calc_sim_matrix(batch, dont_cross_device_sample=True)
                     _, m = self._calc_loss_and_metrics(task, output, labels, batch)
                     cum_metrics += m

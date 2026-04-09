@@ -6,9 +6,18 @@ import dataclasses
 import logging
 import copy
 
-from doc_enc.training.types import TaskType
-from doc_enc.training.sents_batch_generator import SentsBatchIterator, SentsBatchIteratorConf
-from doc_enc.training.docs_batch_generator import DocsBatchIteratorConf, DocsBatchIterator
+
+from doc_enc.encoders.enc_in import EncoderInputType
+from doc_enc.encoders.pad_utils import PadOpts
+from doc_enc.training.types import DocsBatch, SentsBatch, TaskType
+from doc_enc.training.sents_batch_generator import (
+    SentsBatchAsyncGenerator,
+    SentsBatchAsyncGeneratorConf,
+)
+from doc_enc.training.docs_batch_generator import (
+    DocsBatchAsyncGeneratorConf,
+    DocsBatchAsyncGenerator,
+)
 from doc_enc.text_processor import TextProcessorConf
 
 
@@ -19,8 +28,8 @@ class EarlyIterEndPolicy(Enum):
 
 @dataclasses.dataclass
 class BatchIteratorConf:
-    sents_batch_iterator_conf: SentsBatchIteratorConf
-    docs_batch_iterator_conf: DocsBatchIteratorConf
+    sents_batch_iterator_conf: SentsBatchAsyncGeneratorConf
+    docs_batch_iterator_conf: DocsBatchAsyncGeneratorConf
 
     early_iter_end_policy: EarlyIterEndPolicy = EarlyIterEndPolicy.REITER
     reinit_last_iter: bool = True
@@ -29,37 +38,35 @@ class BatchIteratorConf:
 class BatchIterator:
     def __init__(
         self,
+        enc_input_type: EncoderInputType,
         opts: BatchIteratorConf,
         tp_conf: TextProcessorConf,
         logging_conf,
         split,
         rank=0,
         world_size=-1,
-        device=None,
-        pad_idx=0,
-        pad_to_multiple_of=0,
+        pad_opts: PadOpts = PadOpts(),
     ):
-        self._sents_batch_iterator = SentsBatchIterator(
+        self._sents_batch_iterator = SentsBatchAsyncGenerator(
+            enc_input_type,
             opts.sents_batch_iterator_conf,
             tp_conf.tokenizer,
             logging_conf,
             split=split,
             rank=rank,
             world_size=world_size,
-            device=device,
-            pad_idx=pad_idx,
-            pad_to_multiple_of=pad_to_multiple_of,
+            pad_opts=pad_opts,
         )
 
-        self._docs_batch_iterator = DocsBatchIterator(
+        self._docs_batch_iterator = DocsBatchAsyncGenerator(
+            enc_input_type,
             opts.docs_batch_iterator_conf,
             tp_conf,
             logging_conf,
             split=split,
             rank=rank,
             world_size=world_size,
-            device=device,
-            pad_to_multiple_of=pad_to_multiple_of,
+            pad_opts=pad_opts,
         )
 
         self._opts = opts
@@ -136,7 +143,7 @@ class BatchIterator:
             return self._docs_batch_iterator.batches()
         raise RuntimeError(f"Unsupported task: {task} 34289")
 
-    def batches(self, batches_cnt: int):
+    def batches(self, batches_cnt: int) -> Generator[DocsBatch | SentsBatch, None, None]:
         if self._iterators is None or self._current_tasks is None or self._done is None:
             raise RuntimeError("Batch iterator is not Initialized!")
         if (

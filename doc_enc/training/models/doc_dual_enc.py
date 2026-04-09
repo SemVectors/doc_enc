@@ -2,7 +2,6 @@
 #!/usr/bin/env python3
 
 import contextlib
-import logging  # noqa: F401
 from typing import Any
 
 import torch
@@ -52,32 +51,32 @@ class DocDualEncoder(BaseDocModel):
     def _sent_level_ctx_mgr(self):
         return self._cur_sents_ctx_mgr()
 
-    def _create_batch_info_dict(self, prefix, batch: DocsBatch):
-        d = {}
-        for n in ['doc_len_in_sents', 'doc_len_in_frags', 'fragment_len']:
-            d[n] = batch.info.get(f'{prefix}_{n}')
-        return d
+    # def _create_batch_info_dict(self, prefix, batch: DocsBatch):
+    #     d = {}
+    #     for n in ['doc_len_in_sents', 'doc_len_in_frags', 'fragment_len']:
+    #         d[n] = batch.info.get(f'{prefix}_{n}')
+    #     return d
 
     def calc_sim_matrix(
         self, batch: DocsBatch, dont_cross_device_sample=False
     ) -> DualEncModelOutput:
         self._reset_cur_sents_ctx_mrg(self._src_sents_ctx_mgr)
+
         src_doc_embs = self._encode_docs_impl(
-            batch.src_texts,
-            batch.src_doc_segments_length,
+            batch.src_data,
             split_input=self.conf.split_input,
             max_chunk_size=self.conf.max_chunk_size,
             max_tokens_in_chunk=self.conf.max_tokens_in_chunk,
-            batch_info=self._create_batch_info_dict('src', batch),
+            # batch_info=self._create_batch_info_dict('src', batch),
         )
         self._reset_cur_sents_ctx_mrg(self._tgt_sents_ctx_mgr)
+
         tgt_doc_embs = self._encode_docs_impl(
-            batch.tgt_texts,
-            batch.tgt_doc_segments_length,
+            batch.tgt_data,
             split_input=self.conf.split_input,
             max_chunk_size=self.conf.max_chunk_size,
             max_tokens_in_chunk=self.conf.max_tokens_in_chunk,
-            batch_info=self._create_batch_info_dict('tgt', batch),
+            # batch_info=self._create_batch_info_dict('tgt', batch),
         )
 
         if self.conf.normalize:
@@ -97,18 +96,18 @@ class DocDualEncoder(BaseDocModel):
             ivf_sm, pq_sm = self.index(
                 src_doc_embs,
                 tgt_doc_embs,
-                batch.tgt_ids,
+                batch.tgt_data.text_ids,
                 normalize=self.conf.normalize,
                 cross_device_sample=self.conf.cross_device_sample,
             )
         return DualEncModelOutput(m, ivf_score_matrix=ivf_sm, pq_score_matrix=pq_sm)
 
-    def _finalize_sim_matrix(self, sm: torch.Tensor, labels, margin, scale):
+    def _finalize_sim_matrix(self, sm: torch.Tensor, labels: torch.Tensor, margin, scale):
         if margin:
             if self.conf.cross_device_sample:
-                l = torch.zeros_like(sm)
-                l[:, : labels.shape[1]] = labels
-                labels = l
+                lt = torch.zeros_like(sm)
+                lt[:, : labels.shape[1]] = labels
+                labels = lt
             sm[labels.to(dtype=torch.bool)] -= margin
 
         if scale:
@@ -116,7 +115,7 @@ class DocDualEncoder(BaseDocModel):
 
         return sm
 
-    def _forward_doc_task(self, batch: DocsBatch, labels) -> DualEncModelOutput:
+    def _forward_doc_task(self, batch: DocsBatch, labels: torch.Tensor) -> DualEncModelOutput:
         output = self.calc_sim_matrix(batch)
 
         output.dense_score_matrix = self._finalize_sim_matrix(
@@ -135,5 +134,5 @@ class DocDualEncoder(BaseDocModel):
             )
         return output
 
-    def forward(self, batch: DocsBatch, labels) -> DualEncModelOutput:
+    def forward(self, batch: DocsBatch, labels: torch.Tensor) -> DualEncModelOutput:
         return self._forward_doc_task(batch, labels)

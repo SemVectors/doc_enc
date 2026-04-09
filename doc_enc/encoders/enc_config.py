@@ -36,7 +36,7 @@ class BaseEncoderConf:
     num_heads: Optional[int] = None
     intermediate_size: Optional[int] = None
     intermediate_activation: Optional[str] = None
-    full_intermediate: bool = False
+    full_intermediate: bool = True
     share_attn: bool = True
     # longformer and local transformer
     attention_window: List[int] = dataclasses.field(default_factory=list)
