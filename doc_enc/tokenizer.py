@@ -25,6 +25,9 @@ class TokenizerType(Enum):
 class TokenizerConf:
     tokenizer_type: TokenizerType = TokenizerType.SENTENCEPIECE
     vocab_path: str | None = None
+
+    max_seq_length: int | None = None
+
     transformers_auto_name: str = ''
     transformers_cache_dir: str | None = None
     auto_tokenizer_max_seq_len: int | None = None
@@ -39,6 +42,9 @@ class TokenizerConf:
 
 class AbcTokenizer:
     def get_max_seq_length(self) -> int | None:
+        raise NotImplementedError("Not implemented")
+
+    def special_tokens_cnt(self) -> int:
         raise NotImplementedError("Not implemented")
 
     def set_max_seq_length(self, msl: int):
@@ -59,7 +65,13 @@ class AbcTokenizer:
     def vocab_size(self) -> int:
         raise NotImplementedError("Not implemented")
 
-    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
+    def __call__(
+        self, sent: str, add_special_tokens: bool = True, max_length: int | None = None
+    ) -> list[int]:
+        raise NotImplementedError("Not implemented")
+
+    def prepare_for_model(self, tokens: list[int], max_length: int | None = None):
+        """Truncate and add special tokens."""
         raise NotImplementedError("Not implemented")
 
     def state_dict(self):
@@ -71,7 +83,13 @@ class AbcTokenizer:
 
 class Pretokenized(AbcTokenizer):
     def __init__(self, conf: TokenizerConf) -> None:
-        pass
+        self._conf = conf
+
+    def get_max_seq_length(self) -> int | None:
+        return None
+
+    def special_tokens_cnt(self) -> int:
+        return 0
 
     def pad_idx(self):
         return 0
@@ -85,8 +103,46 @@ class Pretokenized(AbcTokenizer):
     def vocab_size(self) -> int:
         return 0
 
-    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
-        return [int(s) for s in sent.split()]
+    def __call__(
+        self, sent: str, add_special_tokens: bool = True, max_length: int | None = None
+    ) -> list[int]:
+        tokens = [int(s) for s in sent.split()]
+        return _modify_sent(self._conf, self, tokens, add_special_tokens, max_length)
+
+    def prepare_for_model(self, tokens: list[int], max_length: int | None = None):
+        return _modify_sent(
+            self._conf, self, tokens, add_special_tokens=True, max_length=max_length
+        )
+
+
+def _modify_sent(
+    conf: TokenizerConf,
+    tokenizer: AbcTokenizer,
+    sent: list[int],
+    add_special_tokens: bool,
+    max_length: int | None,
+):
+    if max_length is None:
+        max_length = conf.max_seq_length
+    elif conf.max_seq_length is not None:
+        max_length = min(max_length, conf.max_seq_length)
+
+    prefix = []
+    if add_special_tokens and conf.add_bos:
+        prefix = [tokenizer.bos_idx()]
+    suffix = []
+    if add_special_tokens and conf.add_eos:
+        suffix = [tokenizer.eos_idx()]
+
+    if not prefix and not suffix:
+        if max_length is not None:
+            return sent[:max_length]
+        return sent
+
+    if max_length is not None:
+        extra_len = len(prefix) + len(suffix)
+        sent = sent[: max_length - extra_len]
+    return prefix + sent + suffix
 
 
 class SentencepieceTokenizer(AbcTokenizer):
@@ -99,10 +155,19 @@ class SentencepieceTokenizer(AbcTokenizer):
 
         spm.set_random_generator_seed(42 * 42 + 52)
 
-    def get_max_seq_length(self):
-        return None
+    def get_max_seq_length(self) -> int | None:
+        return self._conf.max_seq_length
 
+    # TODO
     def set_max_seq_length(self, msl): ...
+
+    def special_tokens_cnt(self) -> int:
+        cnt = 0
+        if self._conf.add_bos:
+            cnt += 1
+        if self._conf.add_eos:
+            cnt += 1
+        return cnt
 
     def get_idx(self, token: str) -> int:
         return self._vocab.PieceToId(token)
@@ -119,33 +184,23 @@ class SentencepieceTokenizer(AbcTokenizer):
     def vocab_size(self) -> int:
         return len(self._vocab)
 
-    def _modify_sent(self, sent: list[int], max_length: int | None):
+    def _modify_sent(self, sent: list[int], add_special_tokens: bool, max_length: int | None):
+        return _modify_sent(self._conf, self, sent, add_special_tokens, max_length)
 
-        prefix = []
-        if self._conf.add_bos:
-            prefix = [self.bos_idx()]
-        suffix = []
-        if self._conf.add_eos:
-            suffix = [self.eos_idx()]
-
-        if not prefix and not suffix:
-            if max_length is not None:
-                return sent[:max_length]
-            return sent
-
-        if max_length is not None:
-            extra_len = len(prefix) + len(suffix)
-            sent = sent[: max_length - extra_len]
-        return prefix + sent + suffix
-
-    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
+    def __call__(
+        self, sent: str, add_special_tokens: bool = True, max_length: int | None = None
+    ) -> list[int]:
         if not self._inference_mode and self._conf.enable_sampling:
             tokens: list[int] = self._vocab.SampleEncodeAsIds(
                 sent, alpha=self._conf.alpha, nbest_size=self._conf.nbest_size
             )
         else:
             tokens: list[int] = self._vocab.EncodeAsIds(sent)
-        return self._modify_sent(tokens, max_length)
+        return self._modify_sent(tokens, add_special_tokens, max_length)
+
+    def prepare_for_model(self, tokens: list[int], max_length: int | None = None):
+        """Truncate and add special tokens."""
+        return self._modify_sent(tokens, add_special_tokens=True, max_length=max_length)
 
     def state_dict(self):
         return {
@@ -165,8 +220,12 @@ class BaseTransformersTokenizer(AbcTokenizer):
     def get_max_seq_length(self):
         return self._max_seq_length
 
+    # TODO
     def set_max_seq_length(self, msl):
         self._max_seq_length = msl
+
+    def special_tokens_cnt(self) -> int:
+        return self._tokenizer.num_special_tokens_to_add()
 
     def get_idx(self, token: str) -> int:
         return self._tokenizer.convert_tokens_to_ids(token)
@@ -183,13 +242,24 @@ class BaseTransformersTokenizer(AbcTokenizer):
     def vocab_size(self) -> int:
         return len(self._tokenizer)
 
-    def __call__(self, sent: str, max_length: int | None = None) -> list[int]:
+    def __call__(
+        self, sent: str, add_special_tokens: bool = True, max_length: int | None = None
+    ) -> list[int]:
         if max_length is None:
             max_length = self._max_seq_length
         elif self._max_seq_length is not None:
             max_length = min(max_length, self._max_seq_length)
-        return self._tokenizer(sent, truncation=True, max_length=max_length)["input_ids"]
+        return self._tokenizer(
+            sent, add_special_tokens=add_special_tokens, truncation=True, max_length=max_length
+        )["input_ids"]
 
+    def prepare_for_model(self, tokens: list[int], max_length: int | None = None):
+        """Truncate and add special tokens."""
+        return self._tokenizer.prepare_for_model(
+            tokens, add_special_tokens=True, truncation=True, max_length=max_length
+        )
+
+    # TODO
     def state_dict(self):
         d = {}
         if self._max_seq_length is not None:

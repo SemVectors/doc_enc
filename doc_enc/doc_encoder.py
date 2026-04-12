@@ -133,7 +133,7 @@ class BaseBatchGenerator:
         self, text: str | list[str], truncate_length_in_tokens: int, truncate_length_in_seqs: int
     ) -> tuple[list[list[int]], list[int]]:
         assert isinstance(text, str), "Prepare sent works only with str type."
-        return ([self._tp.prepare_sent(text)], [1])
+        return ([self._tp.prepare_sent(text, truncate_length_in_tokens)], [1])
 
     def _prepare_text(
         self, text: str | list[str], truncate_length_in_tokens: int, truncate_length_in_seqs: int

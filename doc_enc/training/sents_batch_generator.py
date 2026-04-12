@@ -333,9 +333,9 @@ class SentsBatchGenerator:
             )
 
             if (
-                len(examples) + 1 >= self._conf.batch_size
-                or cur_sents_cnt + example_sents_cnt >= self._conf.max_sents
-                or cur_tokens_cnt + example_tokens_cnt >= self._conf.max_tokens
+                len(examples) + 1 > self._conf.batch_size
+                or cur_sents_cnt + example_sents_cnt > self._conf.max_sents
+                or cur_tokens_cnt + example_tokens_cnt > self._conf.max_tokens
             ):
                 b = self._make_batch(examples, batch_dups, initial_bucket)
                 batches.append(b)
@@ -364,8 +364,8 @@ class SentsBatchGenerator:
         return batches, to_next_bucket
 
     def _tokenize(self, text):
-        sent = self._tokenizer(text)
-        return sent[: self._conf.max_sent_size]
+        sent = self._tokenizer(text, max_length=self._conf.max_sent_size)
+        return sent
 
     def _parse_line(self, line):
         line_id, text = line.split('\t', 1)

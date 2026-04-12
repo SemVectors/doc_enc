@@ -37,6 +37,11 @@ class SentsBatch(NamedTuple):
         return len(self.src_data.text_ids)
 
 
+class DocRetrPairsStat:
+    def __init__(self):
+        self.ntokens = 0
+
+
 class DocRetrPairs(NamedTuple):
     src_texts: list[list[int]]
     src_text_lengths: list[list[int]]
@@ -48,6 +53,14 @@ class DocRetrPairs(NamedTuple):
 
     positive_idxs: list[list[int]]
     info: dict[str, int]
+
+    tgt_hashes: dict[str, int] = {}
+    dups: dict[str, int] = {}
+
+    stat: DocRetrPairsStat = DocRetrPairsStat()
+
+    def total_seqs_cnt(self):
+        return len(self.src_texts) + len(self.tgt_texts)
 
 
 class DocsBatch(NamedTuple):

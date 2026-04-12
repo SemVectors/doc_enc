@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import logging
+from pathlib import Path
 from typing import Iterable, List
 import dataclasses
 import itertools
@@ -14,7 +16,9 @@ from doc_enc.passages import split_into_fragments_by_len
 @dataclasses.dataclass
 class TextProcessorConf:
     tokenizer: TokenizerConf
-    max_sent_len: int = 128
+    # deprecated use max_seq_length in tokenizer conf.
+    max_sent_len: int | None = None
+    # TODO rename min_seq_len
     min_sent_len: int = 4
     num_alpha_max_ratio: float = 1.0
 
@@ -23,12 +27,56 @@ class TextProcessorConf:
     fragment_size: int = 24
 
 
+class SegmentedText:
+    def __init__(
+        self,
+        token_seqs: list[list[int]],
+        segment_lengths: list[int],
+        text_wo_special_tokens: bool = False,
+        max_seq_len: int | None = None,
+        special_tokens_cnt: int = 0,
+    ):
+        self.token_seqs = token_seqs
+        self.segment_lengths = segment_lengths
+
+        self.text_wo_special_tokens = text_wo_special_tokens
+
+        if max_seq_len is None:
+            max_seq_len = 1 << 32
+        self.max_seq_len = max_seq_len
+        self.special_tokens_cnt = special_tokens_cnt
+
+    def segments_cnt(self):
+        return len(self.token_seqs)
+
+    def ntokens(self):
+        if not self.text_wo_special_tokens:
+            return sum(len(s) for s in self.token_seqs)
+        # Tokenizer was launched with add_special_tokens==False. They will be
+        # added later, but we have to compensate while calculating number of
+        # tokens.
+        ntokens = 0
+        for seq in self.token_seqs:
+            ntokens += min(len(seq) + self.special_tokens_cnt, self.max_seq_len)
+        return ntokens
+
+
 class TextProcessor:
     def __init__(self, conf: TextProcessorConf, inference_mode=False):
         self._conf = conf
+        if conf.max_sent_len is not None:
+            logging.warning(
+                "TextProcessorConf.max_sent_len is deprecated use TokenizerConf.max_seq_length instead."
+            )
+            if conf.split_into_sents and conf.tokenizer.max_seq_length is None:
+                # Compatibility with previous behavior.
+                conf.tokenizer.max_seq_length = conf.max_sent_len
 
         self._tokenizer = create_tokenizer(conf.tokenizer, inference_mode=inference_mode)
         self._alpha_nums_regex = re.compile(r'(\d+[-–.]?\d*)|(\w+)')
+
+        self._special_tokens_cnt = self._tokenizer.special_tokens_cnt()
+        self._max_seql_len = self._tokenizer.get_max_seq_length()
 
     def conf(self):
         return self._conf
@@ -55,12 +103,63 @@ class TextProcessor:
 
         return False
 
+    def prepare_for_model(
+        self,
+        segmented_text: SegmentedText,
+        truncate_length_in_tokens: int | None = None,
+        truncate_length_in_seqs: int | None = None,
+    ) -> SegmentedText:
+        token_seqs = segmented_text.token_seqs
+        prep_tokens = []
+        doc_segments_length = []
+        if self._conf.split_into_sents or self._conf.split_into_fragments:
+            cur_len_in_tokens = 0
+            for tokens in token_seqs:
+
+                max_length = None
+                if truncate_length_in_tokens is not None:
+                    max_length = truncate_length_in_tokens - cur_len_in_tokens
+                    if max_length <= 2 * self._conf.min_sent_len:
+                        break
+
+                tokens = self._tokenizer.prepare_for_model(tokens, max_length=max_length)
+                prep_tokens.append(tokens)
+
+                if truncate_length_in_seqs and len(prep_tokens) >= truncate_length_in_seqs:
+                    break
+
+                cur_len_in_tokens += len(tokens)
+                if truncate_length_in_tokens and cur_len_in_tokens == truncate_length_in_tokens:
+                    break
+
+            if len(prep_tokens) != len(token_seqs):
+                if self._conf.split_into_fragments and self._conf.split_into_sents:
+                    doc_segments_length = split_into_fragments_by_len(
+                        prep_tokens, self._conf.fragment_size
+                    )
+                else:
+                    doc_segments_length.append(len(prep_tokens))
+
+        else:
+            # document is a sequence of tokens
+            assert len(token_seqs) == 1, "Logic error in TextProc.prepare_for_model 1."
+            t = self._tokenizer.prepare_for_model(
+                token_seqs[0], max_length=truncate_length_in_tokens
+            )
+            prep_tokens.append(t)
+
+        if not doc_segments_length:
+            doc_segments_length = segmented_text.segment_lengths
+        new_seg_text = SegmentedText(prep_tokens, doc_segments_length)
+        return new_seg_text
+
     def prepare_text(
         self,
         text_sents: Iterable[str],
         truncate_length_in_tokens: int | None = None,
         truncate_length_in_seqs: int | None = None,
-    ) -> tuple[list[list[int]], list[int]]:
+        add_special_tokens: bool = True,
+    ) -> SegmentedText:
         segmented_text: list[list[int]] = []
         doc_segments_length: list[int] = []
 
@@ -71,13 +170,15 @@ class TextProcessor:
                 if not sent.strip():
                     continue
 
+                max_length = None
                 if truncate_length_in_tokens is not None:
-                    max_length = min(
-                        truncate_length_in_tokens - cur_len_in_tokens, self._conf.max_sent_len
-                    )
-                else:
-                    max_length = self._conf.max_sent_len
-                tokens = self._tokenizer(sent, max_length=max_length)
+                    max_length = truncate_length_in_tokens - cur_len_in_tokens
+                    if max_length <= 2 * self._conf.min_sent_len:
+                        break
+
+                tokens = self._tokenizer(
+                    sent, max_length=max_length, add_special_tokens=add_special_tokens
+                )
                 if not self._filter_sent(tokens, sent):
                     segmented_text.append(tokens)
 
@@ -111,7 +212,9 @@ class TextProcessor:
                     if truncate_length_in_tokens is not None
                     else None
                 )
-                tokens = self._tokenizer(frag_text, max_length=max_length)
+                tokens = self._tokenizer(
+                    frag_text, max_length=max_length, add_special_tokens=add_special_tokens
+                )
                 offset += frag_len
                 segmented_text.append(tokens)
 
@@ -127,20 +230,47 @@ class TextProcessor:
         else:
             # 3. document is a sequence of tokens
             text = '\n'.join(text_sents)
-            tokens = self._tokenizer(text, max_length=truncate_length_in_tokens)
+            tokens = self._tokenizer(
+                text, add_special_tokens=add_special_tokens, max_length=truncate_length_in_tokens
+            )
             segmented_text.append(tokens)
             # document is one sequence
             doc_segments_length.append(1)
 
-        return segmented_text, doc_segments_length
+        return SegmentedText(
+            segmented_text,
+            doc_segments_length,
+            text_wo_special_tokens=not add_special_tokens,
+            max_seq_len=self._max_seql_len,
+            special_tokens_cnt=self._special_tokens_cnt,
+        )
 
-    def prepare_text_from_file(self, path):
+    def prepare_text_from_file(
+        self,
+        path: str | Path,
+        truncate_length_in_tokens: int | None = None,
+        truncate_length_in_seqs: int | None = None,
+        add_special_tokens: bool = True,
+    ):
         with open_file(path) as f:
             sent_gen = (line.rstrip() for line in f)
-            return self.prepare_text(sent_gen)
+            return self.prepare_text(
+                sent_gen, truncate_length_in_tokens, truncate_length_in_seqs, add_special_tokens
+            )
 
-    def prepare_sent(self, sent_str: str):
-        return self._tokenizer(sent_str, max_length=self._conf.max_sent_len)
+    def prepare_sent(
+        self,
+        sent_str: str,
+        truncate_length_in_tokens: int | None = None,
+        add_special_tokens: bool = True,
+    ):
+        max_length = None
+        if truncate_length_in_tokens is not None:
+            max_length = truncate_length_in_tokens
+
+        return self._tokenizer(
+            sent_str, add_special_tokens=add_special_tokens, max_length=max_length
+        )
 
     def prepare_sents(self, sent_strs: list[str]):
         sent_tokens = []
