@@ -42,17 +42,20 @@ def _generator_proc_wrapper(
         configure_log(*logging_conf)
         if not is_master:
             logging.getLogger().setLevel(logging.WARNING)
+
+    gen_stat = None
     try:
         generator = GenCls(*args, **kwargs)
         for b in generator.batches():
             d = serialize_training_data(b.src_data, b.tgt_data, b.labels, shared_tensors_holder)
             queue.put(d)
+        gen_stat = generator.get_stat()
     except Exception as e:
         logging.exception(
             "Failed to process batches: GenCls=%s; Args=%s; kwargs=%s : %s", GenCls, args, kwargs, e
         )
 
-    queue.put(None)
+    queue.put((None, gen_stat))
 
 
 def skip_to_line(fp, line_offset):
@@ -190,23 +193,28 @@ class BaseBatchAsyncGenerator[BatchT]:
         last_q_idx = 0
         finished = [False] * nworkers
         nfinished = 0
+        stats = []
         while nfinished < nworkers:
             out_q = self._out_queues[last_q_idx]
             shared_t = self._shared_tensors_holders[last_q_idx]
             batch = out_q.get()
 
-            if batch is None:
-                finished[last_q_idx] = True
-                nfinished += 1
-            else:
-                with deserialize_training_data(batch, shared_t) as b:
-                    yield self._prepare_batch(*b)
+            match batch:
+                case (None, _stat):
+                    finished[last_q_idx] = True
+                    nfinished += 1
+                    if _stat is not None:
+                        stats.append(_stat)
+                case tuple():
+                    with deserialize_training_data(batch, shared_t) as b:
+                        yield self._prepare_batch(*b)
 
-            # condition to prevent infinite loop when all(f for f in finished)
-            while nfinished < nworkers:
-                last_q_idx = (last_q_idx + 1) % nworkers
-                if not finished[last_q_idx]:
-                    break
+        if stats:
+            if len(stats) > 1:
+                total_stat = sum(stats[1:], start=stats[0])
+            else:
+                total_stat = stats[0]
+            logging.info("%s: stat:\n%s", self._name, total_stat)
 
         for p in self._processes:
             p.join()

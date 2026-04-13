@@ -99,8 +99,16 @@ class _ProcSrcStatus(Enum):
     HUGE_SRC_NOT_TRUNCATABLE = 4
 
 
-class _Stat:
+class DocsBatchGeneratorStat:
     def __init__(self):
+        self.src_texts = 0
+        self.tgt_texts = 0
+        self.positives = 0
+        self.negatives = 0
+        self.src_segments = 0
+        self.tgt_segments = 0
+        self.src_tokens = 0
+        self.tgt_tokens = 0
         self.filtered_by_min_sents_per_doc = 0
         self.filtered_by_max_sents_per_doc = 0
         self.path_does_not_exist = 0
@@ -118,12 +126,45 @@ class _Stat:
 
     def __str__(self):
         return (
+            f'{{src/tgt}} texts,segments,tokens: {self.src_texts}/{self.tgt_texts},{self.src_segments}/{self.tgt_segments},{self.src_tokens}/{self.tgt_tokens}, '
+            f'positives: {self.positives}, negatives: {self.negatives}\n'
             f'filtered_by_{{min/max}}_sents_per_doc: {self.filtered_by_min_sents_per_doc}/{self.filtered_by_max_sents_per_doc}, '
             f'path_does_not_exist: {self.path_does_not_exist}, empty_texts: {self.empty_text}, huge_pair: {self.huge_src}, '
             f'bad_src: {self.bad_src}, no_positives: {self.no_positives}, cant_fit: {self.cant_fit}, defective_batch: {self.defective_batch}, '
             f'{{toks/seqs}}_truncated (trunc ratio): {self.toks_truncated} ({self.total_toks_trunc_ratio/self.toks_truncated if self.toks_truncated else 0:.2f})'
             f'/{self.seqs_truncated} ({self.total_seqs_trunc_ratio/self.seqs_truncated if self.seqs_truncated else 0:.2f})'
         )
+
+    def __add__(self, other: 'DocsBatchGeneratorStat'):
+        new = DocsBatchGeneratorStat()
+        new.src_texts = self.src_texts + other.src_texts
+        new.src_segments = self.src_segments + other.src_segments
+        new.src_tokens = self.src_tokens + other.src_tokens
+        new.tgt_texts = self.tgt_texts + other.tgt_texts
+        new.tgt_segments = self.tgt_segments + other.tgt_segments
+        new.tgt_tokens = self.tgt_tokens + other.tgt_tokens
+
+        new.positives = self.positives + other.positives
+        new.negatives = self.negatives + other.negatives
+
+        new.filtered_by_min_sents_per_doc = (
+            self.filtered_by_min_sents_per_doc + other.filtered_by_min_sents_per_doc
+        )
+        new.filtered_by_max_sents_per_doc = (
+            self.filtered_by_max_sents_per_doc + other.filtered_by_max_sents_per_doc
+        )
+        new.path_does_not_exist = self.path_does_not_exist + other.path_does_not_exist
+        new.empty_text = self.empty_text + other.empty_text
+        new.huge_src = self.huge_src + other.huge_src
+        new.bad_src = self.bad_src + other.bad_src
+        new.no_positives = self.no_positives + other.no_positives
+        new.cant_fit = self.cant_fit + other.cant_fit
+        new.defective_batch = self.defective_batch + other.defective_batch
+        new.total_seqs_trunc_ratio = self.total_seqs_trunc_ratio + other.total_seqs_trunc_ratio
+        new.seqs_truncated = self.seqs_truncated + other.seqs_truncated
+        new.total_toks_trunc_ratio = self.total_toks_trunc_ratio + other.total_toks_trunc_ratio
+        new.toks_truncated = self.toks_truncated + other.toks_truncated
+        return new
 
 
 # From itertools recipes
@@ -185,7 +226,10 @@ class DocsBatchGenerator:
         else:
             self._text_repr_type = TextReprType.SEQ_OF_TOKENS
 
-        self._stat = _Stat()
+        self._stat = DocsBatchGeneratorStat()
+
+    def get_stat(self):
+        return self._stat
 
     def _load_metas(self, split: str, line_offset: int, line_cnt: int) -> list[_MetaT]:
         all_metas = []
@@ -254,6 +298,14 @@ class DocsBatchGenerator:
             batch.tgt_texts.extend(prepped_text.token_seqs)
             batch.tgt_text_lengths.append(prepped_text.segment_lengths)
 
+            self._stat.tgt_texts += 1
+            self._stat.tgt_segments += prepped_text.segments_cnt()
+            self._stat.tgt_tokens += prepped_text.ntokens()
+            if label == 0:
+                self._stat.negatives += 1
+            elif label == 1:
+                self._stat.positives += 1
+
             batch.tgt_hashes[tgt_hash] = tgt_no
             if label == 1:
                 positive_idxs.append(tgt_no)
@@ -305,10 +357,14 @@ class DocsBatchGenerator:
 
         assert selected_texts[0][1] == -1, "First text is src with label == -1"
         src_info = selected_texts[0][0]
+        src_seg_text = prepped_texts[0]
         batch.src_ids.append(src_info.text_id)
-        batch.src_texts.extend(prepped_texts[0].token_seqs)
-        batch.src_text_lengths.append(prepped_texts[0].segment_lengths)
+        batch.src_texts.extend(src_seg_text.token_seqs)
+        batch.src_text_lengths.append(src_seg_text.segment_lengths)
         batch.stat.ntokens += ntokens
+        self._stat.src_texts += 1
+        self._stat.src_segments += src_seg_text.segments_cnt()
+        self._stat.src_tokens += src_seg_text.ntokens()
 
         positive_idxs = self._prepare_all_targets(selected_texts[1:], prepped_texts[1:], batch)
 

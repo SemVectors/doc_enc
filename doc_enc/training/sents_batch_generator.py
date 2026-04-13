@@ -155,6 +155,9 @@ class SentsBatchGenerator:
 
             logging.info("initialized sents hn file")
 
+    def get_stat(self):
+        return None
+
     def _sort_within_bucket(self, bucket):
         # sort by length of src in a decreasing order
         # if lengths are equal, sort by the number of duplicates: the least the better
