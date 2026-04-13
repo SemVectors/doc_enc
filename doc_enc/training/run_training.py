@@ -47,7 +47,7 @@ class Config:
     enable_log_for_all_procs: bool = False
 
     combine_datasets_use_text_proc: bool = False
-    force_determinism: bool = True
+    force_determinism: bool = False
 
 
 cs = ConfigStore.instance()

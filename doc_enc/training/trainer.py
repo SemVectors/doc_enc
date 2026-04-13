@@ -1163,7 +1163,7 @@ class Trainer(BaseTrainerUtils):
             torch.save(state_dict, snapshot_path)
 
     def _eval_on_dev(self, epoch, dev_iter: BatchIterator):
-        with torch.no_grad():
+        with torch.inference_mode():
             if self._local_models.sent_model is not None:
                 self._local_models.sent_model.eval()
             self._local_models.doc_model.eval()
@@ -1195,7 +1195,15 @@ class Trainer(BaseTrainerUtils):
 
     def _eval_and_save(self, epoch, dev_iter: BatchIterator):
         logging.info("Evaling on dev...")
-        m_per_task = self._eval_on_dev(epoch, dev_iter)
+        enable_determinism = torch.are_deterministic_algorithms_enabled()
+        try:
+            # When determinstic algorithms are on, scatter becomes quite slow.
+            # Disable it while evaling.
+            if enable_determinism:
+                torch.use_deterministic_algorithms(False)
+            m_per_task = self._eval_on_dev(epoch, dev_iter)
+        finally:
+            torch.use_deterministic_algorithms(enable_determinism)
         m_per_task = self._collect_metrics(m_per_task)
         if self._is_master:
             logging.info("Results on dev data")
