@@ -323,7 +323,6 @@ class EncInputSharedTensors:
         seb = SeqEncoderBatchedInput(self.enc_input_type)
         if self.enc_input_type == EncoderInputType.PACKED:
             pd = torch.nn.utils.rnn.PackedSequence(*inp_tens)
-            seb.batch = pd
         elif self.enc_input_type in (EncoderInputType.JAGGED, EncoderInputType.PADDED):
             if self.enc_input_type == EncoderInputType.JAGGED:
                 pd = JaggedInputTensor(*inp_tens)
@@ -331,6 +330,8 @@ class EncInputSharedTensors:
                 pd = PaddedTensor(*inp_tens, padding_mask=None)
         else:
             raise RuntimeError(f"Unsupported enc input type: {self.enc_input_type}")
+
+        seb.batch = pd
 
         self._recreate_derivatives(seb, info)
 

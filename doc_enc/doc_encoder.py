@@ -80,7 +80,8 @@ class DocEncoderConf:
     max_sents: int = 2048
     max_tokens: int = 96_000
 
-    bucket_multiplier: int = 2
+    # Compat with previous versions, for now has no effect.
+    bucket_multiplier: int = 1
 
     # truncate docs that are excessively long
     # truncate_long_docs: bool = False
@@ -115,6 +116,11 @@ class BaseBatchGenerator:
     ) -> None:
         self._enc_input_type = enc_input_type
         self._conf = conf
+        if conf.bucket_multiplier != 1:
+            logging.warning(
+                "bucket_multiplier > 1 has no effect for now, it is kept for compatibility with previous versions."
+            )
+            conf.bucket_multiplier = 1
 
         if tp_conf.split_into_fragments and tp_conf.split_into_sents:
             self._text_repr_type = TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS
@@ -140,11 +146,12 @@ class BaseBatchGenerator:
     ) -> tuple[list[list[int]], list[int]]:
         if isinstance(text, str):
             text = text.split('\n')
-        return self._tp.prepare_text(
+        segmented_text = self._tp.prepare_text(
             text,
             truncate_length_in_tokens=truncate_length_in_tokens,
             truncate_length_in_seqs=truncate_length_in_seqs,
         )
+        return segmented_text.token_seqs, segmented_text.segment_lengths
 
     def _create_in_data(
         self,
@@ -1083,7 +1090,7 @@ class DocEncoder:
         self.destroy()
 
     def destroy(self):
-        if not self._destroyed:
+        if hasattr(self, '_destroyed') and not self._destroyed:
             self._batch_gen.destroy()
             self._destroyed = True
 

@@ -214,6 +214,11 @@ class BaseBatchAsyncGenerator[BatchT]:
                 case tuple():
                     with deserialize_training_data(batch, shared_t) as b:
                         yield self._prepare_batch(*b)
+            # condition to prevent infinite loop when all(f for f in finished)
+            while nfinished < nworkers:
+                last_q_idx = (last_q_idx + 1) % nworkers
+                if not finished[last_q_idx]:
+                    break
 
         if stats:
             if len(stats) > 1:

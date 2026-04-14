@@ -30,10 +30,13 @@ def combine_docs_datasets(
     exclude_datasets=None,
     out_filename_prefix="combined",
     min_doc_len=0,
-    max_doc_len=float('inf'),
+    max_doc_len: int | float | None = None,
     sort_by_len=False,
     procs=4,
 ):
+    if max_doc_len is None:
+        max_doc_len = float('inf')
+
     input_path = Path(input_dir)
     datasets = []
     for p in input_path.iterdir():
@@ -157,10 +160,10 @@ def _proc_calc_sent_info_for_paths(paths: list[Path]):
         tokens_cnt = 0
         segments_cnt = 0
         if _PROC_TEXT_PROC is not None:
-            segmented_text_tokens, _ = _PROC_TEXT_PROC.prepare_text_from_file(p)
-            segments_cnt = len(segmented_text_tokens)
-            tokens_cnt = sum(len(s) for s in segmented_text_tokens)
-            for tokens in segmented_text_tokens:
+            segmented_text = _PROC_TEXT_PROC.prepare_text_from_file(p)
+            segments_cnt = segmented_text.segments_cnt()
+            tokens_cnt = segmented_text.ntokens()
+            for tokens in segmented_text.token_seqs:
                 md5hash.update(b''.join(t.to_bytes(4, 'little') for t in tokens))
         else:
             with open_bin_file(p) as f:

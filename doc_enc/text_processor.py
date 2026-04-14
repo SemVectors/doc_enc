@@ -20,7 +20,7 @@ class TextProcessorConf:
     max_sent_len: int | None = None
     # TODO rename min_seq_len
     min_sent_len: int = 4
-    num_alpha_max_ratio: float = 1.0
+    num_alpha_max_ratio: float = 0.0
 
     split_into_sents: bool = True
     split_into_fragments: bool = True
@@ -256,7 +256,7 @@ class TextProcessor:
         truncate_length_in_tokens: int | None = None,
         truncate_length_in_seqs: int | None = None,
         add_special_tokens: bool = True,
-    ):
+    ) -> SegmentedText:
         with open_file(path) as f:
             sent_gen = (line.rstrip() for line in f)
             return self.prepare_text(
@@ -268,19 +268,20 @@ class TextProcessor:
         sent_str: str,
         truncate_length_in_tokens: int | None = None,
         add_special_tokens: bool = True,
-    ):
-        max_length = None
-        if truncate_length_in_tokens is not None:
-            max_length = truncate_length_in_tokens
-
+    ) -> list[int]:
         return self._tokenizer(
-            sent_str, add_special_tokens=add_special_tokens, max_length=max_length
+            sent_str, add_special_tokens=add_special_tokens, max_length=truncate_length_in_tokens
         )
 
-    def prepare_sents(self, sent_strs: list[str]):
+    def prepare_sents(
+        self,
+        sent_strs: list[str],
+        truncate_length_in_tokens: int | None = None,
+        add_special_tokens: bool = True,
+    ) -> list[list[int]]:
         sent_tokens = []
         for s in sent_strs:
-            tokens = self.prepare_sent(s)
+            tokens = self.prepare_sent(s, truncate_length_in_tokens, add_special_tokens)
             if not tokens:
                 tokens = [self.vocab().pad_idx()]
             sent_tokens.append(tokens)
