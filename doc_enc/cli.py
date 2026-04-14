@@ -12,7 +12,7 @@ from doc_enc.doc_encoder import (
     DocEncoderConf,
     TextProcOverride,
     ConfOverrides,
-    create_text_gens_from_ids_list,
+    create_text_gens_from_file,
 )
 from doc_enc.doc_classifier import DocClassifier
 
@@ -47,10 +47,8 @@ def _compute_embs(args, doc_encoder: DocEncoder):
     embs = []
     ids = []
 
-    gens = create_text_gens_from_ids_list(path_list, batch_gen.nproc())
-    for batch_ids, batch_embs in doc_encoder.encode_docs_from_generators(
-        _paths_gen(args.input_file), fetcher=file_path_fetcher, batch_size=args.batch_size
-    ):
+    gens = create_text_gens_from_file(args.input_file, 10 * args.async_batch_gen)
+    for batch_ids, batch_embs in doc_encoder.encode_docs_from_generators(gens):
         embs.append(batch_embs)
         ids.extend(batch_ids)
         if len(ids) >= args.batch_size:
@@ -114,11 +112,9 @@ def run_classif(args):
     conf = _create_doc_enc_conf(args)
     doc_encoder = DocClassifier(conf, topk=args.topk, threshold=args.threshold)
     with open(args.output_file, 'w', encoding='utf8') as outf:
-        for batch_paths, predictions in doc_encoder.clsf_docs_stream(
-            _paths_gen(args.input_file), fetcher=file_path_fetcher, batch_size=args.batch_size
-        ):
+        gens = create_text_gens_from_file(args.input_file, 10 * args.async_batch_gen)
+        for batch_paths, predictions in doc_encoder.clsf_docs_from_generators(gens):
             for path, preds in zip(batch_paths, predictions):
-
                 for lbl, weight in sorted(preds, key=lambda t: -t[1]):
                     outf.write(f'{path}\t{lbl}\t{weight}\n')
 
@@ -203,7 +199,7 @@ def main():
     sent_parser = subparsers.add_parser('sents', help='compute embeddings of sentences')
 
     sent_parser.add_argument(
-        "--input_file", "-i", required=True, help="File with each sentencen on the new line"
+        "--input_file", "-i", required=True, help="File with each sentence on the new line."
     )
     sent_parser.add_argument("--output_dir", "-o", required=True, help="")
     _add_common_opts(sent_parser)

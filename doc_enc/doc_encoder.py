@@ -102,6 +102,8 @@ TextGenFuncT = SentsGenFuncT
 
 
 # ** Texts batch generators
+
+
 class _BaseBatchGeneratorStat:
     def __init__(self):
         self.ntexts = 0
@@ -503,7 +505,7 @@ class BatchAsyncGenerator:
             logging.info("Batches stat:\n%s", total_stat)
 
 
-# * Input helpers
+# * Encode Input helpers
 
 
 def encode_input_data(
@@ -1024,33 +1026,84 @@ class EncodeModule(BaseEncodeModule):
         return self.encode_docs(input_data)
 
 
-# * Main classes
+# * Input text generators
 
 
-class SentEncodeStat:
-    def __init__(self) -> None:
-        self.total_tokens_cnt = 0
-        self.sents_cnt = 0
+class SentsFromFileGen:
+    """Generator for reading many texts from one file. It is primarly used to
+    read short texts or sentences."""
+
+    def __init__(self, filename: str, offset: int, limit: int, first_column_is_id: bool, sep: str):
+        self.fn = filename
+        self.offset = offset
+        self.limit = limit
+        self.first_column_is_id = first_column_is_id
+        self.sep = sep
+
+    def __call__(self):
+        with open(self.fn, 'r') as inpf:
+            if self.limit != -1:
+                lines_gen = itertools.islice(inpf, self.offset, self.offset + self.limit)
+            elif self.offset != 0:
+                lines_gen = itertools.islice(inpf, self.offset, None)
+            else:
+                lines_gen = inpf
+
+            if self.first_column_is_id:
+                for line in lines_gen:
+                    sent_id, sent = line.rstrip().split(self.sep, 1)
+                    yield sent_id, sent
+            else:
+                for i, line in enumerate(lines_gen):
+                    yield i + self.offset, line.rstrip()
 
 
-class DocEncodeStat:
-    def __init__(self) -> None:
-        self.total_tokens_cnt = 0
-        self.total_sents_cnt = 0
+class TextsFromPathsFileGen:
+    """Generates texts from paths that are written in the file."""
 
-        self.docs_cnt = 0
+    def __init__(self, file_with_paths: str | Path, offset: int = 0, limit: int = -1):
+        self.file_with_paths = file_with_paths
+        self.offset = offset
+        self.lines_count = limit
+
+    def __call__(self):
+        with open(self.file_with_paths, 'r', encoding='utf8', errors='ignore') as fp:
+            if self.lines_count != -1:
+                lines_gen = itertools.islice(fp, self.offset, self.offset + self.lines_count)
+            elif self.offset != 0:
+                lines_gen = itertools.islice(fp, self.offset, None)
+            else:
+                lines_gen = fp
+            for idx, line in enumerate(lines_gen):
+                path = line.rstrip()
+                with open(path, 'r', encoding='utf8', errors='ignore') as text_fp:
+                    sents = []
+                    for s in text_fp:
+                        sents.append(s.rstrip())
+                    yield self.offset + idx, sents
 
 
-# def file_path_fetcher(paths):
-#     for idx, path in enumerate(paths):
-#         with open(path, 'r', encoding='utf8', errors='ignore') as fp:
-#             sents = []
-#             for s in fp:
-#                 sents.append(s.rstrip())
-#             yield idx, sents
+def create_text_gens_from_file(
+    file_path: str | Path, nsplits: int, gen_cls: type = TextsFromPathsFileGen, **gen_kwargs
+):
+    """Helper function that splits a file evenly and creates generator for each
+    split. A generator's constructor should accept a path to file, offset and
+    number of lines. Compatible generators: TextsFromPathsFileGen,
+    SentsFromFileGen.
+
+    """
+
+    line_cnt = file_line_cnt(file_path)
+    per_split = math.ceil(line_cnt / nsplits)
+    gens = [
+        gen_cls(file_path, offs, per_split, **gen_kwargs) for offs in range(0, line_cnt, per_split)
+    ]
+    return gens
 
 
 class TextsFromPathListGen:
+    """Generates texts from paths list. Each path in the list should contain one text."""
+
     def __init__(self, paths: list[str] | list[Path], offs: int = 0):
         self.paths = paths
         self.offs = offs
@@ -1067,6 +1120,10 @@ class TextsFromPathListGen:
 def create_text_gens_from_ids_list(
     text_id_list: list[Any], nsplits: int, gen_cls: type = TextsFromPathListGen
 ):
+    """Helper function that splits a list of ids (text_id_list) evenly and
+    creates generator for each split. A generator's constructor should accept a
+    list of ids and an offset of its split. Compatible generators: TextsFromPathListGen.
+    """
     per_worker_items = math.ceil(len(text_id_list) / nsplits)
     gens = []
     for offs in range(0, len(text_id_list), per_worker_items):
@@ -1074,39 +1131,21 @@ def create_text_gens_from_ids_list(
     return gens
 
 
-class SentsFromFileGen:
-    def __init__(self, fn: str, offset: int, limit: int, first_column_is_id: bool, sep: str):
-        self.fn = fn
-        self.offset = offset
-        self.limit = limit
-        self.first_column_is_id = first_column_is_id
-        self.sep = sep
-
-    def __call__(self):
-        with open(self.fn, 'r') as inpf:
-            if self.first_column_is_id:
-                for line in itertools.islice(inpf, self.offset, self.offset + self.limit):
-                    sent_id, sent = line.rstrip().split(self.sep, 1)
-                    yield sent_id, sent
-            else:
-                for i, line in enumerate(
-                    itertools.islice(inpf, self.offset, self.offset + self.limit)
-                ):
-                    yield i + self.offset, line.rstrip()
+# * Main class
 
 
-# def _create_sents_gen_func(fn: str, offset: int, limit: int, first_column_is_id: bool, sep: str):
-#     def _gen():
-#         with open(fn, 'r') as inpf:
-#             if first_column_is_id:
-#                 for line in itertools.islice(inpf, offset, offset + limit):
-#                     sent_id, sent = line.rstrip().split(sep, 1)
-#                     yield sent_id, sent
-#             else:
-#                 for i, line in enumerate(itertools.islice(inpf, offset, offset + limit)):
-#                     yield i + offset, line.rstrip()
+class SentEncodeStat:
+    def __init__(self) -> None:
+        self.total_tokens_cnt = 0
+        self.sents_cnt = 0
 
-#     return _gen
+
+class DocEncodeStat:
+    def __init__(self) -> None:
+        self.total_tokens_cnt = 0
+        self.total_sents_cnt = 0
+
+        self.docs_cnt = 0
 
 
 class DocEncoder:
@@ -1285,15 +1324,14 @@ class DocEncoder:
         File is split on async_batch_gen parts.
         Sentences from each part are prepared in its own process.
         """
-        line_cnt = file_line_cnt(file_path, limit=lines_limit)
-        proc_num = self.conf().async_batch_gen
-        per_proc = math.ceil(line_cnt / proc_num)
-        gens = [
-            SentsFromFileGen(
-                file_path, offs, per_proc, first_column_is_id=first_column_is_id, sep=sep
-            )
-            for offs in range(0, line_cnt, per_proc)
-        ]
+
+        gens = create_text_gens_from_file(
+            file_path,
+            2 * self.conf().async_batch_gen,
+            SentsFromFileGen,
+            first_column_is_id=first_column_is_id,
+            sep=sep,
+        )
 
         for ids, embs in self.encode_sents_from_generators(gens, stat=stat):
             yield ids, embs
@@ -1315,7 +1353,7 @@ class DocEncoder:
             sent_embs.append(embs)
 
         stacked = np.vstack(sent_embs)
-        assert len(sent_ids) == stacked.shape[0], "Missaligned data 83292"
+        assert len(sent_ids) == stacked.shape[0], "Misaligned data 83292"
         return sent_ids, stacked
 
     def _update_doc_stat(self, input_data: EncoderInData, stat: DocEncodeStat):
@@ -1327,7 +1365,7 @@ class DocEncoder:
     def _reorder_collected_arrays(self, stacked_array, idxs):
         assert stacked_array.shape[0] == len(
             idxs
-        ), f"Missaligned data: {stacked_array.shape[0]} != {len(idxs)}"
+        ), f"Misaligned data: {stacked_array.shape[0]} != {len(idxs)}"
 
         idxs = torch.tensor(idxs)
         initial_order_idxs = torch.empty_like(idxs)
@@ -1365,7 +1403,7 @@ class DocEncoder:
         stacked = torch.vstack(embs)
         assert stacked.shape[0] == len(
             path_list
-        ), f"Missaligned data with paths: {stacked.shape[0]} != {len(path_list)}"
+        ), f"Misaligned data with paths: {stacked.shape[0]} != {len(path_list)}"
 
         if self.conf().normalize_vecs:
             stacked = F.normalize(stacked, p=2, dim=1)
@@ -1378,7 +1416,7 @@ class DocEncoder:
     ) -> tuple[list[Path], np.ndarray]:
         """This method iterates over files in the directory and returns a tuple of paths
         and vector representation of texts.
-        Texts should be presegmented, i.e. each sentence should be placed on separate line.
+        Texts should be pre-segmented, i.e. each sentence should be placed on separate line.
         """
         paths = list(path.iterdir())
         paths.sort()
@@ -1387,9 +1425,11 @@ class DocEncoder:
     def encode_docs(
         self, docs: list[list[str] | str], stat: DocEncodeStat | None = None
     ) -> np.ndarray:
-        """Encode a list of documents into vector representation. A doc is eiher
-        a list of sentences or a text where each sentence is placed on a new
-        line."""
+        """Encode a list of documents into vector representation. A doc is
+        either a list of sentences or a text where each sentence is placed on a
+        new line.
+
+        """
 
         def dummy_fetcher():
             yield from enumerate(docs)
@@ -1410,29 +1450,19 @@ class DocEncoder:
 
         return stacked.numpy()
 
-    # TODO doc string
     def encode_docs_from_generators(
         self, generator_funcs: list[TextGenFuncT], stat: DocEncodeStat | None = None
     ) -> collections.abc.Iterable[tuple[list[Any], np.ndarray]]:
-        """The most general method that accepts a generator of document ids and a function `fetcher`.
-        `fetcher` will be invoked on a batch of ids to get a text of a documents.
-        It should return a list of texts along with text index. Example
-        ```
-        def file_path_fetcher(paths):
-            for idx, path in enumerate(paths):
-                with open(path, 'r', encoding='utf8') as fp:
-                    sents = []
-                    for s in fp:
-                        sents.append(s.rstrip())
-                    yield idx, sents
-        ```
-        At first this method collects doc ids in a batch of size `batch_size`.
-        Then invokes `fetcher` on each batch and then encode docs into vectors.
-        This method yields the tuple of doc id (that was returned by `doc_id_generator`) and doc vectors.
+        """The most general method that accepts bunch of generators. Each
+        generator should return text identificator and text. See for example
+        TextsFromPathsFileGen, TextsFromPathsFileGen. To split Generators across
+        the data see helper functions: create_text_gens_from_ids_list,
+        create_text_gens_from_file.
+
+        This method yields the tuple of doc id (that was returned by generator) and text embedding.
+
         """
 
-        # batch_async_gen = self._enc_module.create_batch_async_generator()
-        # batch_async_gen.start_workers()
         for input_data in self._batch_gen.batches(generator_funcs):
             if stat is not None:
                 self._update_doc_stat(input_data, stat)

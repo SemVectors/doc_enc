@@ -32,9 +32,8 @@ from doc_enc.text_processor import (
 from doc_enc.training.base_batch_generator import (
     BaseBatchAsyncGenerator,
     BaseBatchAsyncGeneratorConf,
-    skip_to_line,
 )
-from doc_enc.utils import find_file
+from doc_enc.utils import find_file, skip_to_line
 from doc_enc.training.types import DocRetrPairs, DocRetrPairsStat, DocsBatch
 
 

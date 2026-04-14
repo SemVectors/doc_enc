@@ -63,5 +63,15 @@ def file_line_cnt(fp, limit=0):
     return i + 1
 
 
+def skip_to_line(fp, line_offset):
+    i = 0
+    line = ''
+    while i < line_offset:
+        line = fp.readline()
+        i += 1
+    if line_offset and not line:
+        raise RuntimeError("Unexpected end of file!")
+
+
 def global_init():
     multiprocessing.set_start_method('spawn')

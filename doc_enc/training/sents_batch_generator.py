@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 
 from typing import Generator, NamedTuple, Tuple, List
 import logging
@@ -23,12 +22,11 @@ from doc_enc.encoders.pad_utils import PadOpts
 from doc_enc.training.base_batch_generator import (
     BaseBatchAsyncGenerator,
     BaseBatchAsyncGeneratorConf,
-    skip_to_line,
 )
 from doc_enc.training.types import SentsBatch
 from doc_enc.tokenizer import TokenizerConf, create_tokenizer
 
-from doc_enc.utils import find_file, open_file
+from doc_enc.utils import find_file, open_file, skip_to_line
 
 
 class Example(NamedTuple):
