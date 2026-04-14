@@ -64,25 +64,30 @@ class SegmentedText:
 class TextProcessor:
     def __init__(self, conf: TextProcessorConf, inference_mode=False):
         self._conf = conf
-        if conf.max_sent_len is not None:
+        if (
+            conf.max_sent_len is not None
+            and conf.split_into_sents
+            and conf.tokenizer.max_seq_length is None
+        ):
+            # Compatibility with previous behavior.
             logging.warning(
                 "TextProcessorConf.max_sent_len is deprecated use TokenizerConf.max_seq_length instead."
             )
-            if conf.split_into_sents and conf.tokenizer.max_seq_length is None:
-                # Compatibility with previous behavior.
-                conf.tokenizer.max_seq_length = conf.max_sent_len
+            conf.tokenizer.max_seq_length = conf.max_sent_len
 
         self._tokenizer = create_tokenizer(conf.tokenizer, inference_mode=inference_mode)
         self._alpha_nums_regex = re.compile(r'(\d+[-–.]?\d*)|(\w+)')
 
         self._special_tokens_cnt = self._tokenizer.special_tokens_cnt()
-        self._max_seql_len = self._tokenizer.get_max_seq_length()
 
     def conf(self):
         return self._conf
 
     def vocab(self):
         return self._tokenizer
+
+    def max_seq_length(self):
+        return self._tokenizer.get_max_seq_length()
 
     def _filter_sent(self, tokens: list[int], sent_str: str):
         if len(tokens) < self._conf.min_sent_len:
@@ -241,7 +246,7 @@ class TextProcessor:
             segmented_text,
             doc_segments_length,
             text_wo_special_tokens=not add_special_tokens,
-            max_seq_len=self._max_seql_len,
+            max_seq_len=self._tokenizer.get_max_seq_length(),
             special_tokens_cnt=self._special_tokens_cnt,
         )
 

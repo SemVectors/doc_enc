@@ -55,7 +55,8 @@ class SentsBatchGeneratorConf:
     batch_size: int = 128
     max_sents: int = 128 * 4
     max_tokens: int = 96_000
-    max_sent_size: int = 256
+    # Deprecated: use max_seq_length in TokenizerConf
+    max_sent_size: int | None = None
 
     adjust_batch_size: bool = False
     dont_use_dups: bool = False
@@ -85,6 +86,10 @@ class SentsBatchGenerator:
         self._line_num = line_offset
         self._line_cnt = line_cnt
         self._limit = limit
+
+        if conf.max_sent_size is not None and tok_conf.max_seq_length is None:
+            logging.warning("max_sent_size is deprecated use TokenizerConf.max_seq_length instead!")
+            tok_conf.max_seq_length = conf.max_sent_size
 
         self._tokenizer = create_tokenizer(tok_conf)
         self._src_file = None
@@ -367,7 +372,7 @@ class SentsBatchGenerator:
         return batches, to_next_bucket
 
     def _tokenize(self, text):
-        sent = self._tokenizer(text, max_length=self._conf.max_sent_size)
+        sent = self._tokenizer(text, max_length=self._tokenizer.get_max_seq_length())
         return sent
 
     def _parse_line(self, line):
@@ -504,6 +509,7 @@ class SentsBatchAsyncGenerator(BaseBatchAsyncGenerator[SentsBatch]):
         pad_opts: PadOpts = PadOpts(),
         rank=0,
         world_size=-1,
+        max_seq_length: int | None = None,
     ):
         super().__init__(
             enc_input_type,
@@ -514,6 +520,7 @@ class SentsBatchAsyncGenerator(BaseBatchAsyncGenerator[SentsBatch]):
             (conf.batch_generator_conf, tok_conf, split, pad_opts),
             rank=rank,
             world_size=world_size,
+            max_seq_length=max_seq_length,
         )
 
         self._opts = conf

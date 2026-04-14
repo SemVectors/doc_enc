@@ -261,6 +261,7 @@ def _run_train(local_rank, local_world_size, conf: Config):
             rank=rank,
             world_size=world_size,
             pad_opts=PadOpts(pad_to_multiple_of),
+            max_seq_length=trainer.vocab().get_max_seq_length(),
         )
 
         dev_iter = BatchIterator(
@@ -272,6 +273,7 @@ def _run_train(local_rank, local_world_size, conf: Config):
             rank=rank,
             world_size=world_size,
             pad_opts=PadOpts(pad_to_multiple_of),
+            max_seq_length=trainer.vocab().get_max_seq_length(),
         )
         trainer(train_iter, dev_iter)
 

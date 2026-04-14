@@ -9,6 +9,10 @@ defaults:
   - override /model/doc: transformers_auto
   - _self_
 
+text_proc:
+  tokenizer:
+    max_seq_length: 32000
+
 
 model:
   doc:

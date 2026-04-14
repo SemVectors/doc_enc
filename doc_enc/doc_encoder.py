@@ -48,7 +48,7 @@ from doc_enc.training.models.model_conf import DocModelConf
 
 @dataclasses.dataclass
 class TextProcOverride:
-    auto_tokenizer_max_seq_len: Optional[int] = None
+    max_seq_len: Optional[int] = None
 
 
 @dataclasses.dataclass
@@ -283,6 +283,7 @@ class BatchAsyncGenerator:
         other_generator_args=(),
         nworkers=1,
         fix_batch_order: bool = False,
+        max_seq_length: int | None = None,
     ):
         """fix_batch_order is used to ensure determinism while
         training/fine-tunining. When it is true, batches will be always
@@ -301,7 +302,13 @@ class BatchAsyncGenerator:
         if fix_batch_order:
             self._out_queues = [multiprocessing.Queue(cap_m) for _ in range(nworkers)]
             self._shared_tensors_holders = [
-                EncInputSharedTensors(enc_input_type, conf.max_tokens, conf.max_sents, cap_m)
+                EncInputSharedTensors(
+                    enc_input_type,
+                    conf.max_tokens,
+                    conf.max_sents,
+                    cap_m,
+                    max_seq_length=max_seq_length,
+                )
                 for _ in range(nworkers)
             ]
 
@@ -313,6 +320,7 @@ class BatchAsyncGenerator:
                     conf.max_tokens,
                     conf.max_sents,
                     cap_m * nworkers,
+                    max_seq_length=max_seq_length,
                 )
             ]
 
@@ -764,10 +772,9 @@ def _adjust_tp_config(tp: TextProcessor, override: ConfOverrides | None):
     if (
         override is not None
         and override.text_proc is not None
-        and (msl := override.text_proc.auto_tokenizer_max_seq_len) is not None
+        and (msl := override.text_proc.max_seq_len) is not None
     ):
-        tp._tokenizer.set_max_seq_length(msl)
-        tp.conf().tokenizer.auto_tokenizer_max_seq_len = msl
+        tp.conf().tokenizer.max_seq_length = msl
 
 
 class EncodeModule(BaseEncodeModule):
@@ -936,6 +943,7 @@ class EncodeModule(BaseEncodeModule):
             (self._tp_conf, self._tp_state_dict, po, eval_mode),
             self._conf.async_batch_gen,
             fix_batch_order=fix_batch_order,
+            max_seq_length=self._tp.max_seq_length(),
         )
         gen.start_workers()
         return gen

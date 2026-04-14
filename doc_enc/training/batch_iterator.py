@@ -46,6 +46,7 @@ class BatchIterator:
         rank=0,
         world_size=-1,
         pad_opts: PadOpts = PadOpts(),
+        max_seq_length: int | None = None,
     ):
         self._sents_batch_iterator = SentsBatchAsyncGenerator(
             enc_input_type,
@@ -56,6 +57,7 @@ class BatchIterator:
             rank=rank,
             world_size=world_size,
             pad_opts=pad_opts,
+            max_seq_length=max_seq_length,
         )
 
         self._docs_batch_iterator = DocsBatchAsyncGenerator(
@@ -67,6 +69,7 @@ class BatchIterator:
             rank=rank,
             world_size=world_size,
             pad_opts=pad_opts,
+            max_seq_length=max_seq_length,
         )
 
         self._opts = opts

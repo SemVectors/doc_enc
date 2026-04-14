@@ -146,6 +146,7 @@ class EncInputSharedTensors:
         max_seqs: int,
         slots_cnt: int,
         is_training: bool = False,
+        max_seq_length: int | None = None,
     ):
         self.enc_input_type = enc_input_type
         # TODO TEMP
@@ -153,16 +154,23 @@ class EncInputSharedTensors:
         self.is_training = is_training
 
         if enc_input_type == EncoderInputType.PADDED:
+            seq_len = max_tokens
+            if max_seq_length is not None:
+                seq_len = min(max_seq_length, max_tokens)
             shapes = [
-                (max_seqs, max_tokens),
+                (max_seqs, seq_len),
                 (max_seqs,),  # lengths
             ]
             logging.error('create shared padded tensor with shapes %s', shapes)
             dtypes = [torch.int32, torch.int32]
         elif enc_input_type == EncoderInputType.PACKED:
+            max_len = max_tokens
+            if max_seq_length is not None:
+                max_len = 2 * max_seq_length if is_training else max_seq_length
+
             shapes = [
                 (max_tokens,),  # tokens (PackedSequence.data)
-                (max_tokens,),  # batch_sizes
+                (max_len,),  # batch_sizes
                 (max_seqs,),  # sorted_indices
                 (max_seqs,),  # unsorted_indices
             ]

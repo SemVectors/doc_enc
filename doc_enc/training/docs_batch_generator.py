@@ -777,6 +777,7 @@ class DocsBatchAsyncGenerator(BaseBatchAsyncGenerator[DocsBatch]):
         pad_opts: PadOpts = PadOpts(),
         rank=0,
         world_size=-1,
+        max_seq_length: int | None = None,
     ):
         super().__init__(
             enc_input_type,
@@ -787,6 +788,7 @@ class DocsBatchAsyncGenerator(BaseBatchAsyncGenerator[DocsBatch]):
             (opts.batch_generator_conf, tp_conf, split, pad_opts),
             rank=rank,
             world_size=world_size,
+            max_seq_length=max_seq_length,
         )
 
         self._opts = opts

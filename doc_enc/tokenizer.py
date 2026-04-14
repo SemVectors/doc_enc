@@ -30,6 +30,7 @@ class TokenizerConf:
 
     transformers_auto_name: str = ''
     transformers_cache_dir: str | None = None
+    # Deprecated: use max_seq_length
     auto_tokenizer_max_seq_len: int | None = None
 
     add_bos: bool = False
@@ -45,9 +46,6 @@ class AbcTokenizer:
         raise NotImplementedError("Not implemented")
 
     def special_tokens_cnt(self) -> int:
-        raise NotImplementedError("Not implemented")
-
-    def set_max_seq_length(self, msl: int):
         raise NotImplementedError("Not implemented")
 
     def get_idx(self, token: str) -> int:
@@ -145,6 +143,14 @@ def _modify_sent(
     return prefix + sent + suffix
 
 
+def _get_max_length(conf: TokenizerConf, max_length: int | None):
+    if max_length is None:
+        max_length = conf.max_seq_length
+    elif conf.max_seq_length is not None:
+        max_length = min(max_length, conf.max_seq_length)
+    return max_length
+
+
 class SentencepieceTokenizer(AbcTokenizer):
     def __init__(self, conf: TokenizerConf, inference_mode=False) -> None:
         self._conf = conf
@@ -157,9 +163,6 @@ class SentencepieceTokenizer(AbcTokenizer):
 
     def get_max_seq_length(self) -> int | None:
         return self._conf.max_seq_length
-
-    # TODO
-    def set_max_seq_length(self, msl): ...
 
     def special_tokens_cnt(self) -> int:
         cnt = 0
@@ -185,6 +188,7 @@ class SentencepieceTokenizer(AbcTokenizer):
         return len(self._vocab)
 
     def _modify_sent(self, sent: list[int], add_special_tokens: bool, max_length: int | None):
+        max_length = _get_max_length(self._conf, max_length)
         return _modify_sent(self._conf, self, sent, add_special_tokens, max_length)
 
     def __call__(
@@ -196,10 +200,12 @@ class SentencepieceTokenizer(AbcTokenizer):
             )
         else:
             tokens: list[int] = self._vocab.EncodeAsIds(sent)
-        return self._modify_sent(tokens, add_special_tokens, max_length)
+
+        return self._modify_sent(tokens, add_special_tokens, max_length=max_length)
 
     def prepare_for_model(self, tokens: list[int], max_length: int | None = None):
         """Truncate and add special tokens."""
+
         return self._modify_sent(tokens, add_special_tokens=True, max_length=max_length)
 
     def state_dict(self):
@@ -212,17 +218,16 @@ class SentencepieceTokenizer(AbcTokenizer):
 
 
 class BaseTransformersTokenizer(AbcTokenizer):
-    def __init__(self, tokenizer, max_seq_length=None, inference_mode=False) -> None:
+    def __init__(self, conf: TokenizerConf, tokenizer, inference_mode=False) -> None:
+        self._tok_conf = conf
         self._inference_mode = inference_mode
         self._tokenizer = tokenizer
-        self._max_seq_length = max_seq_length
+        if conf.auto_tokenizer_max_seq_len is not None and conf.max_seq_length is None:
+            conf.max_seq_length = conf.auto_tokenizer_max_seq_len
+            logging.warning("auto_tokenizer_max_seq_len is deprecated use max_seq_length instead.")
 
     def get_max_seq_length(self):
-        return self._max_seq_length
-
-    # TODO
-    def set_max_seq_length(self, msl):
-        self._max_seq_length = msl
+        return self._tok_conf.max_seq_length or self._tokenizer.model_max_length
 
     def special_tokens_cnt(self) -> int:
         return self._tokenizer.num_special_tokens_to_add()
@@ -245,10 +250,8 @@ class BaseTransformersTokenizer(AbcTokenizer):
     def __call__(
         self, sent: str, add_special_tokens: bool = True, max_length: int | None = None
     ) -> list[int]:
-        if max_length is None:
-            max_length = self._max_seq_length
-        elif self._max_seq_length is not None:
-            max_length = min(max_length, self._max_seq_length)
+        max_length = _get_max_length(self._tok_conf, max_length)
+
         return self._tokenizer(
             sent, add_special_tokens=add_special_tokens, truncation=True, max_length=max_length
         )["input_ids"]
@@ -259,16 +262,13 @@ class BaseTransformersTokenizer(AbcTokenizer):
             tokens, add_special_tokens=True, truncation=True, max_length=max_length
         )
 
-    # TODO
     def state_dict(self):
-        d = {}
-        if self._max_seq_length is not None:
-            d['max_seq_length'] = self._max_seq_length
-        return d
+        return {}
 
     def load_state_dict(self, d):
+        # Compat with previous versions
         if msl := d.get('max_seq_length'):
-            self._max_seq_length = msl
+            self._tok_conf.max_seq_length = msl
 
 
 class TransformersTokenizer(BaseTransformersTokenizer):
@@ -289,9 +289,7 @@ class TransformersTokenizer(BaseTransformersTokenizer):
                 logging.warning("Huggingface cant connect to its resources, waiting a bit..")
                 tries += 1
                 time.sleep(1)
-        super().__init__(
-            tokenizer, max_seq_length=conf.auto_tokenizer_max_seq_len, inference_mode=inference_mode
-        )
+        super().__init__(conf, tokenizer, inference_mode=inference_mode)
 
 
 class SbertTokenizer(BaseTransformersTokenizer):
@@ -305,9 +303,10 @@ class SbertTokenizer(BaseTransformersTokenizer):
         if not hasattr(temp_sbert[0], 'tokenizer'):
             raise RuntimeError("Unsupported sbert model. It has no tokenizer attribute")
 
+        conf.max_seq_length = temp_sbert.get_max_seq_length()
         super().__init__(
+            conf,
             temp_sbert[0].tokenizer,
-            max_seq_length=temp_sbert.get_max_seq_length(),
             inference_mode=inference_mode,
         )
 

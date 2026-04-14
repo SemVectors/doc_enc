@@ -90,6 +90,7 @@ class BaseBatchAsyncGenerator[BatchT]:
         other_generator_args=(),
         rank=0,
         world_size=-1,
+        max_seq_length: int | None = None,
     ):
         self._opts = opts
         self._logging_conf = logging_conf
@@ -103,7 +104,12 @@ class BaseBatchAsyncGenerator[BatchT]:
         self._out_queues = [multiprocessing.Queue(self._cap_m) for _ in range(self._nworkers)]
         self._shared_tensors_holders = [
             EncInputSharedTensors(
-                enc_input_type, max_tokens, max_seqs, self._cap_m, is_training=True
+                enc_input_type,
+                max_tokens,
+                max_seqs,
+                self._cap_m,
+                is_training=True,
+                max_seq_length=max_seq_length,
             )
             for _ in range(self._nworkers)
         ]

@@ -10,6 +10,9 @@ defaults:
   - _self_
 
 
+text_proc:
+  tokenizer:
+    max_seq_length: 32000
 model:
   doc:
     transformers_auto_name: Qwen/Qwen3-Embedding-0.6B
