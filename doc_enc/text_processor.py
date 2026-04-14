@@ -35,6 +35,7 @@ class SegmentedText:
         text_wo_special_tokens: bool = False,
         max_seq_len: int | None = None,
         special_tokens_cnt: int = 0,
+        truncated: bool = False,
     ):
         self.token_seqs = token_seqs
         self.segment_lengths = segment_lengths
@@ -45,6 +46,7 @@ class SegmentedText:
             max_seq_len = 1 << 32
         self.max_seq_len = max_seq_len
         self.special_tokens_cnt = special_tokens_cnt
+        self.truncated = truncated
 
     def segments_cnt(self):
         return len(self.token_seqs)
@@ -117,6 +119,7 @@ class TextProcessor:
         token_seqs = segmented_text.token_seqs
         prep_tokens = []
         doc_segments_length = []
+        truncated = False
         if self._conf.split_into_sents or self._conf.split_into_fragments:
             cur_len_in_tokens = 0
             for tokens in token_seqs:
@@ -131,10 +134,12 @@ class TextProcessor:
                 prep_tokens.append(tokens)
 
                 if truncate_length_in_seqs and len(prep_tokens) >= truncate_length_in_seqs:
+                    truncated = True
                     break
 
                 cur_len_in_tokens += len(tokens)
                 if truncate_length_in_tokens and cur_len_in_tokens == truncate_length_in_tokens:
+                    truncated = True
                     break
 
             if len(prep_tokens) != len(token_seqs):
@@ -155,7 +160,7 @@ class TextProcessor:
 
         if not doc_segments_length:
             doc_segments_length = segmented_text.segment_lengths
-        new_seg_text = SegmentedText(prep_tokens, doc_segments_length)
+        new_seg_text = SegmentedText(prep_tokens, doc_segments_length, truncated=truncated)
         return new_seg_text
 
     def prepare_text(
@@ -167,6 +172,7 @@ class TextProcessor:
     ) -> SegmentedText:
         segmented_text: list[list[int]] = []
         doc_segments_length: list[int] = []
+        truncated = False
 
         if self._conf.split_into_sents:
             # 1. document is a sequence of sentences (maybe grouped into fragments)
@@ -179,6 +185,7 @@ class TextProcessor:
                 if truncate_length_in_tokens is not None:
                     max_length = truncate_length_in_tokens - cur_len_in_tokens
                     if max_length <= 2 * self._conf.min_sent_len:
+                        truncated = True
                         break
 
                 tokens = self._tokenizer(
@@ -188,10 +195,12 @@ class TextProcessor:
                     segmented_text.append(tokens)
 
                     if truncate_length_in_seqs and len(segmented_text) >= truncate_length_in_seqs:
+                        truncated = True
                         break
 
                     cur_len_in_tokens += len(tokens)
                     if truncate_length_in_tokens and cur_len_in_tokens == truncate_length_in_tokens:
+                        truncated = True
                         break
 
             if self._conf.split_into_fragments:
@@ -224,10 +233,12 @@ class TextProcessor:
                 segmented_text.append(tokens)
 
                 if truncate_length_in_seqs and len(segmented_text) >= truncate_length_in_seqs:
+                    truncated = True
                     break
 
                 cur_len_in_tokens += len(tokens)
                 if cur_len_in_tokens and cur_len_in_tokens == truncate_length_in_tokens:
+                    truncated = True
                     break
 
             # save number of fragments for this doc
@@ -238,6 +249,7 @@ class TextProcessor:
             tokens = self._tokenizer(
                 text, add_special_tokens=add_special_tokens, max_length=truncate_length_in_tokens
             )
+            truncated = len(tokens) == truncate_length_in_tokens
             segmented_text.append(tokens)
             # document is one sequence
             doc_segments_length.append(1)
@@ -248,6 +260,7 @@ class TextProcessor:
             text_wo_special_tokens=not add_special_tokens,
             max_seq_len=self._tokenizer.get_max_seq_length(),
             special_tokens_cnt=self._special_tokens_cnt,
+            truncated=truncated,
         )
 
     def prepare_text_from_file(

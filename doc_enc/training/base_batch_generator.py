@@ -214,6 +214,8 @@ class BaseBatchAsyncGenerator[BatchT]:
                 case tuple():
                     with deserialize_training_data(batch, shared_t) as b:
                         yield self._prepare_batch(*b)
+                case _:
+                    raise RuntimeError(f"Unknown value from the out queue: {batch}")
             # condition to prevent infinite loop when all(f for f in finished)
             while nfinished < nworkers:
                 last_q_idx = (last_q_idx + 1) % nworkers

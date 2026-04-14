@@ -102,9 +102,40 @@ TextGenFuncT = SentsGenFuncT
 
 
 # ** Texts batch generators
+class _BaseBatchGeneratorStat:
+    def __init__(self):
+        self.ntexts = 0
+        self.nsegments = 0
+        self.ntokens = 0
+
+        self.empty_texts = 0
+
+        self.total_seqs_trunc_ratio = 0.0
+        self.seqs_truncated = 0
+        self.total_toks_trunc_ratio = 0.0
+        self.toks_truncated = 0
+
+    def __str__(self):
+        return (
+            f'texts,segments,tokens: {self.ntexts},{self.nsegments},{self.ntokens}, empty_texts: {self.empty_texts}, '
+            f'{{toks/seqs}}_truncated (trunc ratio): {self.toks_truncated} ({self.total_toks_trunc_ratio/self.toks_truncated if self.toks_truncated else 0:.2f})'
+            f'/{self.seqs_truncated} ({self.total_seqs_trunc_ratio/self.seqs_truncated if self.seqs_truncated else 0:.2f})'
+        )
+
+    def __add__(self, other: '_BaseBatchGeneratorStat'):
+        new = _BaseBatchGeneratorStat()
+        new.ntexts = self.ntexts + other.ntexts
+        new.nsegments = self.nsegments + other.nsegments
+        new.ntokens = self.ntokens + other.ntokens
+        new.empty_texts = self.empty_texts + other.empty_texts
+        new.total_seqs_trunc_ratio = self.total_seqs_trunc_ratio + other.total_seqs_trunc_ratio
+        new.seqs_truncated = self.seqs_truncated + other.seqs_truncated
+        new.total_toks_trunc_ratio = self.total_toks_trunc_ratio + other.total_toks_trunc_ratio
+        new.toks_truncated = self.toks_truncated + other.toks_truncated
+        return new
 
 
-class BaseBatchGenerator:
+class _BaseBatchGenerator:
     def __init__(
         self,
         enc_input_type: EncoderInputType,
@@ -135,6 +166,14 @@ class BaseBatchGenerator:
         self._tp.load_state_dict(tp_state_dict)
         self._pad_opts = pad_opts
 
+        self._stat = _BaseBatchGeneratorStat()
+
+    def get_stat(self):
+        return self._stat
+
+    def reset_stat(self):
+        self._stat = _BaseBatchGeneratorStat()
+
     def _prepare_sent(
         self, text: str | list[str], truncate_length_in_tokens: int, truncate_length_in_seqs: int
     ) -> tuple[list[list[int]], list[int]]:
@@ -151,6 +190,13 @@ class BaseBatchGenerator:
             truncate_length_in_tokens=truncate_length_in_tokens,
             truncate_length_in_seqs=truncate_length_in_seqs,
         )
+        if segmented_text.truncated:
+            by_seqs = segmented_text.segments_cnt() == truncate_length_in_seqs
+            if by_seqs:
+                self._stat.seqs_truncated += 1
+                self._stat.total_seqs_trunc_ratio += 1 - truncate_length_in_seqs / len(text)
+            else:
+                self._stat.toks_truncated += 1
         return segmented_text.token_seqs, segmented_text.segment_lengths
 
     def _create_in_data(
@@ -190,8 +236,6 @@ class BaseBatchGenerator:
         m = 1
         truncate_length_in_tokens = self._conf.max_tokens
         truncate_length_in_seqs = self._conf.max_sents
-        ntruncated_by_tokens = 0
-        ntruncated_by_seqs = 0
 
         for text_id, text in generator_func():
             segmented_text, text_segments_length = prepare_text_f(
@@ -201,24 +245,16 @@ class BaseBatchGenerator:
             )
 
             tokens_cnt = sum(len(s) for s in segmented_text)
-            if (by_seqs := len(segmented_text) == truncate_length_in_seqs) or (
-                tokens_cnt == truncate_length_in_tokens
-            ):
-                logging.debug(
-                    "text_truncated; text_id=%s, nsegments=%s, ntokens=%s",
-                    text_id,
-                    len(segmented_text),
-                    tokens_cnt,
-                )
-                if by_seqs:
-                    ntruncated_by_seqs += 1
-                else:
-                    ntruncated_by_tokens += 1
 
             if not tokens_cnt:
+                self._stat.empty_texts += 1
                 segmented_text = [[self._tp.vocab().pad_idx()]]
                 text_segments_length = [1]
                 tokens_cnt = 1
+            else:
+                self._stat.ntexts += 1
+                self._stat.nsegments += len(segmented_text)
+                self._stat.ntokens += tokens_cnt
 
             if texts and (
                 cur_seqs_cnt + len(segmented_text) > m * self._conf.max_sents
@@ -243,13 +279,6 @@ class BaseBatchGenerator:
                 texts, text_lengths, text_ids_list, input_are_sents=input_are_sents
             )
 
-        if ntruncated_by_tokens or ntruncated_by_seqs:
-            logging.debug(
-                "text_truncated: by_tokens=%s, by_seqs_cnt=%s",
-                ntruncated_by_tokens,
-                ntruncated_by_seqs,
-            )
-
 
 def _proc_wrapper(
     in_queue: multiprocessing.Queue,
@@ -260,7 +289,7 @@ def _proc_wrapper(
 ):
     torch.set_num_threads(1)
     try:
-        generator = BaseBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
+        generator = _BaseBatchGenerator(shared_tensors_holder.enc_input_type, *args, **kwargs)
 
         while True:
             indata = in_queue.get()
@@ -271,7 +300,8 @@ def _proc_wrapper(
 
                 d = serialize_enc_in_data(b, shared_tensors_holder)
                 queue.put(d)
-            queue.put(None)
+            queue.put((None, generator.get_stat()))
+            generator.reset_stat()
 
     except Exception as e:
         print(type(e), str(e))
@@ -450,19 +480,27 @@ class BatchAsyncGenerator:
         else:
             consume_order_gen = self._fixed_batch_order_queue_gen()
 
+        stats = []
         for q_idx in consume_order_gen:
             out_q = self._out_queues[q_idx]
+            shared_t = self._shared_tensors_holders[q_idx]
             logging.debug("queue len: %s", out_q.qsize())
             batch = out_q.get()
 
-            if batch is None:
-                consume_order_gen.send(True)
-                continue
+            match batch:
+                case (None, _stat):
+                    consume_order_gen.send(True)
+                    stats.append(_stat)
 
-            shared_t = self._shared_tensors_holders[q_idx]
-            with deserialize_enc_in_data(batch, shared_t) as b:
-                self._print_debug_info_for_batch(b)
-                yield b
+                case tuple():
+                    with deserialize_enc_in_data(batch, shared_t) as b:
+                        self._print_debug_info_for_batch(b)
+                        yield b
+                case _:
+                    raise RuntimeError(f"Unknown value from the out queue: {batch}")
+        if stats:
+            total_stat = sum(stats, start=_BaseBatchGeneratorStat())
+            logging.info("Batches stat:\n%s", total_stat)
 
 
 # * Input helpers
@@ -938,7 +976,7 @@ class EncodeModule(BaseEncodeModule):
 
     def create_batch_generator(self, eval_mode=True):
         po = self._create_pad_opts()
-        return BaseBatchGenerator(
+        return _BaseBatchGenerator(
             self.input_type(), self._conf, self._tp_conf, self._tp_state_dict, po, eval_mode
         )
 
