@@ -210,8 +210,11 @@ class _BaseBatchGenerator:
     ):
         if input_are_sents:
             text_lengths = []
+            text_repr_type = TextReprType.SEQ_OF_TOKENS
+        else:
+            text_repr_type = self._text_repr_type
 
-        texts_repr = TextsRepr(self._text_repr_type, segmented_texts, text_lengths)
+        texts_repr = TextsRepr(text_repr_type, segmented_texts, text_lengths)
         return EncoderInData(
             SeqEncoderBatchedInput.from_input_ids(
                 self._enc_input_type, segmented_texts, self._tp.vocab().pad_idx(), self._pad_opts
@@ -414,14 +417,11 @@ class BatchAsyncGenerator:
         if not logging.getLogger().isEnabledFor(logging.DEBUG):
             return
 
-        seqs_cnt = 0
-        if batch.texts_repr.second_level_lengths is not None:
-            seqs_cnt = batch.texts_repr.second_level_lengths.shape[0]
-
+        texts_repr_summary = batch.texts_repr.summary()
         logging.debug(
-            "docs_cnt=%s, segments_cnt=%s, tokens_cnt=%s; seq_max_len=%s",
+            "docs_cnt=%s, %s, tokens_cnt=%s; seq_max_len=%s",
             len(batch.text_ids),
-            seqs_cnt,
+            texts_repr_summary,
             batch.seq_encoder_input.ntokens(),
             batch.seq_encoder_input.max_len,
         )
@@ -703,15 +703,11 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 #     frag_len.extend(fragments)
                 #     doc_len_list.append(len(fragments))
                 #
-                if input_data.texts_repr.second_level_lengths is None:
-                    raise RuntimeError(
-                        "Fragment layer is not None but second_level_lengths is None"
-                    )
-
+                frag_len_tens = input_data.texts_repr.fragment_lengths_in_sents_tensor()
                 input_for_frag_layer = SeqEncoderBatchedInput.from_embs(
                     self.frag_layer.input_type(),
                     sent_embs,
-                    input_data.texts_repr.second_level_lengths.to(sent_embs.device),
+                    frag_len_tens.to(sent_embs.device),
                     padded_prepend_with_zero=self.frag_layer.beg_seq_param is not None,
                 )
 
@@ -722,16 +718,14 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 ).pooled_out
                 # padded_seq_len = batch_info.get('doc_len_in_frags')
                 # TODO temp
-                doc_len_tens = input_data.texts_repr.third_level_lengths
                 # if doc_len_tens is None:
                 #     doc_len_tens = torch.ones((embs.shape[0]), dtype=torch.int32)
-                assert doc_len_tens is not None, "Logic error 3425181"
+                doc_len_tens = input_data.texts_repr.text_lengths_in_fragments_tensor()
             else:
                 embs = sent_embs
                 # doc_len_list = [l for d in doc_lengths for l in d]
                 # padded_seq_len = batch_info.get('doc_len_in_sents')
-                doc_len_tens = input_data.texts_repr.second_level_lengths
-                assert doc_len_tens is not None, "Logic error 3425182"
+                doc_len_tens = input_data.texts_repr.text_lengths_in_sents_tensor()
 
             input_for_doc_layer = SeqEncoderBatchedInput.from_embs(
                 self.doc_layer.input_type(),
@@ -758,13 +752,12 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 max_tokens_in_chunk=max_tokens_in_chunk,
             )
 
-            if input_data.texts_repr.second_level_lengths is None:
-                raise RuntimeError("Fragment layer is not None but second_level_lengths is None")
+            doc_len_tens = input_data.texts_repr.text_lengths_in_fragments_tensor()
 
             input_for_frag_layer = SeqEncoderBatchedInput.from_embs(
                 self.frag_layer.input_type(),
                 embs,
-                input_data.texts_repr.second_level_lengths.to(embs.device),
+                doc_len_tens.to(embs.device),
                 padded_prepend_with_zero=self.frag_layer.beg_seq_param is not None,
             )
 

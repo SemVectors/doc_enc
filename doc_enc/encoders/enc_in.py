@@ -89,6 +89,7 @@ class TextsRepr:
         text_segments: [ [text1_sent0_tok0, ..., text1_sent0_tok39],
                          ...
                          [text1_sent9_tok0, ..., text1_sent9_tok9],
+                         ...
                          [text2_sent0_tok0, ..., text1_sent0_tok19]]
 
         text_lengths: [ [10], [20], ...]
@@ -127,15 +128,27 @@ class TextsRepr:
             return int(self.second_level_lengths.sum().item())
         return 0
 
-    def fragment_lengths_in_sents(self) -> list[int]:
+    def nfrags(self) -> int:
+        if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
+            assert self.second_level_lengths is not None, "nfrags: second level is none"
+            return int(self.second_level_lengths.shape[0])
+        if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS:
+            assert self.second_level_lengths is not None, "nfrags: second level is none"
+            return int(self.second_level_lengths.sum().item())
+        return 0
+
+    def fragment_lengths_in_sents_tensor(self) -> torch.Tensor:
         if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
             assert (
                 self.second_level_lengths is not None
             ), "fragments_lengths_in_sents: second level is none"
-            return self.second_level_lengths.tolist()
-        return []
+            return self.second_level_lengths
+        return torch.empty(0)
 
-    def text_lengths_in_sents(self) -> list[int]:
+    def fragment_lengths_in_sents(self) -> list[int]:
+        return self.fragment_lengths_in_sents_tensor().tolist()
+
+    def text_lengths_in_sents_tensor(self) -> torch.Tensor:
         if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
             assert (
                 self.third_level_lengths is not None and self.second_level_lengths is not None
@@ -148,29 +161,46 @@ class TextsRepr:
                 tl = self.second_level_lengths[offs : offs + fl].sum().item()
                 sl.append(int(tl))
                 offs += fl
-            return sl
+            return torch.tensor(sl)
         if self.text_repr_type == TextReprType.SEQ_OF_SENTS:
             assert (
                 self.second_level_lengths is not None
             ), "text_lengths_in_sents: second level is none"
-            return self.second_level_lengths.tolist()
+            return self.second_level_lengths
 
-        return []
+        return torch.empty(0)
 
-    def text_lengths_in_fragments(self) -> list[int]:
+    def text_lengths_in_sents(self) -> list[int]:
+        return self.text_lengths_in_sents_tensor().tolist()
+
+    def text_lengths_in_fragments_tensor(self) -> torch.Tensor:
         if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
             assert (
                 self.third_level_lengths is not None
             ), "text_lengths_in_fragments: third level is None"
 
-            return self.third_level_lengths.tolist()
+            return self.third_level_lengths
         if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS:
             assert (
                 self.second_level_lengths is not None
             ), "text_lengths_in_fragments: second level is none"
-            return self.second_level_lengths.tolist()
+            return self.second_level_lengths
 
-        return []
+        return torch.empty(0)
+
+    def text_lengths_in_fragments(self) -> list[int]:
+        return self.text_lengths_in_fragments_tensor().tolist()
+
+    def summary(self) -> str:
+        if self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS_OF_SENTS:
+            nsents = self.nsents()
+            nfrags = self.nfrags()
+            return f'nsents={nsents}, nfrags={nfrags}'
+        elif self.text_repr_type == TextReprType.SEQ_OF_FRAGMENTS:
+            return f'nfrags={self.nfrags()}'
+        elif self.text_repr_type == TextReprType.SEQ_OF_SENTS:
+            return f'nsents={self.nsents()}'
+        return ''
 
 
 def _call_fn_on_packed_seq(fn, ps: PackedSequence):

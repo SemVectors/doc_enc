@@ -55,17 +55,13 @@ def test_batch_async_gen_1():
             if batch_ids == [0, 1]:
                 assert jgt.data.tolist() == [111, 112, 121, 131, 211, 221, 222]
                 assert jgt.lengths.tolist() == [2, 1, 1, 1, 2]
-                assert text_repr.second_level_lengths is not None
-                assert text_repr.second_level_lengths.tolist() == [3, 2]
-                assert text_repr.third_level_lengths is not None
-                assert text_repr.third_level_lengths.tolist() == [1, 1]
+                assert text_repr.fragment_lengths_in_sents() == [3, 2]
+                assert text_repr.text_lengths_in_fragments() == [1, 1]
             elif batch_ids == [2, 3]:
                 assert jgt.data.tolist() == [331, 332, 321, 331, 411, 421, 422, 431, 432, 433, 434]
                 assert jgt.lengths.tolist() == [2, 1, 1, 1, 2, 4]
-                assert text_repr.second_level_lengths is not None
-                assert text_repr.second_level_lengths.tolist() == [3, 3]
-                assert text_repr.third_level_lengths is not None
-                assert text_repr.third_level_lengths.tolist() == [1, 1]
+                assert text_repr.fragment_lengths_in_sents() == [3, 3]
+                assert text_repr.text_lengths_in_fragments() == [1, 1]
             else:
                 raise RuntimeError(f"Unexpected result: {batch_ids}")
     finally:
