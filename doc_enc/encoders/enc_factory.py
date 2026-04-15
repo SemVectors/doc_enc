@@ -39,16 +39,20 @@ def create_encoder(conf: BaseEncoderConf, eval_mode: bool):
         return TransformerEncoder(conf)
 
     if conf.encoder_kind == EncoderKind.FNET:
-        return FNetEncoder(conf)
+        # TODO
+        raise RuntimeError("Fnet is not supported for now")
+        # return FNetEncoder(conf)
 
     if conf.encoder_kind == EncoderKind.LONGFORMER:
-        return LongformerEncoder(conf)
+        raise RuntimeError("Longformer is not supported for now")
+        # return LongformerEncoder(conf)
 
     if conf.encoder_kind == EncoderKind.GRU:
         return GRUEncoder(conf)
 
     if conf.encoder_kind == EncoderKind.LOCAL_ATTN_TRANSFORMER:
-        return LocalAttnEncoder(conf)
+        raise RuntimeError("LocalAttn transformer is not supported for now")
+        # return LocalAttnEncoder(conf)
 
     if conf.encoder_kind == EncoderKind.TRANSFORMERS_AUTO:
         if 'longformer' in conf.transformers_auto_name:

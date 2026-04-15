@@ -155,10 +155,6 @@ class BaseBatchAsyncGenerator[BatchT]:
         per_proc_lines = r.step
         for i, offs in enumerate(r):
 
-            logging.error(
-                "create proc with offs %s, line cnt %s, limit %s", offs, per_proc_lines, limit
-            )
-
             p = multiprocessing.Process(
                 target=_generator_proc_wrapper,
                 args=(

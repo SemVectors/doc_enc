@@ -161,7 +161,6 @@ class EncInputSharedTensors:
                 (max_seqs, seq_len),
                 (max_seqs,),  # lengths
             ]
-            logging.error('create shared padded tensor with shapes %s', shapes)
             dtypes = [torch.int32, torch.int32]
         elif enc_input_type == EncoderInputType.PACKED:
             max_len = max_tokens
@@ -174,14 +173,12 @@ class EncInputSharedTensors:
                 (max_seqs,),  # sorted_indices
                 (max_seqs,),  # unsorted_indices
             ]
-            logging.error('create shared tensor with shapes %s', shapes)
             dtypes = [torch.int32, torch.int64, torch.int64, torch.int64]
         elif enc_input_type == EncoderInputType.JAGGED:
             shapes = [
                 (max_tokens,),  # tokens
                 (max_seqs,),  # lengths
             ]
-            logging.error('create shared jagged tensor with shapes %s', shapes)
             dtypes = [torch.int32, torch.int32]
         else:
             raise RuntimeError(f"Unsupported enc input type: {enc_input_type}")
@@ -252,13 +249,6 @@ class EncInputSharedTensors:
                 tuple(pd.lengths.shape),
             )
             tens = (pd.data, pd.lengths)
-            # logging.error(
-            #     'PUT_TENSORS, type %s, bs=%s, max_len = %s, shapes %s',
-            #     self.enc_input_type,
-            #     input_data.batch_size,
-            #     input_data.max_len,
-            #     shapes,
-            # )
         else:
             raise RuntimeError(f"Unsupported enc input type: {self.enc_input_type}")
 

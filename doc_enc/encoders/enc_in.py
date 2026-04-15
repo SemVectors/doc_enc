@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import itertools
-import logging
 import enum
 
 from typing import NamedTuple
@@ -37,26 +36,6 @@ class PaddedTensor(NamedTuple):
     data: torch.Tensor
     lengths: torch.Tensor
     padding_mask: torch.Tensor | None = None
-
-
-# for padded
-# def _prepare_input_data(self, doc_segments: list[list[int]], already_sorted=False):
-#     max_len = len(max(doc_segments, key=len))
-
-#     tokens_tensor, lengths_tensor = create_padded_tensor(
-#         doc_segments,
-#         max_len,
-#         pad_idx=self._pad_idx,
-#         device=self.device,
-#         pad_to_multiple_of=self.first_encode_layer().pad_to_multiple_of,
-#         padding_side=self.first_encode_layer().get_padding_side(),
-#     )
-
-#     return _InputData(
-#         tokens_tensor=tokens_tensor,
-#         lengths_tensor=lengths_tensor,
-#         already_sorted=already_sorted,
-#     )
 
 
 class TextReprType(enum.Enum):
@@ -221,12 +200,6 @@ class SeqEncoderBatchedInput:
         batched_input.sorted_by_length = sorted_by_length
         batched_input.max_len = max(len(s) for s in text_segments)
         batched_input.batch_size = len(text_segments)
-        # logging.error(
-        #     'call %s SeqEncoderBatchedInput %s max len %s',
-        #     input_type,
-        #     batched_input.batch_size,
-        #     batched_input.max_len,
-        # )
 
         if input_type == EncoderInputType.PADDED:
             max_len = len(max(text_segments, key=len))
@@ -236,11 +209,8 @@ class SeqEncoderBatchedInput:
             batched_input.batch = PaddedTensor(tokens_tensor, lengths_tensor)
             return batched_input
         if input_type == EncoderInputType.PACKED:
-            # logging.error('packed %s')
             tensor_list = [torch.tensor(s, dtype=torch.int32) for s in text_segments]
-            # logging.error('tensor list %s')
             batched_input.batch = pack_sequence(tensor_list, enforce_sorted=sorted_by_length)
-            # logging.error('gatched input %s', batched_input.batch)
             return batched_input
         if input_type == EncoderInputType.JAGGED:
             data = torch.tensor([t for s in text_segments for t in s], dtype=torch.int32)
@@ -276,21 +246,10 @@ class SeqEncoderBatchedInput:
 
         return batched_input
 
-    def __init__(
-        self,
-        input_type: EncoderInputType,
-        # text_segments: list[list[int]],
-        # text_lengths: list[list[int]],
-        # text_ids: list[str | int],
-    ):
+    def __init__(self, input_type: EncoderInputType):
         self.enc_input_type = input_type
 
-        # self.text_lengths = text_lengths
-        # self.text_ids = text_ids
-
         self.batch: None | PackedSequence | JaggedInputTensor | PaddedTensor = None
-        # self.seqs_cnt = len(text_segments)
-        # self.total_tokens_cnt = sum(len(s) for s in text_segments)
         self.embedded = False
         self.sorted_by_length = False
 
@@ -430,12 +389,6 @@ class SeqEncoderBatchedInput:
         raise RuntimeError(
             f"Batch is either uninitialized or has wrong format: {type(self.batch)}!"
         )
-
-    # def tokens_cnt(self):
-    #     pass
-
-    # def seqs_cnt(self):
-    #     pass
 
 
 class EncoderInData(NamedTuple):

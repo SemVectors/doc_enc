@@ -66,9 +66,9 @@ def combine_docs_datasets(
             )
 
         if sort_by_len:
-            key = lambda t: (-t.src_len, t.src_hash, -t.label)
+            key = lambda t: (-t.src_len, t.src_hash, -t.label)  # noqa: E731
         else:
-            key = lambda t: (t.src_hash, -t.label)
+            key = lambda t: (t.src_hash, -t.label)  # noqa: E731
         all_examples.sort(key=key)
         for e in all_examples:
             csv_writer.writerow(
@@ -167,11 +167,11 @@ def _proc_calc_sent_info_for_paths(paths: list[Path]):
                 md5hash.update(b''.join(t.to_bytes(4, 'little') for t in tokens))
         else:
             with open_bin_file(p) as f:
-                for l in f:
-                    if l.strip():
+                for line in f:
+                    if line.strip():
                         segments_cnt += 1
-                        tokens_cnt += len(l.split())
-                        md5hash.update(l)
+                        tokens_cnt += len(line.split())
+                        md5hash.update(line)
 
         cnt = segments_cnt
         if not split_into_sents:
@@ -193,7 +193,7 @@ def _calc_sentence_size_and_hash_in_dir(
         batch = []
         cnt = 0
         for p in docs_path.iterdir():
-            if not p.is_file() or not p.suffix in ('.gz', '.txt'):
+            if not p.is_file() or p.suffix not in ('.gz', '.txt'):
                 continue
 
             doc_id = _doc_id_from_path(p)

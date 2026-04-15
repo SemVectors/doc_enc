@@ -35,11 +35,9 @@ class TransformerPooler(BasePooler):
             )
             pooled_out = hidden_states.values()[sel]
         elif self.conf.pooling_strategy == PoolingStrategy.MEAN:
-            # nt = torch.nested.nested_tensor_from_jagged(hidden_states, lengths=lengths)
             # hidden_states is already nested tensor
             pooled_out = hidden_states.sum(1) / lengths.unsqueeze(-1)
         elif self.conf.pooling_strategy == PoolingStrategy.MAX:
-            # nt = torch.nested.nested_tensor_from_jagged(hidden_states, lengths=lengths)
             pooled_out = torch.max(hidden_states, dim=1)[0]
         else:
             raise RuntimeError(f"Unsupported pooling strategy: {self.conf.pooling_strategy}")
@@ -190,19 +188,9 @@ class BaseTransformerEncoder(BaseEncoder):
     def out_embs_dim(self):
         return self.output_units
 
-    # def _create_key_padding_mask(self, max_len: int, src_lengths: torch.Tensor, device):
-    #     bs = src_lengths.shape[0]
-    #     mask = torch.full((bs, max_len), False, dtype=torch.bool, device=device)
-    #     lenghts_as_list = src_lengths.tolist()
-    #     for i, ls in enumerate(lenghts_as_list):
-    #         mask[i, 0:ls] = True
-
-    #     return mask
-
     def forward(
         self,
         input_batch: SeqEncoderBatchedInput,
-        # key_padding_mask: torch.Tensor | None = None,
         **kwargs,
     ) -> BaseEncoderOut:
         if self.input_type() == EncoderInputType.JAGGED:

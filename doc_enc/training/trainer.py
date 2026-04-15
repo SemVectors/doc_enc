@@ -578,7 +578,6 @@ class Trainer(BaseTrainerUtils):
         labels: torch.Tensor,
         batch: DocsBatch | SentsBatch,
     ):
-        # TODO replace info bs?
         if task == TaskType.SENT_RETR:
             loss, losses_tuple = self._calc_sent_retr_loss(output, labels, batch.batch_size())
         elif isinstance(batch, DocsBatch):
@@ -1163,6 +1162,15 @@ class Trainer(BaseTrainerUtils):
             torch.save(state_dict, snapshot_path)
 
     def _eval_on_dev(self, epoch, dev_iter: BatchIterator):
+        def _calc_sim(batch: DocsBatch | SentsBatch, **kwargs):
+            if isinstance(batch, DocsBatch):
+                return self._local_models.doc_model.calc_sim_matrix(batch, **kwargs)
+            elif isinstance(batch, SentsBatch):
+                assert self._local_models.sent_model is not None, "eval on dev: Sent model is None!"
+                return self._local_models.sent_model.calc_sim_matrix(batch, **kwargs)
+            else:
+                raise RuntimeError(f"Unknown batch type {type(batch)}")
+
         with torch.inference_mode():
             if self._local_models.sent_model is not None:
                 self._local_models.sent_model.eval()
@@ -1176,16 +1184,10 @@ class Trainer(BaseTrainerUtils):
                 batches = 0
                 cum_metrics = create_metrics(task)
                 dev_iter.init_epoch(epoch, [task])
-                if task == TaskType.SENT_RETR:
-                    model = self._local_models.sent_model
-                else:
-                    model = self._local_models.doc_model
-
-                assert model is not None, "logic error 8321"
 
                 for batch in dev_iter.batches(batches_cnt=0):
                     labels = batch.labels.to(device=self._device)
-                    output = model.calc_sim_matrix(batch, dont_cross_device_sample=True)
+                    output = _calc_sim(batch, dont_cross_device_sample=True)
                     _, m = self._calc_loss_and_metrics(task, output, labels, batch)
                     cum_metrics += m
                     batches += 1

@@ -249,15 +249,6 @@ class BaseRNNEncoder(BaseEncoder):
         if not input_batch.embedded:
             raise RuntimeError("Only embs as input are supported")
 
-        # bsz, seqlen = input_embs.size()[:2]
-        # # BS x SeqLen x Dim -> SeqLen x BS x DIM
-        # x = input_embs.transpose(0, 1)
-
-        # # pack embedded source tokens into a PackedSequence
-        # packed_x = nn.utils.rnn.pack_padded_sequence(
-        #     x, lengths.cpu(), enforce_sorted=enforce_sorted
-        # )
-
         packed_x = input_batch.get_packed_seq()
         packed_outs, _ = self.rnn(packed_x)
 

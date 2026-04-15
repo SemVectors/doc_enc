@@ -5,7 +5,6 @@ from typing import Any, Mapping
 import torch
 from torch import nn
 
-from doc_enc.embs.pos_emb import PositionalEmbedding
 from doc_enc.encoders.enc_config import SeqEncoderConf
 from doc_enc.encoders.base_encoder import BaseEncoder
 from doc_enc.encoders.enc_in import SeqEncoderBatchedInput
@@ -71,44 +70,19 @@ class SeqEncoder(nn.Module):
                 embs = self.inp_dropout(embs)
         return embs
 
-    def forward(
-        self,
-        input_batch: SeqEncoderBatchedInput,
-        # padded_seq_len: int | None = None,
-        **kwargs,
-    ):
+    def forward(self, input_batch: SeqEncoderBatchedInput, **kwargs):
 
         # 1. input is token ids
         if not input_batch.embedded:
             enc_result = self.encoder(input_batch, **kwargs)
             return enc_result
 
-        # if input_seq_lengths is None or input_embs is None:
-        #     raise RuntimeError("Pass either input_embs and input_seq_lengths or input_token_ids")
-
         # 2. input is embeddings
+
         # TODO
         # embs = self._prepare_input(input_embs)
 
         # TODO
-        # extra_len = int(self.beg_seq_param is not None)
-        # if padded_seq_len is None:
-        #     padded_seq, max_len = self._pad_embs_seq(embs, input_seq_lengths, extra_len)
-        #     emb_sz = embs.size(1)
-        #     padded_seq = padded_seq.reshape(len(input_seq_lengths), max_len, emb_sz)
-        # else:
-        #     if self.conf.add_beg_seq_token or self.pad_to_multiple_of:
-        #         raise RuntimeError(
-        #             "Unsupported option add_beg_seq_token or pad_to_multiple_of"
-        #             " when batch  is preliminary padded"
-        #         )
-        #     padded_seq = embs
-        #     max_len = padded_seq_len
-
-        # # len_tensor = torch.as_tensor(input_seq_lengths, dtype=torch.int64, device=embs.device)
-        # if extra_len:
-        #     input_seq_lengths += extra_len
-
         # if self.pos_emb is not None:
         #     padded_seq = padded_seq * math.sqrt(self.conf.hidden_size)
         #     padded_seq = self.pos_emb(padded_seq, input_seq_lengths)
@@ -127,16 +101,20 @@ class SeqEncoder(nn.Module):
             st['pos_emb'] = self.pos_emb.state_dict(*args, **kwargs)
         return st
 
-    def load_state_dict(self, state_dict: Mapping[str, Any], **kwargs):
+    def load_state_dict(
+        self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False
+    ):
         if 'encoder' not in state_dict:
             # compat with previous versions
-            return super().load_state_dict(state_dict, **kwargs)
-
-        if enc_state := state_dict['encoder']:
-            self.encoder.load_state_dict(enc_state, **kwargs)
+            return super().load_state_dict(state_dict, strict=strict, assign=assign)
 
         if self.beg_seq_param is not None:
             self.beg_seq_param.data = state_dict['beg_seq_param']
 
-        if 'pos_emb' in state_dict:
-            self.pos_emb.load_state_dict(state_dict['pos_emb'], **kwargs)
+        if self.pos_emb is not None and 'pos_emb' in state_dict:
+            self.pos_emb.load_state_dict(state_dict['pos_emb'], strict=strict, assign=assign)
+
+        if enc_state := state_dict['encoder']:
+            return self.encoder.load_state_dict(enc_state, strict=strict, assign=assign)
+
+        return nn.modules.module._IncompatibleKeys([], [])

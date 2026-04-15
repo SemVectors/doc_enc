@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 
 import contextlib
 from typing import Any
@@ -51,12 +50,6 @@ class DocDualEncoder(BaseDocModel):
     def _sent_level_ctx_mgr(self):
         return self._cur_sents_ctx_mgr()
 
-    # def _create_batch_info_dict(self, prefix, batch: DocsBatch):
-    #     d = {}
-    #     for n in ['doc_len_in_sents', 'doc_len_in_frags', 'fragment_len']:
-    #         d[n] = batch.info.get(f'{prefix}_{n}')
-    #     return d
-
     def calc_sim_matrix(
         self, batch: DocsBatch, dont_cross_device_sample=False
     ) -> DualEncModelOutput:
@@ -67,7 +60,6 @@ class DocDualEncoder(BaseDocModel):
             split_input=self.conf.split_input,
             max_chunk_size=self.conf.max_chunk_size,
             max_tokens_in_chunk=self.conf.max_tokens_in_chunk,
-            # batch_info=self._create_batch_info_dict('src', batch),
         )
         self._reset_cur_sents_ctx_mrg(self._tgt_sents_ctx_mgr)
 
@@ -76,7 +68,6 @@ class DocDualEncoder(BaseDocModel):
             split_input=self.conf.split_input,
             max_chunk_size=self.conf.max_chunk_size,
             max_tokens_in_chunk=self.conf.max_tokens_in_chunk,
-            # batch_info=self._create_batch_info_dict('tgt', batch),
         )
 
         if self.conf.normalize:

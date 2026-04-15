@@ -1546,5 +1546,5 @@ def fine_tune_classif_cli(conf: ClassifFineTuneConf) -> None:
 
 
 if __name__ == "__main__":
-    # global_init()
+    global_init()
     fine_tune_classif_cli()

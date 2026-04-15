@@ -10,7 +10,6 @@ from doc_enc.shared_tensors import EncInputSharedTensors
 
 
 def serialize_enc_in_data(in_data: EncoderInData, shared_tensors_holder: EncInputSharedTensors):
-    # logging.error("serialize in tensors")
     slot_num, info = shared_tensors_holder.share_input_data(
         in_data.seq_encoder_input, in_data.texts_repr
     )

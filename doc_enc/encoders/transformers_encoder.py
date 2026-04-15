@@ -85,8 +85,48 @@ class BaseTransformersAutoModel(BaseEncoder):
         if isinstance(self.auto_model, PeftModel):
             set_peft_model_state_dict(self.auto_model, state_dict['adapter_weights'])
             self.auto_model = self.auto_model.merge_and_unload()
+            return torch.nn.modules.module._IncompatibleKeys([], [])
         else:
-            super().load_state_dict(state_dict, *args, **kwargs)
+            return super().load_state_dict(state_dict, *args, **kwargs)
+
+    def _common_auto_forward(
+        self, input_batch: SeqEncoderBatchedInput, transformers_kwargs: dict | None = None
+    ):
+        if input_batch.embedded:
+            raise RuntimeError("Pretrained transformers encoder supports only input_ids as input!")
+
+        if transformers_kwargs is None:
+            transformers_kwargs = {}
+
+        if self.input_type() == EncoderInputType.JAGGED:
+            jgt = input_batch.get_jagged_w_pos_ids()
+            input_ids = jgt.data.unsqueeze(0)
+            lengths = jgt.lengths
+            position_ids = jgt.position_ids.unsqueeze(0)
+            attention_mask = None
+        else:
+
+            max_len = input_batch.max_len
+            # input shape: batch_sz, seq_len
+            padded = input_batch.get_padded()
+            input_ids = padded.data
+            lengths = padded.lengths
+            position_ids = torch.arange(max_len, device=input_ids.device).unsqueeze(0)
+
+            # B X L
+            assert padded.padding_mask is not None, "Padding mask should be already created!"
+            attention_mask = padded.padding_mask.float()
+
+        return (
+            self.auto_model(
+                input_ids=input_ids,
+                position_ids=position_ids,
+                attention_mask=attention_mask,
+                **transformers_kwargs,
+            ),
+            lengths,
+            attention_mask,
+        )
 
 
 def print_trainable_parameters(model):
@@ -174,51 +214,11 @@ class TransformersAutoModel(BaseTransformersAutoModel):
     def forward(
         self,
         input_batch: SeqEncoderBatchedInput,
-        # input_embs: torch.Tensor | None = None,
-        # input_token_ids: torch.Tensor | None = None,
-        # lengths: torch.Tensor | None = None,
         transformers_kwargs: dict | None = None,
         **kwargs,
     ):
-        if input_batch.embedded:
-            raise RuntimeError("Pretrained transformers encoder supports only input_ids as input!")
-
-        if transformers_kwargs is None:
-            transformers_kwargs = {}
-
-        if self.input_type() == EncoderInputType.JAGGED:
-            jgt = input_batch.get_jagged_w_pos_ids()
-            input_ids = jgt.data.unsqueeze(0)
-            lengths = jgt.lengths
-            position_ids = jgt.position_ids.unsqueeze(0)
-            attention_mask = None
-
-            # logging.error(
-            #     'ids %s, pos ids %s',
-            #     jgt.data.unsqueeze(0).shape,
-            #     jgt.position_ids.unsqueeze(0).shape,
-            # )
-        else:
-
-            max_len = input_batch.max_len
-            # input shape: batch_sz, seq_len
-            padded = input_batch.get_padded()
-            input_ids = padded.data
-            lengths = padded.lengths
-            position_ids = torch.arange(max_len, device=input_ids.device).unsqueeze(0)
-
-            # B X L
-            # attention_mask = create_key_padding_mask(
-            #     max_len, padded.lengths, padded.data.device, padding_side=self._get_padding_side()
-            # )
-            assert padded.padding_mask is not None, "Padding mask should be already created!"
-            attention_mask = padded.padding_mask.float()
-
-        result = self.auto_model(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            attention_mask=attention_mask,
-            **transformers_kwargs,
+        result, lengths, attention_mask = self._common_auto_forward(
+            input_batch, transformers_kwargs
         )
         if (
             self.config.transformers_pooler != 'auto'
@@ -229,9 +229,6 @@ class TransformersAutoModel(BaseTransformersAutoModel):
             if (last_hidden_state := getattr(result, 'last_hidden_state', None)) is not None:
 
                 if self.input_type() == EncoderInputType.JAGGED:
-                    # jgt = input_batch.get_jagged_w_pos_ids()
-                    # logging.error("last hidden, shape %s", last_hidden_state.shape)
-                    # logging.error("last hidden: %s", last_hidden_state)
                     last_hidden_state = last_hidden_state.squeeze(0)
 
                     if self.config.transformers_pooler in ('first', 'auto'):
@@ -269,9 +266,6 @@ class TransformersAutoModel(BaseTransformersAutoModel):
             else:
                 raise RuntimeError(f"Unsupported result type from transformers lib {type(result)} ")
 
-        # logging.error("pooled out, shape %s", pooled_out.shape)
-
-        # TODO why should I return lengths?
         return BaseEncoderOut(pooled_out, result.hidden_states, lengths)
 
     def pool_on_padded_embs(
@@ -313,25 +307,23 @@ class TransformersAutoModel(BaseTransformersAutoModel):
 
 
 class TransformersLongformer(TransformersAutoModel):
+    def _init_input_type(self, config: BaseEncoderConf):
+        return EncoderInputType.PADDED
+
     def forward(
         self,
-        input_embs: torch.Tensor | None = None,
-        input_token_ids: torch.Tensor | None = None,
-        lengths: torch.Tensor | None = None,
+        input_batch: SeqEncoderBatchedInput,
         transformers_kwargs: dict | None = None,
         **kwargs,
     ):
-        t = None
-        if input_token_ids is not None:
-            t = input_token_ids
-            shape = t.shape
-        elif input_embs is not None:
-            t = input_embs
-            shape = t.shape[:-1]
-        else:
-            raise RuntimeError("pass either input_embs or input_token_ids")
+        if input_batch.embedded:
+            raise RuntimeError("Pretrained transformers encoder supports only input_ids as input!")
 
-        global_attention_mask = torch.zeros(*shape, dtype=torch.float, device=t.device)
+        pd = input_batch.get_padded()
+        device = pd.data.device
+        shape = pd.data.shape
+
+        global_attention_mask = torch.zeros(*shape, dtype=torch.float, device=device)
         # global attention on cls token
         global_attention_mask[:, 0] = 1
 
@@ -339,9 +331,7 @@ class TransformersLongformer(TransformersAutoModel):
             transformers_kwargs = {}
         transformers_kwargs['global_attention_mask'] = global_attention_mask
         return super().forward(
-            input_embs=input_embs,
-            input_token_ids=input_token_ids,
-            lengths=lengths,
+            input_batch,
             transformers_kwargs=transformers_kwargs,
             **kwargs,
         )
@@ -366,32 +356,9 @@ class SbertAutoModel(BaseTransformersAutoModel):
     def forward(
         self,
         input_batch: SeqEncoderBatchedInput,
-        # input_embs: torch.Tensor | None = None,
-        # input_token_ids: torch.Tensor | None = None,
-        # lengths: torch.Tensor | None = None,
         transformers_kwargs: dict | None = None,
         **kwargs,
     ):
-        # if input_embs is not None:
-        #     raise RuntimeError("Sbert does not support input_embs")
-
-        # if input_token_ids is None or lengths is None:
-        #     raise RuntimeError("pass input_token_ids and lengths")
-
-        # input shape: batch_sz, seq_len
-
-        # max_len = input_token_ids.shape[1]
-
-        # attention_mask = create_key_padding_mask(
-        #     max_len, lengths, input_token_ids.device, padding_side=self._get_padding_side()
-        # )
-
-        if transformers_kwargs is None:
-            transformers_kwargs = {}
-
-        # TODO
-        result = self.auto_model.forward(
-            {'input_ids': input_token_ids, 'attention_mask': attention_mask}
-        )
+        result, lengths, _ = self._common_auto_forward(input_batch, transformers_kwargs)
 
         return BaseEncoderOut(result['sentence_embedding'], result['token_embeddings'], lengths)

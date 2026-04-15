@@ -138,7 +138,6 @@ def _eval_and_bench(conf: Config, doc_encoder: DocEncoder, **extra):
 
 @hydra.main(config_path=None, config_name="config", version_base=None)
 def eval_cli(conf: Config) -> None:
-    # global_init()
 
     if conf.cache_embeddings:
         if conf.model_id is None:
@@ -174,4 +173,5 @@ def eval_cli(conf: Config) -> None:
 
 
 if __name__ == "__main__":
+    global_init()
     eval_cli()

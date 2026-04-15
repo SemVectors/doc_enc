@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import logging
 from typing import Callable
 
 import torch
@@ -35,7 +34,6 @@ def split_padded_input_and_encode(
         res = encoder(orig_input_data, enforce_sorted=already_sorted)
         return _encoder_res_finalize(res, collect_on_cpu)
 
-    # orig_data = copy.copy(orig_input_data)
     orig_padded = orig_input_data.get_padded()
     assert (
         orig_padded.padding_mask is not None

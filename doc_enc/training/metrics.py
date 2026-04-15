@@ -212,8 +212,6 @@ class DocRetrMetrics(BaseMetrics):
             batch, DocsBatch
         ), "DocRetrMetrics:_update_metrics_impl batch is not instance of DocsBatch"
 
-        # k = batch.info['max_positives_per_doc']
-
         k = min(10, batch.get_tgt_docs_cnt())
 
         m = output.dense_score_matrix

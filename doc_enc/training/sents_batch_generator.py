@@ -59,7 +59,6 @@ class SentsBatchGeneratorConf:
     adjust_batch_size: bool = False
     dont_use_dups: bool = False
     dont_use_hns: bool = False
-    # skip_large_hn: bool = False
     min_hn_cnt: int = 0
 
 
@@ -189,10 +188,8 @@ class SentsBatchGenerator:
                     excluded_ids.add(hn_id)
                     tgt_tokens.append(toks)
                     tgt_ids.append(hn_id)
-        # logging.debug("batch was adjusted with %d tries", tries_cnt)
 
     def _make_batch(self, examples: list[Example], excluded_ids: set[int], bucket: list[Example]):
-        # logging.error("MAKE BATCH %s", [len(e.src) for e in examples])
 
         src_tokens: list[list[int]] = []
         src_ids = []
@@ -200,7 +197,6 @@ class SentsBatchGenerator:
         hn_tokens = []
         hn_ids = []
         hn_indices = []
-        # tgt_max_len = len(max((e.tgt for e in examples), key=len))
         for e in examples:
             src_tokens.append(e.src)
             src_ids.append(e.src_id)
@@ -211,16 +207,6 @@ class SentsBatchGenerator:
             for hn_id, hn_toks in zip(ex_hn_ids, ex_hns):
                 if hn_id in excluded_ids:
                     continue
-                # if self._conf.skip_large_hn and len(toks) > 100 and len(toks) > 2 * tgt_max_len:
-                #     logging.info(
-                #         "hn %s has len %d that is greater than max tgt len %d. "
-                #         "It will be skipped ",
-                #         hn_id,
-                #         len(toks),
-                #         tgt_max_len,
-                #     )
-                #     continue
-
                 excluded_ids.add(hn_id)
 
                 hn_idxs.append(len(examples) + len(hn_ids))
@@ -234,8 +220,6 @@ class SentsBatchGenerator:
 
         assert len(hn_indices) == len(src_tokens) == len(src_ids)
 
-        # info = {'bs': len(src_ids)}
-        # b = SentsBatch(src_ids, src_tokens, [], tgt_ids, tgt_tokens, [], hn_indices)
         labels = torch.arange(0, len(src_ids), dtype=torch.float32)
 
         pad_idx = self._tokenizer.pad_idx()
@@ -262,57 +246,20 @@ class SentsBatchGenerator:
     def _maybe_prepend_not_fitted(self, not_fitted, bucket: collections.deque, to_next_bucket):
         if not not_fitted:
             return
-        # logging.debug("not_fitted: size %s", len(not_fitted))
 
         if not bucket:
             to_next_bucket.extend(not_fitted)
             return
 
-        # if len(not_fitted) > self._conf.batch_size // 2:
-        #     # logging.debug("not_fitted: move to the begining of the bucket")
-        #     bucket.extendleft(reversed(not_fitted))
-        #     self._sort_within_bucket(bucket)
-        #     return
-        # logging.error("NOT FITTED %s", [len(e.src) for e in not_fitted])
-        # logging.error("BEFORE maybe prepend first %s", [len(e.src) for e in list(bucket)[:50]])
-
         if len(not_fitted[-1].src) >= len(bucket[0].src):
             bucket.extendleft(reversed(not_fitted))
-            # logging.error(
-            #     "AFTER SHORTCUT maybe prepend first %s", [len(e.src) for e in list(bucket)[:50]]
-            # )
             return
 
         for e in reversed(not_fitted):
             if len(e.src) >= len(bucket[0].src):
-                # logging.debug("not_fitted: appendleft")
                 bucket.appendleft(e)
             else:
-                # logging.debug("not_fitted: to next bucket")
                 to_next_bucket.append(e)
-        # logging.error("AFTER maybe prepend first %s", len(bucket[0].src))
-
-    # def _is_batch_ready(self, examples: list[Example], cur_tokens_cnt:int):
-    #     bs = len(examples)
-    #     if bs >= self._conf.batch_size:
-    #         return True
-
-    #     if cur_tokens_cnt >=
-    #     # we have to strive to keep batch size to be divisible by 8
-    #     # for better gpu performance (see _adjust_batch_size)
-    #     if bs % 8 == 0:
-    #         # since target contains many more examples, we will estimate tokens cnt in target batch
-    #         hn_per_example = len(examples[0].hns[1])
-    #         # num tokens with padding in target batch
-    #         tokens_cnt = bs * (hn_per_example + 1) * max_len
-    #         if tokens_cnt >= self._conf.max_tokens:
-    #             logging.info(
-    #                 "batch is ready by tokens: bs=%s, ml=%s, hns=%s ", bs, max_len, hn_per_example
-    #             )
-
-    #             return True
-
-    #     return False
 
     def _create_batches_from_bucket(self, initial_bucket: list[Example]):
         # There should be no fuzzy duplicates inside mini-batch.

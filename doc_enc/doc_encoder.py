@@ -83,9 +83,6 @@ class DocEncoderConf:
     # Compat with previous versions, for now has no effect.
     bucket_multiplier: int = 1
 
-    # truncate docs that are excessively long
-    # truncate_long_docs: bool = False
-
     # perform l2 normalization on encoded vectors.
     normalize_vecs: bool = False
     enable_amp: bool = False
@@ -523,8 +520,6 @@ def encode_input_data(
 
         return encoder(input_data, **kwargs)
 
-    # logging.error("Encode input data: bs %s, max len %s", input_data.batch_size, input_data.max_len)
-
     if encoder.input_type() == EncoderInputType.PADDED:
 
         if not split_data:
@@ -579,22 +574,6 @@ class BaseSentEncodeModule(torch.nn.Module):
         )
 
         return input_data
-        # max_len = len(max(doc_segments, key=len))
-
-        # tokens_tensor, lengths_tensor = create_padded_tensor(
-        #     doc_segments,
-        #     max_len,
-        #     pad_idx=self._pad_idx,
-        #     device=self.device,
-        #     pad_to_multiple_of=self.first_encode_layer().pad_to_multiple_of,
-        #     padding_side=self.first_encode_layer().get_padding_side(),
-        # )
-
-        # return _InputData(
-        #     tokens_tensor=tokens_tensor,
-        #     lengths_tensor=lengths_tensor,
-        #     already_sorted=already_sorted,
-        # )
 
     def _encode_sents_impl(
         self,
@@ -673,13 +652,7 @@ class BaseEncodeModule(BaseSentEncodeModule):
         split_input=True,
         max_chunk_size=1024,
         max_tokens_in_chunk=48_000,
-        # batch_info: dict | None = None,
     ):
-
-        # """Docs is represented as sequence of segments in a flat list doc_segments"""
-
-        # if batch_info is None:
-        #     batch_info = {}
 
         input_data = self._prepare_input_data(input_data)
 
@@ -697,12 +670,6 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 )
 
             if self.frag_layer is not None:
-                # frag_len: list[int] = []
-                # doc_len_list: list[int] = []
-                # for fragments in doc_lengths:
-                #     frag_len.extend(fragments)
-                #     doc_len_list.append(len(fragments))
-                #
                 frag_len_tens = input_data.texts_repr.fragment_lengths_in_sents_tensor()
                 input_for_frag_layer = SeqEncoderBatchedInput.from_embs(
                     self.frag_layer.input_type(),
@@ -711,20 +678,10 @@ class BaseEncodeModule(BaseSentEncodeModule):
                     padded_prepend_with_zero=self.frag_layer.beg_seq_param is not None,
                 )
 
-                # len_tensor = torch.as_tensor(frag_len, dtype=torch.int64, device=sent_embs.device)
-                embs = self.frag_layer(
-                    input_for_frag_layer
-                    # padded_seq_len=batch_info.get('fragment_len'),
-                ).pooled_out
-                # padded_seq_len = batch_info.get('doc_len_in_frags')
-                # TODO temp
-                # if doc_len_tens is None:
-                #     doc_len_tens = torch.ones((embs.shape[0]), dtype=torch.int32)
+                embs = self.frag_layer(input_for_frag_layer).pooled_out
                 doc_len_tens = input_data.texts_repr.text_lengths_in_fragments_tensor()
             else:
                 embs = sent_embs
-                # doc_len_list = [l for d in doc_lengths for l in d]
-                # padded_seq_len = batch_info.get('doc_len_in_sents')
                 doc_len_tens = input_data.texts_repr.text_lengths_in_sents_tensor()
 
             input_for_doc_layer = SeqEncoderBatchedInput.from_embs(
@@ -733,11 +690,7 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 doc_len_tens.to(embs.device),
                 padded_prepend_with_zero=self.doc_layer.beg_seq_param is not None,
             )
-            # len_tensor = torch.as_tensor(doc_len_list, dtype=torch.int64, device=embs.device)
-            doc_embs = self.doc_layer(
-                input_for_doc_layer
-                # padded_seq_len=padded_seq_len,
-            ).pooled_out
+            doc_embs = self.doc_layer(input_for_doc_layer).pooled_out
             return doc_embs
 
         if self.frag_layer is not None:
@@ -761,9 +714,6 @@ class BaseEncodeModule(BaseSentEncodeModule):
                 padded_prepend_with_zero=self.frag_layer.beg_seq_param is not None,
             )
 
-            # len_tensor = torch.as_tensor(
-            #     [l for d in doc_lengths for l in d], dtype=torch.int64, device=embs.device
-            # )
             doc_embs = self.doc_layer(input_for_frag_layer).pooled_out
             return doc_embs
 
@@ -1291,8 +1241,6 @@ class DocEncoder:
 
         if not self._enc_module.sent_encoding_supported():
             raise RuntimeError("Sent encoding is unsupported by this model!")
-        # batch_generator = self._enc_module.create_batch_async_generator()
-        # batch_generator.start_workers()
 
         for batch in self._batch_gen.batches(generator_funcs, input_are_sents=True):
             if stat is not None:
@@ -1374,18 +1322,10 @@ class DocEncoder:
         """
         embs = []
         embs_idxs = []
-        # batch_iter = self._enc_module.create_batch_async_generator()
-
-        # per_worker_items = math.ceil(len(path_list) / self.conf().async_batch_gen)
-        # gens = []
-        # for offs in range(0, len(path_list), per_worker_items):
-        #     gens.append(TextsFromPathListGen(path_list[offs : offs + per_worker_items], offs))
         gens = create_text_gens_from_ids_list(
             path_list, 10 * self.conf().async_batch_gen, TextsFromPathListGen
         )
 
-        # batch_iter.start_workers_for_item_list(path_list, fetcher=file_path_fetcher)
-        # batch_iter.start_workers(gens)
         for input_data in self._batch_gen.batches(gens):
             if stat is not None:
                 self._update_doc_stat(input_data, stat)

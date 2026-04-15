@@ -71,7 +71,6 @@ _MetaT = tuple[str, int, int, int, int, int, str, str]
 
 
 #                 path, hash, id
-# _TextInfoT = tuple[Path, str, int]
 class _TextInfoT(NamedTuple):
     path: Path
     hash: str
@@ -87,7 +86,6 @@ EXMPL_TGT_LEN = 5
 EXMPL_SRC_HASH = 6
 EXMPL_TGT_HASH = 7
 
-# _TokTextT = list[list[int]]
 _TokTextCacheT = dict[str, SegmentedText]
 
 
@@ -256,25 +254,6 @@ class DocsBatchGenerator:
         if n >= len(targets):
             return targets
         return random.sample(targets, n)
-
-    # def _populate_doc_len(
-    #     self,
-    #     segmented_text: list[list[int]],
-    #     doc_segments_length: list[int],
-    #     sent_len_list: list[int],
-    #     frag_len_in_sents: list[int],
-    #     doc_len_in_sents_list: list[int],
-    #     doc_len_in_frags_list: list[int],
-    # ):
-    #     if self._text_proc.conf().split_into_sents and self._text_proc.conf().split_into_fragments:
-    #         frag_len_in_sents.extend(doc_segments_length)
-    #         doc_len_in_frags_list.append(len(doc_segments_length))
-    #     elif self._text_proc.conf().split_into_fragments:
-    #         doc_len_in_frags_list.append(doc_segments_length[0])
-
-    #     if self._text_proc.conf().split_into_sents:
-    #         sent_len_list.extend(len(t) for t in segmented_text)
-    #         doc_len_in_sents_list.append(len(segmented_text))
 
     def _prepare_all_targets(
         self,
@@ -801,18 +780,6 @@ class DocsBatchAsyncGenerator(BaseBatchAsyncGenerator[DocsBatch]):
         fp = f"{opts.input_dir}/{opts.meta_prefix}_{self._split}.csv"
         if not self._start_workers(fp, seed=10_000 * epoch + iter_no):
             raise RuntimeError("Failed to init docs batch generator, empty folder or config error")
-
-    # def _make_batch_for_retr_task(self, batch: DocsBatch):
-    #     src_cnt = batch.info['src_docs_cnt']
-    #     labels = torch.full(
-    #         (src_cnt, batch.info['tgt_docs_cnt']), 0.0, dtype=torch.float32, device=self._device
-    #     )
-    #     for i in range(src_cnt):
-    #         positive_tgts = batch.positive_idxs[i]
-    #         if positive_tgts:
-    #             labels[i][positive_tgts] = 1.0
-
-    #     return batch, labels
 
     def _prepare_batch(self, src_in: EncoderInData, tgt_in: EncoderInData, labels: torch.Tensor):
         return DocsBatch(src_in, tgt_in, labels)
