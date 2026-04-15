@@ -803,29 +803,30 @@ class Trainer(BaseTrainerUtils):
                     tgt_sent_sum / int(tgt_sents_len_t.shape[0]),
                 )
 
-            # TODO
-            # if self._conf.print_batches:
-            #     logging.debug(
-            #         'src ids: %s\nsrc sents cnt: %s\n src_len: %s\nsrc_fragment_len:%s\n'
-            #         'src_doc_len_in_sents: %s\nsrc_doc_len_in_frags: %s',
-            #         batch.src_ids,
-            #         len(batch.src_texts),
-            #         batch.src_sent_len,
-            #         batch.src_fragment_len,
-            #         batch.src_doc_len_in_sents,
-            #         batch.src_doc_len_in_frags,
-            #     )
-            #     logging.debug(
-            #         'tgt ids: %s\ntgt sents cnt: %s\n tgt_len: %s\ntgt_fragment_len:%s\n'
-            #         'tgt_doc_len_in_sents: %s\ntgt_doc_len_in_frags: %s',
-            #         batch.tgt_ids,
-            #         len(batch.tgt_texts),
-            #         batch.tgt_sent_len,
-            #         batch.tgt_fragment_len,
-            #         batch.tgt_doc_len_in_sents,
-            #         batch.tgt_doc_len_in_frags,
-            #     )
-            #     logging.debug("labels: %s", labels)
+            if self._conf.print_batches:
+                logging.debug(
+                    'src ids: %s\nsents cnt: %s\n first level seq lengths: %s\n'
+                    'fragment length in sents:%s\n'
+                    'doc_len_in_sents: %s\ndoc_len_in_frags: %s',
+                    sd.text_ids,
+                    sd.texts_repr.nsents(),
+                    sd.seq_encoder_input.seq_lengths().tolist(),
+                    sd.texts_repr.fragment_lengths_in_sents(),
+                    sd.texts_repr.text_lengths_in_sents(),
+                    sd.texts_repr.text_lengths_in_fragments(),
+                )
+                logging.debug(
+                    'tgt ids: %s\nsents cnt: %s\n first level seq lengths: %s\n'
+                    'fragment length in sents:%s\n'
+                    'doc_len_in_sents: %s\ndoc_len_in_frags: %s',
+                    td.text_ids,
+                    td.texts_repr.nsents(),
+                    td.seq_encoder_input.seq_lengths().tolist(),
+                    td.texts_repr.fragment_lengths_in_sents(),
+                    td.texts_repr.text_lengths_in_sents(),
+                    td.texts_repr.text_lengths_in_fragments(),
+                )
+                logging.debug("labels: %s", labels)
 
     def _save_gpu_memory_stat(self):
         summary = torch.cuda.memory_summary(self._device)

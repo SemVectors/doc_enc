@@ -348,6 +348,19 @@ class SeqEncoderBatchedInput:
             f"Batch is either uninitialized or has wrong format: {type(self.batch)}!"
         )
 
+    def seq_lengths(self) -> torch.Tensor:
+        if isinstance(self.batch, (PaddedTensor, JaggedInputTensor)):
+            return self.batch.lengths
+        if isinstance(self.batch, PackedSequence):
+            # It is quite inefficient, but this method is only used for debug purposes.
+            lengths_t = torch.zeros(int(self.batch.batch_sizes[0].item()), dtype=torch.int64)
+            for bs in self.batch.batch_sizes.tolist():
+                lengths_t[:bs] += 1
+            return lengths_t
+        raise RuntimeError(
+            f"Batch is either uninitialized or has wrong format: {type(self.batch)}!"
+        )
+
     def get_packed_seq(self):
         if isinstance(self.batch, PackedSequence):
             return self.batch

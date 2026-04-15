@@ -32,10 +32,12 @@ def FakeTrainingData():
 
         ds1_docs_dir = tmpdirname / "ds1" / "texts"
         with open(ds1_docs_dir / '3.txt', 'w', encoding='utf8') as f:
-            f.write("1 2\n3 4\n5 6")
+            f.write("1 2\n3 4\n5")
         with open(ds1_docs_dir / '15.txt', 'w', encoding='utf8') as f:
-            f.write("15 2 3 4 5\n")
-            f.write("1 2 3 4 5\n" * 14)
+            f.write("15 2 3 4 5 6\n")
+            f.write("1 2 3 4 5\n" * 12)
+            f.write("15 2 3 4\n")
+            f.write("15 2\n")
         with open(ds1_docs_dir / '16.txt', 'w', encoding='utf8') as f:
             f.write("16 2 3 4 6 7\n")
             f.write("1 2 3 4 6\n" * 15)
@@ -258,7 +260,7 @@ def _create_gen_opts(
 def test_gen_basic(FakeTrainingData):
     conf, tp_conf = _create_gen_opts(FakeTrainingData)
     gen = DocsBatchGenerator(
-        EncoderInputType.JAGGED, conf, tp_conf=tp_conf, split='train', line_offset=0
+        EncoderInputType.PACKED, conf, tp_conf=tp_conf, split='train', line_offset=0
     )
     batches = list(gen.batches())
     print(gen._stat)
@@ -278,6 +280,8 @@ def test_gen_basic(FakeTrainingData):
         16,
     ]
     assert sd.texts_repr.nsents() == 18
+    seq_lengths = sd.seq_encoder_input.seq_lengths().tolist()
+    assert seq_lengths == [6] + [5] * 12 + [4] + [2] + [2, 2, 1]
     assert td.texts_repr.nsents() == 166
 
     assert sd.texts_repr.fragment_lengths_in_sents() == [15, 3]
