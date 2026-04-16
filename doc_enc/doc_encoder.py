@@ -5,13 +5,14 @@ import logging
 import itertools
 import math
 import copy
-from typing import Callable, Dict, Generator, Optional, Any, Sequence
+from typing import Callable, Dict, Generator, Optional, Any, Sequence, cast
 import dataclasses
 from pathlib import Path
 import multiprocessing
 import collections.abc
 
 import numpy as np
+from omegaconf import OmegaConf
 import torch
 from torch.amp.autocast_mode import autocast
 import torch.nn.functional as F
@@ -86,7 +87,7 @@ class DocEncoderConf:
     # perform l2 normalization on encoded vectors.
     normalize_vecs: bool = False
     enable_amp: bool = False
-    ensure_flash_attn: bool = False
+    attn_impl: str = 'sdpa'
 
     overrides: Optional[ConfOverrides] = None
 
@@ -729,7 +730,10 @@ class BaseEncodeModule(BaseSentEncodeModule):
 
 
 def _adjust_enc_config(
-    config: SeqEncoderConf, eval_mode: bool, override: EncOverride | None = None
+    config: SeqEncoderConf,
+    doc_enc_conf: DocEncoderConf,
+    eval_mode: bool,
+    override: EncOverride | None = None,
 ):
     # wipe out cache dir since it is different from machine on which model was trained
     if config.transformers_cache_dir:
@@ -737,6 +741,17 @@ def _adjust_enc_config(
 
     if not eval_mode:
         config.transformers_fix_pretrained_params = False
+
+    transformers_kwargs = {}
+    if doc_enc_conf.attn_impl == 'flash':
+        transformers_kwargs['attn_implementation'] = 'flash_attention_2'
+    elif doc_enc_conf.attn_impl in ('sdpa', 'cudnn', 'efficient', 'math'):
+        transformers_kwargs['attn_implementation'] = 'sdpa'
+    if transformers_kwargs:
+        if config.transformers_kwargs is not None:
+            config.transformers_kwargs.update(transformers_kwargs)
+        else:
+            config.transformers_kwargs = cast(dict, OmegaConf.create(transformers_kwargs))
 
     # It is dumb merge, even if optional value is not set, it will override value on the left with None from the right.
     # if override is not None:
@@ -799,7 +814,10 @@ class EncodeModule(BaseEncodeModule):
         sent_embs_out_size = 0
         if mc.sent is not None:
             _adjust_enc_config(
-                mc.sent.encoder, eval_mode, None if not conf.overrides else conf.overrides.sent
+                mc.sent.encoder,
+                conf,
+                eval_mode,
+                None if not conf.overrides else conf.overrides.sent,
             )
             base_sent_enc = create_seq_encoder(
                 mc.sent.encoder, prev_output_size=emb_dim, eval_mode=eval_mode
@@ -816,7 +834,7 @@ class EncodeModule(BaseEncodeModule):
         frag_layer = None
         if 'frag_enc' in state_dict and mc.fragment is not None:
             _adjust_enc_config(
-                mc.fragment, eval_mode, None if not conf.overrides else conf.overrides.frag
+                mc.fragment, conf, eval_mode, None if not conf.overrides else conf.overrides.frag
             )
             frag_layer = create_seq_encoder(
                 mc.fragment, prev_output_size=sent_embs_out_size, eval_mode=eval_mode
@@ -826,7 +844,9 @@ class EncodeModule(BaseEncodeModule):
         else:
             doc_input_size = sent_embs_out_size
 
-        _adjust_enc_config(mc.doc, eval_mode, None if not conf.overrides else conf.overrides.doc)
+        _adjust_enc_config(
+            mc.doc, conf, eval_mode, None if not conf.overrides else conf.overrides.doc
+        )
         doc_layer = create_seq_encoder(mc.doc, prev_output_size=doc_input_size, eval_mode=eval_mode)
 
         logging.debug("doc layer\n:%s", doc_layer)
@@ -1124,8 +1144,15 @@ class DocEncoder:
         return self._enc_module._conf
 
     def _sdpa_mods(self):
-        if self.conf().ensure_flash_attn:
-            sdpa_mods = SDPBackend.FLASH_ATTENTION
+        ai = self.conf().attn_impl
+        if ai == 'flash':
+            sdpa_mods = [SDPBackend.FLASH_ATTENTION]
+        elif ai == 'cudnn':
+            sdpa_mods = [SDPBackend.CUDNN_ATTENTION]
+        elif ai == 'efficient':
+            sdpa_mods = [SDPBackend.EFFICIENT_ATTENTION]
+        elif ai == 'math':
+            sdpa_mods = [SDPBackend.MATH]
         else:
             sdpa_mods = [
                 SDPBackend.FLASH_ATTENTION,

@@ -69,7 +69,7 @@ def _create_doc_enc_conf(args):
         enable_amp=args.enable_amp,
         bucket_multiplier=args.bucket_multiplier,
         async_batch_gen=args.async_batch_gen,
-        ensure_flash_attn=args.ensure_flash_attn,
+        attn_impl=args.attn_impl,
     )
     if args.max_seq_len != -1:
         conf.overrides = ConfOverrides(text_proc=TextProcOverride(args.max_seq_len))
@@ -178,7 +178,11 @@ def _add_common_opts(parser):
     parser.add_argument("--async_batch_gen", default=2, type=int)
     parser.add_argument("--bucket_multiplier", default=2, type=int)
     parser.add_argument("--max_seq_len", default=-1, type=int)
-    parser.add_argument("--ensure_flash_attn", default=False, action='store_true')
+    parser.add_argument(
+        "--attn_impl",
+        default='',
+        choices=['', 'sdpa', 'flash', 'cudnn', 'efficient', 'math'],
+    )
 
 
 def main():
