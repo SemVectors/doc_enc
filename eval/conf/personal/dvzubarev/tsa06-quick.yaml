@@ -15,17 +15,21 @@ bench_sent_encoding: false
 
 
 doc_encoder:
+  enable_amp: true
   model_path: none
   use_gpu: 0
   max_sents: 2048
   max_tokens: 48000
+  attn_impl: sdpa
+
   async_batch_gen: 4
   # overrides:
+  #   frag:
+  #     input_type: JAGGED
   #   doc:
-  #     transformers_kwargs:
-  #       attn_implementation: sdpa
+  #     input_type: JAGGED
   #   text_proc:
-  #     auto_tokenizer_max_seq_len: 31000
+  #     max_seq_len: 2048
 
 
 doc_matching:

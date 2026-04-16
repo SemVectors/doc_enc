@@ -2,14 +2,14 @@
 defaults:
   - /base_config
   - override /model/sent/encoder: lstm
-  - override /model/fragment: null
-  - override /model/doc: averaging
+  - override /model/fragment: transformer
+  - override /model/doc: transformer
   - _self_
 
 trainer:
-  max_updates: 3000
-  eval_every: 1500
-  checkpoint_every: 4000
+  max_updates: 800
+  eval_every: 400
+  checkpoint_every: 1000
   switch_tasks_every: 10
   debug_iters:
     - 50
@@ -17,16 +17,28 @@ trainer:
 model:
   sent:
     cross_device_sample: true
+  margin: 0.2
+  fragment:
+    add_beg_seq_token: true
+    num_layers: 2
+    hidden_size: 768
+    share_attn: false
+  doc:
+    add_beg_seq_token: true
+    num_layers: 3
+    hidden_size: 768
 
 
 text_proc:
   tokenizer:
     vocab_path: /home/dvzubarev/data/paral_data/data4/bpe_256k_from_600M.spm.model
+    max_seq_length: 128
 
 combine_datasets_use_text_proc: true
 
 batches:
   sents_batch_iterator_conf:
+    async_generators: 2
     batch_generator_conf:
       batch_size: 256
       input_dir: /home/dvzubarev/data/paral_data/undata0/sents-mini
@@ -34,7 +46,7 @@ batches:
 
   docs_batch_iterator_conf:
     use_existing_combined_meta: true
-    async_generators: 1
+    async_generators: 5
     combine_procs_cnt: 7
     # include_datasets:
     #   - ParalWiki
@@ -44,7 +56,7 @@ batches:
     batch_generator_conf:
       input_dir: >-
         /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/
-      pad_src_sentences: false
-      batch_total_sents_cnt: 256
-      batch_total_tokens_cnt: 10_000
+      batch_total_sents_cnt: 4096
+      batch_total_tokens_cnt: 96_000
       # input_dir: /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc
+        # /home/dvzubarev/Workspace/projects/semvectors/datasets-data/doc-mini/

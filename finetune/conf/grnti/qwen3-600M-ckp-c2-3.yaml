@@ -39,6 +39,9 @@ overrides:
     auto_tokenizer_max_seq_len: 2048
   doc:
     transformers_torch_fp16: true
+    transformers_kwargs:
+      attn_implementation: flash_attention_2
+
     use_adapter: lora
     adapter_kwargs:
       r: 32
