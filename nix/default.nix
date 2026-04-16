@@ -19,7 +19,7 @@
 
 buildPythonPackage {
   pname = "doc_enc";
-  version = "0.2.1";
+  version = "0.3.0";
   inherit src;
   pyproject = true;
   build-system = [ setuptools ];
