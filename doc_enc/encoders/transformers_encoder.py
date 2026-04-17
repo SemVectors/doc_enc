@@ -89,45 +89,6 @@ class BaseTransformersAutoModel(BaseEncoder):
         else:
             return super().load_state_dict(state_dict, *args, **kwargs)
 
-    def _common_auto_forward(
-        self, input_batch: SeqEncoderBatchedInput, transformers_kwargs: dict | None = None
-    ):
-        if input_batch.embedded:
-            raise RuntimeError("Pretrained transformers encoder supports only input_ids as input!")
-
-        if transformers_kwargs is None:
-            transformers_kwargs = {}
-
-        if self.input_type() == EncoderInputType.JAGGED:
-            jgt = input_batch.get_jagged_w_pos_ids()
-            input_ids = jgt.data.unsqueeze(0)
-            lengths = jgt.lengths
-            position_ids = jgt.position_ids.unsqueeze(0)
-            attention_mask = None
-        else:
-
-            max_len = input_batch.max_len
-            # input shape: batch_sz, seq_len
-            padded = input_batch.get_padded()
-            input_ids = padded.data
-            lengths = padded.lengths
-            position_ids = torch.arange(max_len, device=input_ids.device).unsqueeze(0)
-
-            # B X L
-            assert padded.padding_mask is not None, "Padding mask should be already created!"
-            attention_mask = padded.padding_mask.float()
-
-        return (
-            self.auto_model(
-                input_ids=input_ids,
-                position_ids=position_ids,
-                attention_mask=attention_mask,
-                **transformers_kwargs,
-            ),
-            lengths,
-            attention_mask,
-        )
-
 
 def print_trainable_parameters(model):
     """
@@ -210,6 +171,45 @@ class TransformersAutoModel(BaseTransformersAutoModel):
 
     def _get_auto_config(self):
         return self.auto_model.config
+
+    def _common_auto_forward(
+        self, input_batch: SeqEncoderBatchedInput, transformers_kwargs: dict | None = None
+    ):
+        if input_batch.embedded:
+            raise RuntimeError("Pretrained transformers encoder supports only input_ids as input!")
+
+        if transformers_kwargs is None:
+            transformers_kwargs = {}
+
+        if self.input_type() == EncoderInputType.JAGGED:
+            jgt = input_batch.get_jagged_w_pos_ids()
+            input_ids = jgt.data.unsqueeze(0)
+            lengths = jgt.lengths
+            position_ids = jgt.position_ids.unsqueeze(0)
+            attention_mask = None
+        else:
+
+            max_len = input_batch.max_len
+            # input shape: batch_sz, seq_len
+            padded = input_batch.get_padded()
+            input_ids = padded.data
+            lengths = padded.lengths
+            position_ids = torch.arange(max_len, device=input_ids.device).unsqueeze(0)
+
+            # B X L
+            assert padded.padding_mask is not None, "Padding mask should be already created!"
+            attention_mask = padded.padding_mask.float()
+
+        return (
+            self.auto_model(
+                input_ids=input_ids,
+                position_ids=position_ids,
+                attention_mask=attention_mask,
+                **transformers_kwargs,
+            ),
+            lengths,
+            attention_mask,
+        )
 
     def forward(
         self,
@@ -344,6 +344,9 @@ class SbertAutoModel(BaseTransformersAutoModel):
         )
         super().__init__(config, auto_sbert)
 
+    def input_type(self) -> EncoderInputType:
+        return EncoderInputType.PADDED
+
     def _get_auto_config(self):
         trans = self.auto_model[0]
         if not hasattr(trans, 'auto_model'):
@@ -359,6 +362,13 @@ class SbertAutoModel(BaseTransformersAutoModel):
         transformers_kwargs: dict | None = None,
         **kwargs,
     ):
-        result, lengths, _ = self._common_auto_forward(input_batch, transformers_kwargs)
+        padded = input_batch.get_padded()
+        input_ids = padded.data
+        lengths = padded.lengths
 
+        # B X L
+        assert padded.padding_mask is not None, "Padding mask should be already created!"
+        attention_mask = padded.padding_mask.float()
+
+        result = self.auto_model.forward({'input_ids': input_ids, 'attention_mask': attention_mask})
         return BaseEncoderOut(result['sentence_embedding'], result['token_embeddings'], lengths)
